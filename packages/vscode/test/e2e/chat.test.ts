@@ -240,3 +240,28 @@ describe("VS Code chat, end to end", () => {
     expect(existsSync(path.join(storage, "chat.json"))).toBe(false);
   });
 });
+
+describe("extension start and problem report", () => {
+  it("starts with a journal, and the report carries versions and the journal but no key", async () => {
+    const { activate } = await import("../../src/extension");
+    await context.secrets.store("dimosi.key.polza", KEY);
+    context.globalState.update("dimosi.keyNames", ["polza"]);
+    context.globalState.update("dimosi.welcomed", true);
+    stub.config = { "dimosi.provider": "polza", "dimosi.model": "anthropic/claude-opus-5.5" };
+    activate(context as never);
+    expect(stub.output[0]).toMatch(/^\[info\] dimosi 0\.0\.0-test started: VS Code 1\.140\.0/);
+    expect(stub.output[1]).toBe("[info] settings: provider polza, model anthropic/claude-opus-5.5, approvals ask, max steps 50");
+
+    log.error(`task failed: Неверный API-ключ (401). (${KEY})`);
+    stub.answer = (_msg, items) => items.find((i) => i.startsWith("Скопировать"));
+    const { env } = await import("./vscode");
+    await stub.commands.get("dimosi.reportProblem")!();
+    expect(env.clipboard.text).toContain("# Отчёт о проблеме dimosi");
+    expect(env.clipboard.text).toContain("- dimosi: 0.0.0-test");
+    expect(env.clipboard.text).toContain("- Сохранены ключи для: polza");
+    expect(env.clipboard.text).toMatch(/## Последняя ошибка\n\S+ \[error\] task failed: Неверный API-ключ/);
+    expect(env.clipboard.text).not.toContain(KEY);
+    expect(stub.output.join("\n")).not.toContain(KEY);
+    for (const d of context.subscriptions) d.dispose();
+  });
+});

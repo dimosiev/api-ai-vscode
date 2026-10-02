@@ -139,7 +139,10 @@ export const stub = {
   messages: [] as string[],
   executed: [] as Array<{ id: string; args: unknown[] }>,
   commands: new Map<string, (...args: unknown[]) => unknown>(),
+  /** Lines written to output channels. */
+  output: [] as string[],
   reset(): void {
+    this.output = [];
     this.config = {};
     this.answer = () => undefined;
     this.messages = [];
@@ -197,6 +200,10 @@ export const window = {
   showQuickPick: async () => undefined,
   showInputBox: async () => undefined,
   registerWebviewViewProvider: () => disposable(),
+  createOutputChannel: (_name: string, _opts?: { log: true }) => {
+    const write = (level: string) => (message: string) => void stub.output.push(`[${level}] ${message}`);
+    return { info: write("info"), warn: write("warn"), error: write("error"), dispose() {} };
+  },
   tabGroups: { all: [] as Array<{ tabs: unknown[] }>, close: async () => true },
 };
 
