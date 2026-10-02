@@ -2,6 +2,8 @@ import { promises as fs } from "node:fs";
 import * as vscode from "vscode";
 import { downloadVerified, fetchManifest, isNewerVersion, UPDATE_PUBLIC_KEYS, type UpdateManifest } from "@dimosi/core";
 import { log } from "./log";
+import { errorText } from "./errorText";
+import { installVsix } from "./vsixInstall";
 
 const UPDATE_URL = __DIMOSI_UPDATE_URL__;
 const FIRST_CHECK_DELAY_MS = 30_000;
@@ -70,8 +72,8 @@ export class Updater implements vscode.Disposable {
       await this.waitUntilIdle();
       await this.install(manifest);
     } catch (e) {
-      log.warn(`update failed: ${(e as Error).message}`);
-      if (manual) void vscode.window.showErrorMessage(`dimosi: не удалось проверить обновления. ${(e as Error).message}`);
+      log.warn(`update failed: ${errorText(e)}`);
+      if (manual) void vscode.window.showErrorMessage(`dimosi: не удалось обновиться. ${errorText(e)}`);
     } finally {
       this.running = false;
     }
@@ -85,10 +87,10 @@ export class Updater implements vscode.Disposable {
     await fs.mkdir(dir.fsPath, { recursive: true });
     const file = vscode.Uri.joinPath(dir, manifest.vsix.file);
     await fs.writeFile(file.fsPath, data);
-    await vscode.commands.executeCommand("workbench.extensions.installExtension", file);
+    const how = await installVsix(file);
     await this.context.globalState.update(INSTALLED_KEY, manifest.version);
     await fs.rm(file.fsPath, { force: true });
-    log.info(`update ${manifest.version} installed, waiting for a window reload`);
+    log.info(`update ${manifest.version} installed (${how === "cli" ? "code command line" : "VS Code command"}), waiting for a window reload`);
     await this.offerReload(manifest);
   }
 

@@ -15,6 +15,7 @@ import {
   type Pricing,
   type TextPart,
 } from "@dimosi/core";
+import { errorText } from "./errorText";
 import { WebviewApproval } from "./approval";
 import { fileAttachment, imageAttachment, type Attachment } from "./attachments";
 import { ChangeTracker } from "./changes";
@@ -84,8 +85,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     view.webview.html = this.html(view.webview, media);
     view.webview.onDidReceiveMessage((msg: FromWebview) => {
       this.onMessage(msg).catch((e) => {
-        log.error(`panel action ${msg.type} failed: ${(e as Error).message}`);
-        this.post({ type: "error", message: (e as Error).message });
+        log.error(`panel action ${msg.type} failed: ${errorText(e)}`);
+        this.post({ type: "error", message: errorText(e) });
       });
     });
     view.onDidDispose(() => {
@@ -248,7 +249,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         try {
           this.addAttachment(imageAttachment(msg.name, msg.mediaType, msg.data));
         } catch (e) {
-          this.post({ type: "error", message: (e as Error).message });
+          this.post({ type: "error", message: errorText(e) });
         }
         break;
       case "remove_attachment":
@@ -265,7 +266,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     try {
       this.addAttachment(await fileAttachment(uri, this.root()));
     } catch (e) {
-      this.post({ type: "error", message: (e as Error).message });
+      this.post({ type: "error", message: errorText(e) });
     }
   }
 
@@ -339,10 +340,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (!settings.model) throw new Error("Не выбрана модель.");
       provider = await buildProvider(settings, this.keys);
     } catch (e) {
-      log.warn(`cannot start a task: ${(e as Error).message}`);
+      log.warn(`cannot start a task: ${errorText(e)}`);
       this.post({
         type: "error",
-        message: (e as Error).message,
+        message: errorText(e),
         action: e instanceof MissingKeyError
           ? { label: "Ввести ключ", command: "dimosi.setApiKey" }
           : { label: "Выбрать модель", command: "dimosi.selectModel" },
@@ -456,8 +457,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
       }
     } catch (e) {
-      log.error(`task crashed: ${(e as Error).message}`);
-      this.post({ type: "error", message: (e as Error).message });
+      log.error(`task crashed: ${errorText(e)}`);
+      this.post({ type: "error", message: errorText(e) });
     } finally {
       this.controller = undefined;
       this.approval.signal = undefined;
@@ -514,7 +515,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (dropped.length) log.warn(`chat is over the size limit; left out of the saved copy: ${dropped.join(", ")}`);
     this.saving = this.saving
       .then(() => (text ? writeChatFile(file, text) : deleteChatFile(file)))
-      .catch((e) => log.warn(`could not save the chat: ${(e as Error).message}`));
+      .catch((e) => log.warn(`could not save the chat: ${errorText(e)}`));
   }
 
   private async revert(turn: number, relPath: string | null): Promise<void> {

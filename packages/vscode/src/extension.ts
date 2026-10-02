@@ -15,6 +15,7 @@ import {
   PROJECT_RULES_DIR,
   PROJECT_RULES_TEMPLATE,
 } from "@dimosi/core";
+import { errorText } from "./errorText";
 import { PROPOSED_SCHEME, ProposedContentProvider, WebviewApproval } from "./approval";
 import { selectionAttachment } from "./attachments";
 import { ChatViewProvider } from "./chatView";
@@ -47,8 +48,8 @@ export function activate(context: vscode.ExtensionContext): void {
       try {
         await fn(...args);
       } catch (e) {
-        log.error(`command ${id} failed: ${(e as Error).message}`);
-        void vscode.window.showErrorMessage(`dimosi: ${(e as Error).message}`);
+        log.error(`command ${id} failed: ${errorText(e)}`);
+        void vscode.window.showErrorMessage(`dimosi: ${errorText(e)}`);
       }
     });
 
@@ -361,7 +362,7 @@ async function selectModel(keys: SecretKeyStore): Promise<void> {
       () => provider.listModels(),
     );
   } catch (e) {
-    void vscode.window.showWarningMessage(`Не удалось получить список моделей: ${(e as Error).message}`);
+    void vscode.window.showWarningMessage(`Не удалось получить список моделей: ${errorText(e)}`);
   }
 
   const MANUAL = "$(edit) Ввести имя модели вручную";
@@ -451,7 +452,7 @@ async function importKeysCommand(keys: SecretKeyStore): Promise<void> {
   try {
     names = await importKeys(keys, text, password);
   } catch (e) {
-    const msg = (e as Error).message;
+    const msg = errorText(e);
     throw new Error(msg.startsWith("Wrong password") ? "Неверный пароль или файл повреждён." : msg === "This is not a key file." ? "Это не файл с ключами." : msg);
   }
   void vscode.window.showInformationMessage(`Импортировано ключей: ${names.length} (${names.join(", ")}).`);

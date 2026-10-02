@@ -219,7 +219,7 @@ export const commands = {
 };
 
 export const languages = { registerCodeActionsProvider: () => disposable() };
-export const env = { appName: "Visual Studio Code", clipboard: { text: "", async writeText(t: string) { this.text = t; } } };
+export const env = { appName: "Visual Studio Code", appRoot: "/nonexistent/vscode/app", clipboard: { text: "", async writeText(t: string) { this.text = t; } } };
 export const version = "1.140.0";
 
 export enum FileType {

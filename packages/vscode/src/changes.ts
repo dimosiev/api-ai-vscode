@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { diskFiles, type FileAccess, type FileChange } from "@dimosi/core";
+import { errorText } from "./errorText";
 import { countChanges } from "./diff";
 import type { ChangedFileView } from "./protocol";
 
@@ -104,7 +105,7 @@ export class ChangeTracker {
       f.reverted = true;
       return { ok: true };
     } catch (e) {
-      return { ok: false, reason: "error", message: (e as Error).message };
+      return { ok: false, reason: "error", message: errorText(e) };
     }
   }
 
