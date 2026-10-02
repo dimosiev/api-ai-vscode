@@ -103,11 +103,10 @@ export type FromWebview =
   | { type: "ready" }
   | { type: "send"; text: string }
   | { type: "stop" }
-  | { type: "command"; command: string; args?: unknown[] }
+  | { type: "command"; command: string }
   | { type: "approval_response"; id: string; decision: "allow" | "deny" | "allow_always" }
   | { type: "open_diff"; id: string }
   | { type: "open_file"; relPath: string }
-  | { type: "open_path"; path: string }
   | { type: "revert"; turn: number; relPath: string | null }
   | { type: "pick_files" }
   | { type: "attach_active_file" }

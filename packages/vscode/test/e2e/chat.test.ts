@@ -282,6 +282,51 @@ describe("VS Code chat, end to end", () => {
   });
 });
 
+describe("messages from the panel are checked", () => {
+  it("only the panel's own commands run, and without arguments", async () => {
+    const panel = await setup([]);
+    for (const command of ["dimosi.selectModel", "dimosi.toggleApproval", "dimosi.importKeys", "dimosi.showRules", "dimosi.setApiKey", "workbench.action.files.openFolder"]) {
+      panel.send({ type: "command", command });
+    }
+    panel.send({ type: "command", command: "dimosi.fixDiagnostic", args: [Uri.file("/etc/hosts")] } as never);
+    panel.send({ type: "command", command: "dimosi.selectModel", args: ["x"] } as never);
+    panel.send({ type: "command", command: "workbench.action.terminal.sendSequence", args: [{ text: "rm -rf ~\n" }] } as never);
+    expect(await eventually(() => stub.executed.length >= 6)).toBe(true);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(stub.executed).toEqual(
+      ["dimosi.selectModel", "dimosi.toggleApproval", "dimosi.importKeys", "dimosi.showRules", "dimosi.setApiKey", "workbench.action.files.openFolder"].map((id) => ({ id, args: [] })),
+    );
+  });
+
+  it("files are opened and attached only from inside the project", async () => {
+    const outside = mkdtempSync(path.join(os.tmpdir(), "dimosi-e2e-outside-"));
+    await fs.writeFile(path.join(outside, "private.txt"), "PRIVATE");
+    await fs.symlink(outside, path.join(root, "link"));
+    await fs.writeFile(path.join(root, "ok.txt"), "ok");
+    const panel = await setup([]);
+    panel.send({ type: "open_path", path: path.join(outside, "private.txt") } as never);
+    panel.send({ type: "open_file", relPath: "../" + path.basename(outside) + "/private.txt" });
+    panel.send({ type: "open_file", relPath: "link/private.txt" });
+    panel.send({ type: "attach_path", relPath: "link/private.txt" });
+    panel.send({ type: "attach_path", relPath: "../" + path.basename(outside) + "/private.txt" });
+    panel.send({ type: "open_file", relPath: "ok.txt" });
+    expect(await eventually(() => stub.opened.length > 0)).toBe(true);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(stub.opened).toEqual([path.join(root, "ok.txt")]);
+    expect(JSON.stringify(panel.posted.filter(isType("attachments")))).not.toContain("private");
+  });
+
+  it("an unknown approval decision counts as «no»", async () => {
+    const panel = await setup([
+      { toolCalls: [{ name: "write_file", args: { path: "a.txt", content: "x" } }] },
+      { text: "Понял." },
+    ]);
+    await panel.task("создай a.txt", () => "allow_everything" as never);
+    expect(existsSync(path.join(root, "a.txt"))).toBe(false);
+    expect(JSON.stringify(server!.requests[1].body.messages)).toContain("The user rejected this change.");
+  });
+});
+
 describe("approval cards", () => {
   it("show hidden characters as visible marks", async () => {
     const posted: ToWebview[] = [];

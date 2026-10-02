@@ -18,7 +18,7 @@ export {
   type PlanItem,
   type PlanStatus,
 } from "./tools";
-export { isSecretFile } from "./tools/workspace";
+export { isSecretFile, resolveInRoot } from "./tools/workspace";
 export { PRESETS, getPreset, createProvider, type ProviderPreset } from "./providers/presets";
 export { AnthropicProvider, toAnthropicMessages } from "./providers/anthropic";
 export { OpenAIProvider, toOpenAIMessages, parsePricing, parseUsage } from "./providers/openai";

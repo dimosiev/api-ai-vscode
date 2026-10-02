@@ -10,6 +10,7 @@ import {
   formatTokens,
   getPreset,
   isSecretFile,
+  resolveInRoot,
   UsageTotals,
   type ImagePart,
   type Message,
@@ -38,6 +39,17 @@ import type { FromWebview, ToWebview } from "./protocol";
 import { buildProvider, MissingKeyError, readSettings } from "./settings";
 
 const CONTEXT_WARNING_TOKENS = 150_000;
+/** Commands the panel's buttons run; the panel can ask for nothing else. */
+const PANEL_COMMANDS = new Set([
+  "dimosi.selectModel",
+  "dimosi.toggleApproval",
+  "dimosi.importKeys",
+  "dimosi.showRules",
+  "dimosi.setApiKey",
+  "workbench.action.files.openFolder",
+]);
+const DECISIONS = new Set<string>(["allow", "deny", "allow_always"]);
+
 const EXCLUDE_GLOB = "**/{node_modules,.git,dist,out,build,.next,.venv,venv,__pycache__}/**";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
@@ -196,25 +208,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.controller?.abort();
         break;
       case "command":
-        // Only our own commands, plus "open folder" from the setup hint.
-        if (msg.command.startsWith("dimosi.") || msg.command === "workbench.action.files.openFolder") {
-          await vscode.commands.executeCommand(msg.command, ...(msg.args ?? []));
-        }
+        // Exactly the buttons the panel has, never with arguments.
+        if (PANEL_COMMANDS.has(msg.command) && !("args" in msg)) await vscode.commands.executeCommand(msg.command);
         break;
       case "approval_response":
-        this.approval.respond(msg.id, msg.decision);
+        // Anything but a known answer is a "no".
+        this.approval.respond(msg.id, DECISIONS.has(msg.decision) ? msg.decision : "deny");
         break;
       case "open_diff":
         await this.approval.openDiff(msg.id);
         break;
       case "open_file": {
-        const root = this.root();
-        if (root) await vscode.window.showTextDocument(vscode.Uri.file(path.join(root, msg.relPath)), { preview: true });
+        const abs = this.inProject(msg.relPath);
+        if (abs) await vscode.window.showTextDocument(vscode.Uri.file(abs), { preview: true });
         break;
       }
-      case "open_path":
-        await vscode.window.showTextDocument(vscode.Uri.file(msg.path), { preview: true });
-        break;
       case "revert":
         await this.revert(msg.turn, msg.relPath);
         break;
@@ -233,8 +241,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "attach_path": {
-        const root = this.root();
-        if (root) await this.attachUri(vscode.Uri.file(path.join(root, msg.relPath)));
+        const abs = this.inProject(msg.relPath);
+        if (abs) await this.attachUri(vscode.Uri.file(abs));
         break;
       }
       case "attach_uris":
@@ -260,6 +268,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "mention_query":
         this.post({ type: "mentions", query: msg.query, items: await this.findFiles(msg.query) });
         break;
+    }
+  }
+
+  /** A path the panel sent, if it really is inside the project (links followed). */
+  private inProject(relPath: string): string | undefined {
+    const root = this.root();
+    if (!root) return undefined;
+    try {
+      return resolveInRoot(root, relPath);
+    } catch {
+      return undefined;
     }
   }
 
