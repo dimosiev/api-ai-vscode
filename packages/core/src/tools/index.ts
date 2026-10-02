@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs, realpathSync } from "node:fs";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
@@ -247,9 +247,19 @@ async function readTextOrNull(files: FileAccess, abs: string, relPath: string): 
   }
 }
 
-/** Git internals (hooks run code on commit) are never written by the agent. */
+const inGit = (rel: string) => rel.toLowerCase().split(/[\\/]/).includes(".git");
+
+/**
+ * Git internals (hooks run code on commit) are never written by the agent:
+ * in any letter case (macOS ignores it), at any depth (nested repositories),
+ * and not through a link either.
+ */
 function assertWritable(root: string, abs: string): void {
-  if (toRel(root, abs).split("/")[0] === ".git") throw new Error("Writing inside .git is not allowed.");
+  let existing = abs;
+  while (!existsSync(existing) && path.dirname(existing) !== existing) existing = path.dirname(existing);
+  if (inGit(toRel(root, abs)) || inGit(path.relative(realpathSync(root), realpathSync(existing)))) {
+    throw new Error("Writing inside .git is not allowed.");
+  }
 }
 
 const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<string>> = {

