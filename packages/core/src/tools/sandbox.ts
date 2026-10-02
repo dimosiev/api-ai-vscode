@@ -128,6 +128,10 @@ export function sandboxProfile(paths: SandboxPaths): string {
     `(deny file-write* (subpath ${q(path.join(root, ".vscode"))}))`,
     // The agent's own rules: a command must not give it new instructions.
     `(deny file-write* (subpath ${q(path.join(root, ".dimosi"))}))`,
+    // Programs started through macOS itself run outside the sandbox: `open`
+    // (Launch Services) and Apple Events to other apps (Terminal, Finder...).
+    `(deny mach-lookup (global-name-prefix "com.apple.coreservices."))`,
+    "(deny appleevent-send)",
   ];
   // Before `git init` there is nothing to protect, and init must be able to create them.
   // In a repository: hooks and settings of any repository inside the project

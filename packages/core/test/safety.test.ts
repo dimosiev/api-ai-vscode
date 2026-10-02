@@ -350,6 +350,25 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
     expect(run(`echo ok`).out).toContain("ok"); // the project is Documents itself
   });
 
+  it("can't start programs outside the sandbox through open or Apple Events", async () => {
+    const probe = path.join(home, "escaped");
+    const app = path.join(project, "Probe.app/Contents");
+    mkdirSync(path.join(app, "MacOS"), { recursive: true });
+    writeFileSync(path.join(app, "MacOS/Probe"), `#!/bin/sh\ntouch "${probe}"\n`, { mode: 0o755 });
+    writeFileSync(
+      path.join(app, "Info.plist"),
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Probe</string>` +
+        `<key>CFBundleIdentifier</key><string>dimosi.test.probe</string><key>LSUIElement</key><true/></dict></plist>`,
+    );
+    const open = run("open -g -n ./Probe.app");
+    const events = run(`osascript -e 'tell application "System Events" to get name of first process'`);
+    expect(events.code).not.toBe(0);
+    expect(events.out).not.toMatch(/privilege violation/); // stopped by the sandbox, not by macOS permissions
+    // The program would start a moment later; give it time.
+    for (let i = 0; i < 30 && !existsSync(probe); i++) await new Promise((r) => setTimeout(r, 100));
+    expect(existsSync(probe), open.out).toBe(false);
+  });
+
   it("blocks writing the agent's own rules in .dimosi", () => {
     const r = run(`mkdir -p .dimosi/rules 2>/dev/null; echo x >> .dimosi/rules.md`);
     expect(r.code).not.toBe(0);
