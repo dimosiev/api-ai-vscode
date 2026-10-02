@@ -747,9 +747,9 @@ code {
 
 .diff-row {
   display: flex;
-  min-width: 100%;
-  width: max-content;
-  white-space: pre;
+  /* Long lines wrap: everything in the change must be visible without scrolling sideways. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .diff-row .ln {

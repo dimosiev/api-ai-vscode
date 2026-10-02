@@ -3,7 +3,7 @@ import { existsSync, promises as fs, realpathSync } from "node:fs";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
-import type { PermissionGate } from "../permissions";
+import { revealHidden, type PermissionGate } from "../permissions";
 import type { ToolCallPart, ToolDefinition } from "../types";
 import { commandEnv, defaultSandboxPaths, sandboxAvailable, sandboxedCommand } from "./sandbox";
 import { IgnoreMatcher, isSecretFile, resolveInRoot, toRel, walk } from "./workspace";
@@ -601,8 +601,12 @@ function countLines(text: string): number {
   return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
-/** One-line human summary of a tool call, for UIs. */
+/** One-line human summary of a tool call, for UIs. Hidden characters are shown as marks. */
 export function describeToolCall(call: ToolCallPart): string {
+  return revealHidden(describe(call));
+}
+
+function describe(call: ToolCallPart): string {
   const i = call.input;
   const s = (k: string) => (typeof i[k] === "string" ? (i[k] as string) : "");
   switch (call.name) {

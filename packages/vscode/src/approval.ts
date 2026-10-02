@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { ApprovalDecision, ApprovalHandler, ApprovalRequest } from "@dimosi/core";
+import { revealHidden, type ApprovalDecision, type ApprovalHandler, type ApprovalRequest } from "@dimosi/core";
 import { buildDiffView } from "./diff";
 import type { ToWebview } from "./protocol";
 
@@ -65,13 +65,13 @@ export class WebviewApproval implements ApprovalHandler {
           type: "approval_request",
           id,
           kind: "write",
-          relPath: req.relPath,
+          relPath: revealHidden(req.relPath),
           created: req.oldContent === null,
-          diff: buildDiffView(req.oldContent, req.newContent),
+          diff: buildDiffView(req.oldContent === null ? null : revealHidden(req.oldContent), revealHidden(req.newContent)),
           warning: req.warning,
         });
       } else {
-        this.ui.post({ type: "approval_request", id, kind: "command", command: req.command, warning: req.warning });
+        this.ui.post({ type: "approval_request", id, kind: "command", command: revealHidden(req.command), warning: req.warning });
       }
       this.ui.reveal();
     });

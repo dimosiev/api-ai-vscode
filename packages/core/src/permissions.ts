@@ -66,6 +66,29 @@ export function protectedPathWarning(relPath: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Invisible characters and bidi controls: they can make a command or a change
+ * look different from what it does (Trojan Source).
+ */
+const HIDDEN = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+
+/** The text with each hidden character shown as a visible mark, e.g. ⟦U+202E⟧. */
+export function revealHidden(text: string): string {
+  return text.replace(HIDDEN, (ch) => `⟦U+${ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}⟧`);
+}
+
+const countHidden = (text: string | null) => text?.match(HIDDEN)?.length ?? 0;
+
+function hiddenCharsWarning(req: ApprovalRequest): string | undefined {
+  const found = req.kind === "command"
+    ? countHidden(req.command) > 0
+    // In a file, only new ones count: a byte order mark at the start is common.
+    : countHidden(req.relPath) > 0 || countHidden(req.newContent) > countHidden(req.oldContent);
+  return found
+    ? "Внимание: скрытые символы. В тексте есть невидимые знаки или знаки смены направления письма (показаны как ⟦U+…⟧): ими можно замаскировать настоящий смысл."
+    : undefined;
+}
+
 /** Up to the next `;`, `&&`, `|` or line break: one command of a chain. */
 const ARGS = String.raw`[^;&|\n]*`;
 
@@ -125,7 +148,7 @@ export class PermissionGate {
 
   async check(req: ApprovalRequest): Promise<boolean> {
     const own = req.kind === "write" ? protectedPathWarning(req.relPath) : dangerousCommandWarning(req.command);
-    const warning = [req.warning, own].filter(Boolean).join(" ") || undefined;
+    const warning = [req.warning, hiddenCharsWarning(req), own].filter(Boolean).join(" ") || undefined;
     if (warning) return (await this.handler.approve({ ...req, warning })) !== "deny";
     if (this.mode === "auto" || this.alwaysAllowed.has(approvalKey(req))) return true;
     const decision = await this.handler.approve(req);

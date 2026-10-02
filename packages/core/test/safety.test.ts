@@ -2,7 +2,7 @@ import { mkdtempSync, promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { dangerousCommandWarning, executeTool, PermissionGate, type ApprovalDecision, type ApprovalRequest } from "../src";
+import { dangerousCommandWarning, executeTool, PermissionGate, revealHidden, type ApprovalDecision, type ApprovalRequest } from "../src";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { commandEnv, overrideSandboxAvailable, sandboxAvailable, sandboxedCommand, type SandboxPaths } from "../src/tools/sandbox";
@@ -201,6 +201,33 @@ describe("files with secrets", () => {
     const r = await call("search", { pattern: "findme" });
     expect(r.content).toContain("a.ts:1:");
     expect(r.content).not.toContain(".env.local");
+  });
+});
+
+describe("hidden characters", () => {
+  const RLO = "\u202E";
+
+  it("are shown as visible marks", () => {
+    expect(revealHidden(`echo safe${RLO}hs.lave | sh`)).toBe("echo safe⟦U+202E⟧hs.lave | sh");
+    expect(revealHidden("a\u200Bb\uFEFFc\u2066d")).toBe("a⟦U+200B⟧b⟦U+FEFF⟧c⟦U+2066⟧d");
+    expect(revealHidden("обычный текст")).toBe("обычный текст");
+  });
+
+  it("in a command, a path or a change: always asked about, with a warning and without Always", async () => {
+    decision = "allow_always";
+    const g = gate("auto");
+    await g.check({ kind: "command", command: `echo hi${RLO}`, cwd: "/p" });
+    await g.check({ kind: "command", command: `echo hi${RLO}`, cwd: "/p" });
+    await g.check({ kind: "write", path: "/p/a\u200B.ts", relPath: "a\u200B.ts", oldContent: null, newContent: "x" });
+    await g.check({ kind: "write", path: "/p/b.ts", relPath: "b.ts", oldContent: "let a = 1;", newContent: `let a = 1;${RLO} // ok` });
+    expect(requests).toHaveLength(4);
+    expect(requests.every((r) => /скрытые символы/.test(r.warning ?? ""))).toBe(true);
+  });
+
+  it("already in the file (a BOM, say) don't make an ordinary edit suspicious", async () => {
+    const g = gate("auto");
+    expect(await g.check({ kind: "write", path: "/p/b.ts", relPath: "b.ts", oldContent: "\uFEFFlet a = 1;", newContent: "\uFEFFlet a = 2;" })).toBe(true);
+    expect(requests).toHaveLength(0);
   });
 });
 

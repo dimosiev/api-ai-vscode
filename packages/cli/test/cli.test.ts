@@ -105,4 +105,22 @@ describe("CLI, end to end", () => {
     expect(existsSync(path.join(root, "keep.txt"))).toBe(true);
     expect(JSON.stringify(server.requests[1].body.messages)).toContain("The user rejected this command.");
   }, 30_000);
+
+  it("a command with hidden characters shows them and has no «always» answer", async () => {
+    server = await startFakeServer([
+      { toolCalls: [{ name: "run_command", args: { command: "echo ok\u202E" } }] },
+      { toolCalls: [{ name: "run_command", args: { command: "echo ok\u202E" } }] },
+      { text: "Готово." },
+    ]);
+    const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-root-"));
+    const home = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-home-"));
+    const { code, out } = await runCli(["--provider", "custom", "--base-url", server.url, "--model", "fake-model", "--no-sandbox", "проверь"], root, home, "a\nn\n");
+    expect(code).toBe(0);
+    expect(out).toContain("$ echo ok⟦U+202E⟧");
+    expect(out).toContain("скрытые символы");
+    expect(out).not.toContain("\u202E");
+    // «a» counted only once: the same command is asked about again.
+    expect(out.match(/Разрешить\?/g)).toHaveLength(2);
+  }, 30_000);
 });
+

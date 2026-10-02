@@ -282,6 +282,20 @@ describe("VS Code chat, end to end", () => {
   });
 });
 
+describe("approval cards", () => {
+  it("show hidden characters as visible marks", async () => {
+    const posted: ToWebview[] = [];
+    const approval = new WebviewApproval({ post: (m: ToWebview) => void posted.push(m), reveal: () => undefined } as never, new ProposedContentProvider());
+    void approval.approve({ kind: "command", command: "echo ok\u202E", cwd: root, warning: "w" });
+    void approval.approve({ kind: "write", path: path.join(root, "a\u200B.ts"), relPath: "a\u200B.ts", oldContent: null, newContent: "x\u2066y\n", warning: "w" });
+    const [cmd, write] = posted as Array<Extract<ToWebview, { type: "approval_request" }>>;
+    expect(cmd.kind === "command" && cmd.command).toBe("echo ok⟦U+202E⟧");
+    expect(write.kind === "write" && write.relPath).toBe("a⟦U+200B⟧.ts");
+    expect(JSON.stringify(write)).toContain("x⟦U+2066⟧y");
+    approval.cancelAll();
+  });
+});
+
 describe("files with secrets in the panel", () => {
   it("are not offered by the «+ файл» chip or in the @ list, and are not attached", async () => {
     const findFiles = workspace.findFiles;

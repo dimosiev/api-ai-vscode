@@ -19,6 +19,7 @@ import {
   maskKey,
   PRESETS,
   rememberingTrust,
+  revealHidden,
   type ApprovalHandler,
   type Provider,
   type RuleFile,
@@ -356,13 +357,14 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
       console.log();
       const warning = req.warning;
       if (req.kind === "write") {
-        console.log(c.yellow(c.bold(req.oldContent === null ? `Создать файл ${req.relPath}` : `Изменить файл ${req.relPath}`)));
+        const relPath = revealHidden(req.relPath);
+        console.log(c.yellow(c.bold(req.oldContent === null ? `Создать файл ${relPath}` : `Изменить файл ${relPath}`)));
         if (warning) console.log(c.red(c.bold(`⚠ ${warning} Такой файл dimosi всегда показывает отдельно, даже без подтверждений.`)));
-        console.log(renderDiff(req.relPath, req.oldContent, req.newContent));
+        console.log(renderDiff(relPath, req.oldContent === null ? null : revealHidden(req.oldContent), revealHidden(req.newContent)));
       } else {
         console.log(c.yellow(c.bold("Выполнить команду:")));
         if (warning) console.log(c.red(c.bold(`⚠ ${warning} Такую команду dimosi всегда показывает отдельно, даже без подтверждений.`)));
-        console.log(`  $ ${req.command}`);
+        console.log(`  $ ${revealHidden(req.command)}`);
       }
       const question = warning
         ? "Разрешить? [y] да / [n] нет: "

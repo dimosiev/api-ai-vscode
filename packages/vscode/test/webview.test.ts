@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import * as path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { FromWebview, ToWebview } from "../src/protocol";
 
@@ -220,3 +222,14 @@ describe("chat webview", () => {
     expect($$(".turn")).toHaveLength(3);
   });
 });
+
+describe("chat.css", () => {
+  it("wraps long lines of a change instead of pushing them off the edge", () => {
+    const css = readFileSync(path.join(__dirname, "../media/chat.css"), "utf8");
+    const row = css.match(/\.diff-row \{[^}]*\}/)![0];
+    expect(row).toMatch(/white-space: pre-wrap/);
+    expect(row).toMatch(/overflow-wrap: anywhere/);
+    expect(row).not.toMatch(/max-content/);
+  });
+});
+
