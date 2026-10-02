@@ -127,6 +127,15 @@ const SECRET_FILES = [
   /^id_(rsa|dsa|ecdsa|ed25519)$/,
   /^\.(npmrc|netrc|pypirc|pgpass)$/,
   /^(credentials|secrets?)(\.(json|ya?ml|toml))?$/,
+  /^\.(htpasswd|my\.cnf|git-credentials)$/,
+  // WordPress database password; Composer tokens.
+  /^wp-config\.php$/,
+  /^auth\.json$/,
+  // Google keys: service accounts and OAuth clients.
+  /service[-_]?account.*\.json$/,
+  /^client_secret.*\.json$/,
+  // Terraform variables and state hold passwords in plain text.
+  /\.(tfvars|tfstate)$/,
   // dimosi's own release settings (update server address and SSH).
   /^release\.config\.json$/,
 ];

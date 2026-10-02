@@ -6,7 +6,7 @@
 
 **Решение владельца:** dimosi остаётся личным инструментом и сотрудникам не раздаётся. Поэтому пункты про раздачу (В-12, В-13, В-14, поэтапный выпуск и отзыв доступа в К-4) больше не нужны.
 
-**Исправлено.** Каждое исправление закреплено тестом (ссылки в таблице; ранние — в [packages/core/test/audit.test.ts](../packages/core/test/audit.test.ts) и [update.test.ts](../packages/core/test/update.test.ts)). Всего 228 тестов, все зелёные; на каждый push их запускает CI.
+**Исправлено.** Каждое исправление закреплено тестом (ссылки в таблице; ранние — в [packages/core/test/audit.test.ts](../packages/core/test/audit.test.ts) и [update.test.ts](../packages/core/test/update.test.ts)). Всего 243 тестов, все зелёные; на каждый push их запускает CI.
 
 | Пункт | Что сделано |
 |---|---|
@@ -40,6 +40,7 @@
 | Б-5 | Всегда спрашиваются и команды, где упомянут файл с секретами (`cat .env`), и отправка данных наружу (`curl -d/-F/-T`, `wget --post-file`, `scp`, `rsync host:`, `nc`). Раньше в режиме без подтверждений такая команда могла молча прочитать или отправить пароли. Тесты: [safety.test.ts](../packages/core/test/safety.test.ts). |
 | Б-6 | Если песочница не запустилась, каждая команда спрашивается с предупреждением, даже в режиме без подтверждений и после «Всегда». Раньше команда молча шла без песочницы. Тесты: [safety.test.ts](../packages/core/test/safety.test.ts). |
 | Б-7 | Песочница закрывает ещё настройки терминала (`~/.zshrc`, `~/.zprofile`, `~/.bashrc` и др.), данные программ из App Store (`Library/Containers`, `Library/Group Containers`), Slack, Telegram Desktop, Bitwarden, браузеры Яндекс, Brave, Arc, Edge. Проверено вручную на копии проекта: git, `npm ci`, typecheck, build, vitest, python, zsh работают. Тест: [safety.test.ts](../packages/core/test/safety.test.ts). |
+| Б-8 | Список файлов с секретами дополнен: `wp-config.php`, ключи Google (`service-account*.json`, `client_secret*.json`), `auth.json`, `.htpasswd`, `.my.cnf`, `.git-credentials`, `*.tfvars`, `*.tfstate`. Тесты: [safety.test.ts](../packages/core/test/safety.test.ts). |
 
 **Пока не сделано** (по-прежнему актуально для личной работы):
 
