@@ -91,4 +91,18 @@ describe("CLI, end to end", () => {
     expect(existsSync(path.join(root, "package.json"))).toBe(false);
     expect(JSON.stringify(server.requests[1].body.messages)).toContain("The user rejected this change.");
   }, 30_000);
+  it("a dangerous command is asked about even with --auto", async () => {
+    server = await startFakeServer([
+      { toolCalls: [{ name: "run_command", args: { command: "rm -f keep.txt" } }] },
+      { text: "Не удаляю." },
+    ]);
+    const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-root-"));
+    const home = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-home-"));
+    await fs.writeFile(path.join(root, "keep.txt"), "x");
+    const { code, out } = await runCli(["--provider", "custom", "--base-url", server.url, "--model", "fake-model", "--auto", "убери keep.txt"], root, home, "n\n");
+    expect(code).toBe(0);
+    expect(out).toContain("Удаление файлов");
+    expect(existsSync(path.join(root, "keep.txt"))).toBe(true);
+    expect(JSON.stringify(server.requests[1].body.messages)).toContain("The user rejected this command.");
+  }, 30_000);
 });

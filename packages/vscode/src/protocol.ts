@@ -70,7 +70,14 @@ export type ToWebview =
       /** A file that can run code later: shown as a warning, and "Always" is not offered. */
       warning?: string;
     }
-  | { type: "approval_request"; id: string; kind: "command"; command: string }
+  | {
+      type: "approval_request";
+      id: string;
+      kind: "command";
+      command: string;
+      /** A command that can't be undone: shown as a warning, and "Always" is not offered. */
+      warning?: string;
+    }
   | { type: "approval_resolved"; id: string; decision: "allow" | "deny" | "allow_always" }
   | { type: "changes"; turn: number; files: ChangedFileView[] }
   | {

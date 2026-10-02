@@ -351,13 +351,14 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
   const approval: ApprovalHandler = {
     async approve(req) {
       console.log();
-      const warning = req.kind === "write" ? req.warning : undefined;
+      const warning = req.warning;
       if (req.kind === "write") {
         console.log(c.yellow(c.bold(req.oldContent === null ? `Создать файл ${req.relPath}` : `Изменить файл ${req.relPath}`)));
         if (warning) console.log(c.red(c.bold(`⚠ ${warning} Такой файл dimosi всегда показывает отдельно, даже без подтверждений.`)));
         console.log(renderDiff(req.relPath, req.oldContent, req.newContent));
       } else {
         console.log(c.yellow(c.bold("Выполнить команду:")));
+        if (warning) console.log(c.red(c.bold(`⚠ ${warning} Такую команду dimosi всегда показывает отдельно, даже без подтверждений.`)));
         console.log(`  $ ${req.command}`);
       }
       const question = warning

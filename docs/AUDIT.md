@@ -6,7 +6,7 @@
 
 **Решение владельца:** dimosi остаётся личным инструментом и сотрудникам не раздаётся. Поэтому пункты про раздачу (В-12, В-13, В-14, поэтапный выпуск и отзыв доступа в К-4) больше не нужны.
 
-**Исправлено.** Каждое исправление закреплено тестом (ссылки в таблице; ранние — в [packages/core/test/audit.test.ts](../packages/core/test/audit.test.ts) и [update.test.ts](../packages/core/test/update.test.ts)). Всего 148 тестов, все зелёные; на каждый push их запускает CI.
+**Исправлено.** Каждое исправление закреплено тестом (ссылки в таблице; ранние — в [packages/core/test/audit.test.ts](../packages/core/test/audit.test.ts) и [update.test.ts](../packages/core/test/update.test.ts)). Всего 180 тестов, все зелёные; на каждый push их запускает CI.
 
 | Пункт | Что сделано |
 |---|---|
@@ -34,6 +34,7 @@
 | Экономия | Кэш для Claude через Polza AI и OpenRouter: пометки `cache_control` на системной инструкции и последнем сообщении. Если сервис их отвергнет (400), запрос повторяется без них, и до перезапуска они больше не ставятся. Счётчики `prompt_tokens_details.cached_tokens`/`cache_write_tokens` читаются, в журнале у каждого запроса видна доля из кэша (`hit N%`). Тесты: [providers.test.ts](../packages/core/test/providers.test.ts), [log.test.ts](../packages/core/test/log.test.ts). |
 | Окно доверия | Вопрос о доверии к `AGENTS.md`/`CLAUDE.md` больше не вставляет 1500 символов файла: системное окно не прокручивается, и на маленьком экране кнопки уходили за край. Теперь в окне путь, число строк и первые 5 строк, а кнопка «Открыть файл» показывает файл в редакторе и откладывает решение. Тесты: [ruleTrust.test.ts](../packages/vscode/test/ruleTrust.test.ts). |
 | Б-1 | Команды агента не видят ключей: из окружения убираются переменные с `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`, `AUTH` в имени (кроме `SSH_AUTH_SOCK`). Тесты: [safety.test.ts](../packages/core/test/safety.test.ts). |
+| Б-2 | Опасные команды (`rm -r/-f`, `sudo`, `git push`, `git reset --hard`, `git clean`, `curl … \| sh`, `npm publish`, Связка ключей и др.) всегда спрашиваются с предупреждением, даже в режиме без подтверждений и после «Всегда»; кнопки «Всегда» нет. Панель VS Code и CLI. Тесты: [safety.test.ts](../packages/core/test/safety.test.ts), [webview.test.ts](../packages/vscode/test/webview.test.ts), [cli.test.ts](../packages/cli/test/cli.test.ts). |
 
 **Пока не сделано** (по-прежнему актуально для личной работы):
 

@@ -203,7 +203,7 @@ function handle(msg: ToWebview): void {
       const card =
         msg.kind === "write"
           ? approvalWriteCard(msg.id, msg.relPath, msg.created, msg.diff, post, msg.warning)
-          : approvalCommandCard(msg.id, msg.command, post);
+          : approvalCommandCard(msg.id, msg.command, post, msg.warning);
       approvals.set(msg.id, add(card, currentTurn()));
       card.scrollIntoView({ block: "nearest", behavior: "smooth" });
       activityText.textContent = "Ждёт вашего решения…";

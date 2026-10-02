@@ -103,6 +103,16 @@ describe("chat webview", () => {
     send({ type: "approval_resolved", id: "p1", decision: "deny" });
   });
 
+  it("a dangerous command gets a warning and no Always button", () => {
+    send({ type: "approval_request", id: "c9", kind: "command", command: "git push", warning: "Отправка кода." });
+    const card = $$(".approval").at(-1)!;
+    expect(card.classList.contains("protected")).toBe(true);
+    expect(card.querySelector(".approval-warning")?.textContent).toContain("Отправка кода.");
+    expect([...card.querySelectorAll(".approval-actions .btn")].map((b) => b.textContent)).not.toContain("Всегда");
+    ($$(".approval-actions .btn").find((b) => b.textContent === "Отклонить") as HTMLElement).click();
+    send({ type: "approval_resolved", id: "c9", decision: "deny" });
+  });
+
   it("the rules chip counts untrusted files separately", () => {
     send({
       type: "rules",

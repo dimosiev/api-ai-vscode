@@ -165,13 +165,14 @@ export function approvalWriteCard(id: string, relPath: string, created: boolean,
   );
 }
 
-export function approvalCommandCard(id: string, command: string, post: Post): HTMLElement {
+export function approvalCommandCard(id: string, command: string, post: Post, warning?: string): HTMLElement {
   return h(
     "div",
-    { class: "approval", "data-id": id },
+    { class: `approval${warning ? " protected" : ""}`, "data-id": id },
     h("div", { class: "approval-head" }, svg(ICONS.terminal, "approval-icon"), h("span", { class: "approval-title" }, "Выполнить команду")),
+    warning && h("div", { class: "approval-warning" }, svg(ICONS.warn, "inline-icon"), h("span", {}, `${warning} Такую команду dimosi всегда показывает отдельно, даже без подтверждений. Выполняйте, только если понимаете, что она сделает.`)),
     h("pre", { class: "command" }, `$ ${command}`),
-    approvalButtons(id, post, "Выполнить", "Больше не спрашивать про эту же команду до конца чата"),
+    approvalButtons(id, post, "Выполнить", warning ? undefined : "Больше не спрашивать про эту же команду до конца чата"),
   );
 }
 
