@@ -49,7 +49,7 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
 
 ## Настройки расширения
 
-`dimosi.provider` (`anthropic` | `openai` | `polza` | `openrouter` | `deepseek` | `ollama` | `custom`, по умолчанию `anthropic`), `dimosi.model` (пусто — модель сервиса по умолчанию), `dimosi.customBaseUrl`, `dimosi.approvalMode` (`ask` | `auto`), `dimosi.maxSteps` (50), `dimosi.sandbox` (true), `dimosi.autoUpdate` (true). Все с `"scope": "application"`: действуют только из личных настроек, `.vscode/settings.json` проекта их не меняет. Ключи — в SecretStorage (Keychain), не в настройках. Новая настройка: `packages/vscode/package.json` + таблица в разделе 13 руководства.
+`dimosi.provider` (`anthropic` | `openai` | `polza` | `openrouter` | `deepseek` | `ollama` | `custom`, по умолчанию `anthropic`), `dimosi.model` (пусто — модель сервиса по умолчанию), `dimosi.customBaseUrl`, `dimosi.approvalMode` (`ask` | `auto`), `dimosi.maxSteps` (50), `dimosi.sandbox` (true), `dimosi.autoUpdate` (true). Все с `"scope": "application"`: действуют только из личных настроек, `.vscode/settings.json` проекта их не меняет. Ключи — в SecretStorage (Keychain), не в настройках. Новая настройка: `packages/vscode/package.json` + таблица в разделе 13 руководства. Свой адрес сервиса — только для `custom`/`ollama` и только `https://` (http — для localhost), проверка в `checkBaseUrl` (`presets.ts`).
 
 ## Устройство
 
@@ -67,7 +67,7 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
   - `log.ts` — журнал с маскировкой ключей. Пишет только метаданные, без текста переписки и файлов.
   - `update.ts`, `update-key.ts` — подписанные обновления (Ed25519).
 - `packages/vscode/src` — расширение.
-  - `chatView.ts` — панель чата.
+  - `chatView.ts` — панель чата. Сообщения панели не доверенные: команды только из `PANEL_COMMANDS`, пути через `resolveInRoot`. Новая кнопка с командой — добавь её в `PANEL_COMMANDS`.
   - `chatStore.ts` — сохранение чата в `chat.json` (лимит 20 МБ).
   - `editorFiles.ts` — правки через открытый редактор (`WorkspaceEdit` + сохранение).
   - `changes.ts` — откат.
@@ -76,7 +76,7 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
   - `report.ts` («Сообщить о проблеме»), `errorText.ts`.
 - `packages/vscode/webview` — интерфейс панели (браузерный код). Протокол сообщений — `src/protocol.ts`, общий для обеих сторон.
 - `packages/cli/src` — терминальная версия. Журнал пишется в `~/.config/dimosi/dimosi.log`.
-- `scripts/` — выпуск, упаковка, ключ подписи.
+- `scripts/` — выпуск (ключ спрашивается после тестов и сборки), упаковка, ключ подписи (пишется во временную папку). Тест: `packages/core/test/release.test.ts`.
 - `docs/РУКОВОДСТВО.md` — руководство для владельца. `docs/AUDIT.md` — аудит и таблица «Исправлено».
 
 ## Тесты: как писать

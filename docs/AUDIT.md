@@ -6,7 +6,7 @@
 
 **Решение владельца:** dimosi остаётся личным инструментом и сотрудникам не раздаётся. Поэтому пункты про раздачу (В-12, В-13, В-14, поэтапный выпуск и отзыв доступа в К-4) больше не нужны.
 
-**Исправлено.** Каждое исправление закреплено тестом (ссылки в таблице; ранние — в [packages/core/test/audit.test.ts](../packages/core/test/audit.test.ts) и [update.test.ts](../packages/core/test/update.test.ts)). Всего 291 тест, все зелёные; на каждый push их запускает CI.
+**Исправлено.** Каждое исправление закреплено тестом (ссылки в таблице; ранние — в [packages/core/test/audit.test.ts](../packages/core/test/audit.test.ts) и [update.test.ts](../packages/core/test/update.test.ts)). Всего 328 тестов, все зелёные; на каждый push их запускает CI.
 
 | Пункт | Что сделано |
 |---|---|
@@ -57,6 +57,18 @@
 | Б-22 | Песочница закрывает ещё `~/.config` (кроме `~/.config/git` для чтения), `~/.azure`, `~/.terraform.d`, `~/.claude`, `~/.claude.json`, `~/.gem/credentials`, `~/.cargo/credentials(.toml)`, `~/.gradle/gradle.properties`, `~/.m2/settings.xml`, данные Code - Insiders, Cursor, VSCodium. Тест: [safety.test.ts](../packages/core/test/safety.test.ts). |
 | Б-23 | Фоновые процессы (`сервер &`) останавливаются вместе с командой (POSIX; на Windows как было). Тест: [audit.test.ts](../packages/core/test/audit.test.ts). |
 | Б-24 | Окружение команд: убираются ещё переменные с `PASS`, `PWD` (кроме `PWD`/`OLDPWD`), `DSN`, `COOKIE`, `SESSION`, `_PAT` и все, где в значении адрес с паролем (`postgres://user:пароль@…`). Тест: [safety.test.ts](../packages/core/test/safety.test.ts). |
+| Б-25 | Выпуск: сначала версия, тесты и сборка, ключ подписи спрашивается прямо перед подписью; неверный ключ возвращает версию. Ключ из `DIMOSI_SIGNING_KEY` убирается из окружения сразу после чтения, дочерние программы его не видят; совет про переменную убран из руководства. Тест: [release.test.ts](../packages/core/test/release.test.ts) (скрипт во временной копии с заглушками npm/rsync/ssh). |
+| Б-26 | `npm run signing-key` пишет закрытый ключ во временную папку с правами 0700 (файл 0600), а не на Рабочий стол (iCloud). Тест: [release.test.ts](../packages/core/test/release.test.ts). |
+| Б-27 | Окно подтверждения: длинные строки изменения переносятся. Скрытые символы (U+200B–200F, U+202A–202E, U+2066–2069, U+FEFF) в команде, пути и изменении показываются меткой `⟦U+202E⟧` (панель, CLI, строка хода работы), карточка получает предупреждение «скрытые символы» и не имеет «Всегда». Новые такие символы в изменении считаются, уже бывшие (BOM) — нет. Тесты: [safety.test.ts](../packages/core/test/safety.test.ts), [chat.test.ts](../packages/vscode/test/e2e/chat.test.ts), [webview.test.ts](../packages/vscode/test/webview.test.ts), [cli.test.ts](../packages/cli/test/cli.test.ts). |
+| Б-28 | Сообщения панели проверяются: команда — только из списка 6 кнопок и без аргументов; неизвестный ответ на подтверждение — «нет» (раньше всё, кроме `deny`, было «да»); `open_file`/`attach_path` — только внутри проекта; `open_path` удалён. Тест: [chat.test.ts](../packages/vscode/test/e2e/chat.test.ts). |
+| Б-29 | Адреса сервисов: `https://`, `http://` только для localhost/127.0.0.1/::1; свой адрес только у custom и ollama (`--base-url` для других — ошибка); у anthropic и openai официальный адрес задан явно — проверено, что раньше `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` из окружения уводили ключ. Тесты: [providers.test.ts](../packages/core/test/providers.test.ts), [cli.test.ts](../packages/cli/test/cli.test.ts). |
+| Б-30 | Журнал: маскировка до обрезки (300 символов у ошибок, 160 у инструментов); новые шаблоны: `*_token`, `*_secret`, `*_password`, `Basic …`, `://user:пароль@`, `AIza…`, `ghp_`/`gho_`/`github_pat_`…, JWT, `AKIA…`. Тесты: [log.test.ts](../packages/core/test/log.test.ts). |
+| Б-31 | CLI: `~/.config/dimosi` — 0700 (исправляется при запуске), все файлы в ней — 0600, запись атомарная (временный файл + переименование). Тест: [config.test.ts](../packages/cli/test/config.test.ts). |
+| Б-32 | Windows (проверено только тестами на код): пути к `code.cmd` и `.vsix` в кавычках; `npm` для обновления CLI запускается из папки загрузки, а не проекта (чужой `npm.cmd`). Тесты: [vsixInstall.test.ts](../packages/vscode/test/vsixInstall.test.ts), [config.test.ts](../packages/cli/test/config.test.ts). |
+| Б-33 | Обновления: файл `.vsix`/`.tgz` по имени, дата ГГГГ-ММ-ДД, `latest.json` не больше 64 КБ, файл обновления не больше 100 МБ. Тесты: [update.test.ts](../packages/core/test/update.test.ts). |
+| Б-34 | Файл ключей: scrypt N = 2^17 для новых записей, старые (2^15) открываются. Тест: [secrets.test.ts](../packages/core/test/secrets.test.ts). |
+| Б-35 | CI: `actions/checkout` и `actions/setup-node` закреплены хэшами коммитов. Тест: [release.test.ts](../packages/core/test/release.test.ts). |
+| Б-36 | Не безопасность: полоса прогресса плана не заполнялась — CSP панели отбрасывал атрибут `style`. Теперь `el.style.width`. Тест: [webview.test.ts](../packages/vscode/test/webview.test.ts). |
 
 Ручная проверка после Б-16…Б-24 (2 октября 2026, копия проекта в `~`, настоящая песочница dimosi и её окружение): `git status/add/commit`, `npm ci`, `npm run typecheck`, `npm run build`, `python3 -c 'print(1)'`, `zsh` работают. `npx vitest run`: 279 из 291; падают 12 тестов, которые сами запускают песочницу (вложенная песочница в macOS не стартует) или нарочно пишут вне проекта.
 
