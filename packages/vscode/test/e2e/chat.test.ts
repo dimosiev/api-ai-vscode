@@ -305,4 +305,17 @@ describe("extension start and problem report", () => {
     expect(stub.output.join("\n")).not.toContain(KEY);
     for (const d of context.subscriptions) d.dispose();
   });
+
+  it("project rules created from the template are trusted without asking", async () => {
+    const { activate } = await import("../../src/extension");
+    const { trustDecisions } = await import("../../src/ruleTrust");
+    const { loadRules, rememberingTrust } = await import("@dimosi/core");
+    context.globalState.update("dimosi.welcomed", true);
+    activate(context as never);
+    await stub.commands.get("dimosi.createProjectRules")!();
+    expect(stub.opened).toEqual([path.join(root, ".dimosi/rules.md")]);
+    const rules = await loadRules(root, path.join(root, "none.md"), rememberingTrust(trustDecisions(context as never)));
+    expect(rules.sources.map((s) => [s.label, s.skipped])).toEqual([[".dimosi/rules.md", undefined]]);
+    for (const d of context.subscriptions) d.dispose();
+  });
 });

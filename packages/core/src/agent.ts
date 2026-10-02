@@ -1,7 +1,7 @@
 import { PermissionGate, type ApprovalHandler, type ApprovalMode } from "./permissions";
 import type { Log } from "./log";
 import { buildSystemPrompt, snapshotLayout } from "./prompt";
-import { loadRules, type RuleSource, type RuleTrust } from "./rules";
+import { isProjectRulesFile, loadRules, type RuleSource, type RuleTrust } from "./rules";
 import { IncompleteResponseError } from "./providers/openai";
 import { executeTool, TOOL_DEFINITIONS, type FileAccess, type FileChange, type PlanItem } from "./tools";
 import type {
@@ -35,7 +35,7 @@ export interface AgentOptions {
   files?: FileAccess;
   /** Diagnostic journal: request and tool metadata only, never content. */
   log?: Log;
-  /** Decides on the project's AGENTS.md / CLAUDE.md; without it they are used as is. */
+  /** Decides on the project's rules files (AGENTS.md, CLAUDE.md, .dimosi/); without it they are used as is. */
   ruleTrust?: RuleTrust;
 }
 
@@ -185,6 +185,12 @@ export class Agent {
                 onPlan: (items) => pending.push({ type: "plan", items }),
               });
           this.logTool(call.name, Date.now() - toolStarted, result);
+          for (const e of pending) {
+            // A new rules file the user approved in full is theirs: don't ask about it again.
+            if (e.type === "file_changed" && e.change.oldContent === null && isProjectRulesFile(this.root, e.change.path)) {
+              await this.ruleTrust?.remember?.(e.change.path, e.change.newContent);
+            }
+          }
           results.push({ type: "tool_result", toolCallId: call.id, content: result.content, isError: result.isError });
           yield* pending;
           yield { type: "tool_end", call, result: result.content, isError: result.isError };

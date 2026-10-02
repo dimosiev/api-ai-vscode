@@ -14,6 +14,7 @@ import {
   PRESETS,
   PROJECT_RULES_DIR,
   PROJECT_RULES_TEMPLATE,
+  rememberingTrust,
 } from "@dimosi/core";
 import { errorText } from "./errorText";
 import { PROPOSED_SCHEME, ProposedContentProvider, WebviewApproval } from "./approval";
@@ -117,7 +118,9 @@ export function activate(context: vscode.ExtensionContext): void {
     command("dimosi.createProjectRules", async () => {
       const r = root();
       if (!r) return void vscode.window.showWarningMessage("Сначала откройте папку проекта.");
-      await openOrCreate(path.join(r, PROJECT_RULES_DIR, "rules.md"), PROJECT_RULES_TEMPLATE);
+      const file = path.join(r, PROJECT_RULES_DIR, "rules.md");
+      // dimosi wrote this text itself, so the trust question would be pointless.
+      if (await openOrCreate(file, PROJECT_RULES_TEMPLATE)) await rememberingTrust(trustDecisions(context)).remember?.(file, PROJECT_RULES_TEMPLATE);
     }),
     command("dimosi.generateRules", async () => {
       if (!root()) return void vscode.window.showWarningMessage("Сначала откройте папку проекта.");
@@ -244,14 +247,18 @@ async function welcomeOnFirstRun(context: vscode.ExtensionContext, keys: SecretK
   if (choice === "Импортировать ключи") await vscode.commands.executeCommand("dimosi.importKeys");
 }
 
-async function openOrCreate(filePath: string, template: string): Promise<void> {
+/** Returns true when the file was created from the template. */
+async function openOrCreate(filePath: string, template: string): Promise<boolean> {
+  let created = false;
   try {
     await fs.access(filePath);
   } catch {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, template, "utf8");
+    created = true;
   }
   await vscode.window.showTextDocument(vscode.Uri.file(filePath));
+  return created;
 }
 
 async function showRules(context: vscode.ExtensionContext, root: string | undefined): Promise<void> {

@@ -28,11 +28,14 @@ export interface RuleFile {
 }
 
 /**
- * Decides whether AGENTS.md / CLAUDE.md of a project may become instructions
- * for the agent. A downloaded repository can carry harmful instructions there.
+ * Decides whether a project's rules files (AGENTS.md, CLAUDE.md, .dimosi/)
+ * may become instructions for the agent. A downloaded repository can carry
+ * harmful instructions in any of them.
  */
 export interface RuleTrust {
   isTrusted(file: RuleFile): Promise<boolean>;
+  /** Trusts this exact text without asking: dimosi wrote it for the user. */
+  remember?(filePath: string, text: string): Promise<void>;
 }
 
 /** Where a host keeps trust decisions (VS Code global state, a CLI file). */
@@ -54,6 +57,9 @@ export function ruleHash(filePath: string, text: string): string {
 export function rememberingTrust(decisions: TrustDecisions, ask?: (file: RuleFile) => Promise<boolean | undefined>): RuleTrust {
   const pending = new Map<string, Promise<boolean>>();
   return {
+    async remember(filePath, text) {
+      await decisions.set(ruleHash(filePath, text.trim()), true);
+    },
     async isTrusted(file) {
       const known = decisions.get(file.hash);
       if (known !== undefined) return known;
@@ -100,24 +106,30 @@ async function readIfExists(p: string): Promise<string | undefined> {
   }
 }
 
+/** Whether `abs` is one of the project files loadRules reads. */
+export function isProjectRulesFile(root: string, abs: string): boolean {
+  const rel = path.relative(root, abs).split(path.sep).join("/");
+  return rel === "AGENTS.md" || rel === "CLAUDE.md" || rel === ".dimosi/rules.md" || /^\.dimosi\/rules\/[^/]+\.md$/i.test(rel);
+}
+
 /**
  * Collects rules in priority order: global first, then project files.
- * Re-read on every user message, so edits apply immediately. AGENTS.md and
- * CLAUDE.md come with downloaded projects, so with `trust` they are used
- * only once trusted; the global file and .dimosi/ are the user's own.
+ * Re-read on every user message, so edits apply immediately. Project files
+ * come with downloaded repositories, so with `trust` they are used only once
+ * trusted; only the global file is the user's own for sure.
  */
 export async function loadRules(root: string, globalRulesPath = defaultGlobalRulesPath(), trust?: RuleTrust): Promise<LoadedRules> {
   const candidates: Array<{ scope: RuleSource["scope"]; label: string; path: string; needsTrust?: boolean }> = [
     { scope: "global", label: "Глобальные правила", path: globalRulesPath },
     { scope: "project", label: "AGENTS.md", path: path.join(root, "AGENTS.md"), needsTrust: true },
     { scope: "project", label: "CLAUDE.md", path: path.join(root, "CLAUDE.md"), needsTrust: true },
-    { scope: "project", label: `${PROJECT_RULES_DIR}/rules.md`, path: path.join(root, PROJECT_RULES_DIR, "rules.md") },
+    { scope: "project", label: `${PROJECT_RULES_DIR}/rules.md`, path: path.join(root, PROJECT_RULES_DIR, "rules.md"), needsTrust: true },
   ];
   try {
     const dir = path.join(root, PROJECT_RULES_DIR, "rules");
     const names = (await fs.readdir(dir)).filter((n) => n.toLowerCase().endsWith(".md")).sort();
     for (const n of names) {
-      candidates.push({ scope: "project", label: `${PROJECT_RULES_DIR}/rules/${n}`, path: path.join(dir, n) });
+      candidates.push({ scope: "project", label: `${PROJECT_RULES_DIR}/rules/${n}`, path: path.join(dir, n), needsTrust: true });
     }
   } catch {
     // no rules directory
