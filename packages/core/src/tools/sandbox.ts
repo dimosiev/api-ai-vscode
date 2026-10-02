@@ -85,6 +85,11 @@ function q(p: string): string {
   return `"${p.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+/** Seatbelt regex literal for a path: everything special is escaped. */
+function regexQuote(p: string): string {
+  return p.replace(/[.*+?^${}()|[\]\\/"-]/g, "\\$&");
+}
+
 const inside = (child: string, parent: string) => child === parent || child.startsWith(parent + "/");
 
 /**
@@ -115,8 +120,13 @@ export function sandboxProfile(paths: SandboxPaths): string {
     `(deny file-write* (subpath ${q(path.join(root, ".dimosi"))}))`,
   ];
   // Before `git init` there is nothing to protect, and init must be able to create them.
+  // In a repository: hooks and settings of any repository inside the project
+  // (nested ones, submodules, worktrees), and .git folders themselves, so they
+  // can't be renamed, changed and put back.
   if (existsSync(path.join(root, ".git"))) {
-    lines.push(`(deny file-write* (subpath ${q(path.join(root, ".git/hooks"))}) (literal ${q(path.join(root, ".git/config"))}))`);
+    const git = String.raw`(.*/)?\.git`;
+    const inner = String.raw`/((modules/.+/)|(worktrees/[^/]+/))?(hooks(/|$)|config$|config\.worktree$)`;
+    lines.push(`(deny file-write* (regex #"^${regexQuote(root)}/${git}(${inner}|$)"))`);
   }
   return lines.filter(Boolean).join("\n");
 }

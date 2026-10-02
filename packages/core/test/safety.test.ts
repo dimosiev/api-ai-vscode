@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dangerousCommandWarning, executeTool, PermissionGate, type ApprovalDecision, type ApprovalRequest } from "../src";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { commandEnv, overrideSandboxAvailable, sandboxAvailable, sandboxedCommand, type SandboxPaths } from "../src/tools/sandbox";
 import { isSecretFile } from "../src/tools/workspace";
 
@@ -311,6 +311,33 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
       expect(r.code, f).not.toBe(0);
     }
     expect(readFileSync(path.join(project, ".git/config"), "utf8")).toBe("[core]\n");
+  });
+
+  it("blocks git hooks and settings at any depth, in any letter case, and renaming .git to get around it", () => {
+    for (const d of ["vendor/x/.git/hooks", ".git/modules/s/hooks", ".git/modules/a/modules/b", ".git/worktrees/w"]) mkdirSync(path.join(project, d), { recursive: true });
+    for (const f of [
+      ".GIT/hooks/pre-commit", ".Git/config", "vendor/x/.git/hooks/pre-commit", "vendor/x/.git/config", ".git/config.worktree",
+      ".git/modules/s/hooks/post-checkout", ".git/modules/s/config", ".git/modules/a/modules/b/config", ".git/worktrees/w/config.worktree",
+    ]) {
+      const r = run(`echo x >> ${f}`);
+      expect(r.code, f).not.toBe(0);
+    }
+    for (const cmd of ["mv .git g && echo x > g/hooks/pre-commit && mv g .git", "mv vendor/x/.git vendor/x/g", "rm -rf .git"]) {
+      expect(run(cmd).code, cmd).not.toBe(0);
+    }
+    expect(existsSync(path.join(project, ".git/hooks/pre-commit"))).toBe(false);
+    expect(existsSync(path.join(project, ".git/config"))).toBe(true);
+  });
+
+  it("everyday git still works in a repository", () => {
+    rmSync(path.join(project, ".git"), { recursive: true });
+    expect(spawnSync("git", ["init", "-q"], { cwd: project }).status).toBe(0);
+    const r = run(
+      `echo a > a.txt && git add a.txt && git -c user.name=t -c user.email=t@t commit -qm first && git checkout -qb feature && ` +
+        `git branch config && git stash list && git status --short && git log --oneline | wc -l`,
+    );
+    expect(r.out.trim(), r.out).toBe("1");
+    expect(r.code).toBe(0);
   });
 
   it("blocks writing the agent's own rules in .dimosi", () => {
