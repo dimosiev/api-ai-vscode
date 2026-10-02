@@ -4,7 +4,7 @@
 //   npm run release -- 0.4.0 --notes "Что нового"
 //
 // Needs release.config.json (see release.config.example.json) and the signing
-// key from the password manager: pasted when asked, or in DIMOSI_SIGNING_KEY.
+// key from the password manager, pasted when asked after the checks pass.
 import { execFileSync, execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -13,6 +13,11 @@ import { readReleaseConfig, root } from "./release-config.mjs";
 
 const { MAX_NOTES_CHARS, parseManifest, signManifest, verifyManifest } = await import("../packages/core/src/update.ts");
 const { UPDATE_PUBLIC_KEYS } = await import("../packages/core/src/update-key.ts");
+
+// A key given in the environment is taken once and hidden from everything this
+// script starts: tests, npm scripts and dependencies must never see it.
+const envKey = process.env.DIMOSI_SIGNING_KEY;
+delete process.env.DIMOSI_SIGNING_KEY;
 
 const args = process.argv.slice(2);
 const notesIndex = args.indexOf("--notes");
@@ -36,16 +41,9 @@ const PACKAGES = ["package.json", "packages/core/package.json", "packages/cli/pa
 // 0. The release must match a commit, so it can be found and rebuilt later.
 if (git("status", "--porcelain")) fail("Есть незакоммиченные изменения. Сначала закоммитьте их (git commit), потом выпускайте.");
 
-// 1. Signing key: checked first, so a wrong paste fails before any work.
-const privateKey = (process.env.DIMOSI_SIGNING_KEY ?? (await askHidden("Вставьте ключ подписи из Bitwarden и нажмите Enter: "))).replace(/[^A-Za-z0-9+/=]/g, "");
-try {
-  const probe = { version: "0.0.0", vsix: { file: "probe.vsix", sha256: "0".repeat(64) } };
-  verifyManifest({ ...probe, signature: signManifest(probe, privateKey) }, UPDATE_PUBLIC_KEYS);
-} catch {
-  fail("Этот ключ не подходит к открытому ключу в packages/core/src/update-key.ts. Проверьте, что скопировали ключ целиком.");
-}
+const revertVersion = () => execFileSync("git", ["checkout", "--", ...PACKAGES, "package-lock.json"], { cwd: root });
 
-// 2. Version
+// 1. Version
 const current = JSON.parse(readFileSync(join(root, "packages/vscode/package.json"), "utf8")).version;
 const next = versionArg ?? current.replace(/\d+$/, (n) => String(Number(n) + 1));
 if (!/^\d+\.\d+\.\d+$/.test(next)) fail(`Неверная версия: ${next}`);
@@ -59,15 +57,27 @@ for (const p of PACKAGES) {
 }
 console.log(`\n▶ Версия ${current} → ${next}\n`);
 
-// 3. Checks and build (the update URL is baked in from release.config.json)
+// 2. Checks and build (the update URL is baked in from release.config.json).
+//    They run before the key is asked for: the key lives in memory only for
+//    the few seconds of signing, and no package script runs while it is there.
 try {
   run("npm install --package-lock-only --ignore-scripts --silent");
   run("npm test");
   run("npm run typecheck");
   run("npm run package");
 } catch {
-  execFileSync("git", ["checkout", "--", ...PACKAGES, "package-lock.json"], { cwd: root });
+  revertVersion();
   fail("Проверки или сборка не прошли — ничего не опубликовано, версия возвращена.");
+}
+
+// 3. Signing key, checked before use.
+const privateKey = (envKey ?? (await askHidden("Проверки прошли. Вставьте ключ подписи из Bitwarden и нажмите Enter: "))).replace(/[^A-Za-z0-9+/=]/g, "");
+try {
+  const probe = { version: "0.0.0", vsix: { file: "probe.vsix", sha256: "0".repeat(64) } };
+  verifyManifest({ ...probe, signature: signManifest(probe, privateKey) }, UPDATE_PUBLIC_KEYS);
+} catch {
+  revertVersion();
+  fail("Этот ключ не подходит к открытому ключу в packages/core/src/update-key.ts. Проверьте, что скопировали ключ целиком. Версия возвращена, запустите выпуск заново.");
 }
 
 // 4. Signed manifest
@@ -110,7 +120,10 @@ console.log(`  Создан коммит «Release ${next}» и метка v${ne
 
 /** Reads a line without showing it on screen. */
 function askHidden(question) {
-  if (!process.stdin.isTTY) fail("Нет терминала для ввода ключа. Передайте его в переменной DIMOSI_SIGNING_KEY.");
+  if (!process.stdin.isTTY) {
+    revertVersion();
+    fail("Нет терминала для ввода ключа. Запустите выпуск в обычном терминале.");
+  }
   process.stdout.write(question);
   process.stdin.setRawMode(true);
   process.stdin.setEncoding("utf8");
