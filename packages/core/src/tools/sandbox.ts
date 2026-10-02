@@ -31,11 +31,17 @@ const HOME_PRIVATE = [
   ".ssh", ".aws", ".gnupg", ".kube", ".docker", ".password-store", ".config/gh",
   // Tokens in plain text: git's "store" helper, curl/ftp, npm and PyPI logins.
   ".git-credentials", ".config/git/credentials", ".netrc", ".npmrc", ".pypirc",
-  ".zsh_history", ".bash_history",
+  // Shell settings and history: tokens are often exported there.
+  ".zsh_history", ".bash_history", ".zsh_sessions", ".zshrc", ".zprofile", ".zshenv", ".bashrc", ".bash_profile", ".profile",
   "Documents", "Desktop", "Downloads", "Pictures", "Movies", "Music",
   "Library/Keychains", "Library/Mail", "Library/Messages", "Library/Safari", "Library/Cookies",
   "Library/Mobile Documents",
+  // Data of App Store apps (Telegram, WhatsApp, Notes...) and of messengers.
+  "Library/Containers", "Library/Group Containers",
+  "Library/Application Support/Slack", "Library/Application Support/Telegram Desktop", "Library/Application Support/Bitwarden",
   "Library/Application Support/Google/Chrome", "Library/Application Support/Firefox",
+  "Library/Application Support/Yandex", "Library/Application Support/BraveSoftware",
+  "Library/Application Support/Arc", "Library/Application Support/Microsoft Edge",
   "Library/Application Support/Code",
 ];
 

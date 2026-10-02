@@ -170,6 +170,11 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
     mkdirSync(path.join(home, ".ssh"));
     writeFileSync(path.join(home, ".ssh/id_ed25519"), "PRIVATE");
     writeFileSync(path.join(home, ".git-credentials"), "https://user:PRIVATE@github.com");
+    writeFileSync(path.join(home, ".zshrc"), "export GITHUB_TOKEN=PRIVATE");
+    for (const dir of ["Library/Group Containers/x.Telegram", "Library/Containers/x.WhatsApp", "Library/Application Support/Slack"]) {
+      mkdirSync(path.join(home, dir), { recursive: true });
+      writeFileSync(path.join(home, dir, "data"), "PRIVATE");
+    }
     mkdirSync(path.join(home, "Documents/other"), { recursive: true });
     writeFileSync(path.join(home, "Documents/other/diary.txt"), "DIARY");
     mkdirSync(path.join(home, ".config/dimosi"), { recursive: true });
@@ -201,7 +206,10 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
   });
 
   it("blocks reading keys, dimosi settings and other personal folders", () => {
-    for (const f of [".ssh/id_ed25519", ".git-credentials", "Documents/other/diary.txt", ".config/dimosi/keys"]) {
+    for (const f of [
+      ".ssh/id_ed25519", ".git-credentials", ".zshrc", "Documents/other/diary.txt", ".config/dimosi/keys",
+      "Library/Group Containers/x.Telegram/data", "Library/Containers/x.WhatsApp/data", "Library/Application Support/Slack/data",
+    ]) {
       const r = run(`cat "${home}/${f}"`);
       expect(r.code, f).not.toBe(0);
       expect(r.out).not.toMatch(/PRIVATE|DIARY|KEYS/);
