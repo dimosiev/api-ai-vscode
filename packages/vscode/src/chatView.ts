@@ -20,6 +20,7 @@ import { fileAttachment, imageAttachment, type Attachment } from "./attachments"
 import { ChangeTracker } from "./changes";
 import { editorFiles } from "./editorFiles";
 import { log } from "./log";
+import { vscodeRuleTrust } from "./ruleTrust";
 import {
   CHAT_FORMAT,
   deleteChatFile,
@@ -351,7 +352,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     // Keep the conversation unless the folder changed.
     if (!this.agent || this.agent.root !== root) {
-      this.agent = new Agent({ provider, model: settings.model, root, approval: this.approval, files: editorFiles, log });
+      this.agent = new Agent({
+        provider,
+        model: settings.model,
+        root,
+        approval: this.approval,
+        files: editorFiles,
+        log,
+        ruleTrust: vscodeRuleTrust(this.context),
+      });
       if (this.restoredMessages) this.agent.restore(this.restoredMessages);
       this.restoredMessages = undefined;
     }
@@ -411,7 +420,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           case "rules":
             this.post({
               type: "rules",
-              rules: ev.sources.map((r) => ({ label: r.label, path: r.path, scope: r.scope, truncated: r.truncated })),
+              rules: ev.sources.map((r) => ({ label: r.label, path: r.path, scope: r.scope, truncated: r.truncated, skipped: r.skipped })),
             });
             break;
           case "text":

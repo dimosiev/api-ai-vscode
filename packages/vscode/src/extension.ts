@@ -21,6 +21,7 @@ import { ChatViewProvider } from "./chatView";
 import { SecretKeyStore } from "./keyStore";
 import { log } from "./log";
 import { buildProblemReport, serverOrigin } from "./report";
+import { askAboutRules, trustDecisions } from "./ruleTrust";
 import { buildProvider, readSettings, updateSetting } from "./settings";
 import { Updater } from "./updater";
 
@@ -110,7 +111,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     // Rules
-    command("dimosi.showRules", () => showRules(root())),
+    command("dimosi.showRules", () => showRules(context, root())),
     command("dimosi.openGlobalRules", () => openOrCreate(defaultGlobalRulesPath(), GLOBAL_RULES_TEMPLATE)),
     command("dimosi.createProjectRules", async () => {
       const r = root();
@@ -252,13 +253,29 @@ async function openOrCreate(filePath: string, template: string): Promise<void> {
   await vscode.window.showTextDocument(vscode.Uri.file(filePath));
 }
 
-async function showRules(root: string | undefined): Promise<void> {
-  const rules = root ? await loadRules(root) : { sources: [] };
+async function showRules(context: vscode.ExtensionContext, root: string | undefined): Promise<void> {
+  // Lists without asking: undecided files are asked about when a task starts, or from here.
+  const decisions = trustDecisions(context);
+  const rules = root ? await loadRules(root, undefined, { isTrusted: async (f) => decisions.get(f.hash) ?? false }) : { sources: [] };
   type Item = vscode.QuickPickItem & { run: () => unknown };
   const items: Item[] = [];
   if (rules.sources.length) {
-    items.push({ label: "Действуют сейчас", kind: vscode.QuickPickItemKind.Separator, run: () => {} });
+    items.push({ label: "Файлы правил", kind: vscode.QuickPickItemKind.Separator, run: () => {} });
     for (const r of rules.sources) {
+      if (r.skipped) {
+        const denied = decisions.get(r.hash!) === false;
+        items.push({
+          label: `$(shield) ${r.label}`,
+          description: denied ? "не подключён: вы не доверяете — выберите, чтобы решить заново" : "не подключён: ждёт вашего решения — выберите, чтобы решить",
+          detail: r.path,
+          run: async () => {
+            const text = await fs.readFile(r.path, "utf8");
+            const answer = await askAboutRules({ label: r.label, path: r.path, text: text.trim(), hash: r.hash! });
+            if (answer !== undefined) await decisions.set(r.hash!, answer);
+          },
+        });
+        continue;
+      }
       items.push({
         label: `${r.scope === "global" ? "$(globe)" : "$(folder)"} ${r.label}`,
         description: r.truncated ? "обрезано — файл слишком большой" : `${r.chars} символов`,

@@ -1,7 +1,7 @@
 import { PermissionGate, type ApprovalHandler, type ApprovalMode } from "./permissions";
 import type { Log } from "./log";
 import { buildSystemPrompt, snapshotLayout } from "./prompt";
-import { loadRules, type RuleSource } from "./rules";
+import { loadRules, type RuleSource, type RuleTrust } from "./rules";
 import { IncompleteResponseError } from "./providers/openai";
 import { executeTool, TOOL_DEFINITIONS, type FileAccess, type FileChange, type PlanItem } from "./tools";
 import type {
@@ -33,6 +33,8 @@ export interface AgentOptions {
   files?: FileAccess;
   /** Diagnostic journal: request and tool metadata only, never content. */
   log?: Log;
+  /** Decides on the project's AGENTS.md / CLAUDE.md; without it they are used as is. */
+  ruleTrust?: RuleTrust;
 }
 
 export type AgentEvent =
@@ -68,6 +70,7 @@ export class Agent {
   private globalRulesPath?: string;
   private files?: FileAccess;
   private log?: Log;
+  private ruleTrust?: RuleTrust;
   private layout?: string;
   private running = false;
 
@@ -81,6 +84,7 @@ export class Agent {
     this.globalRulesPath = opts.globalRulesPath;
     this.files = opts.files;
     this.log = opts.log;
+    this.ruleTrust = opts.ruleTrust;
     this.gate = new PermissionGate(opts.approval, opts.mode ?? "ask");
   }
 
@@ -124,7 +128,7 @@ export class Agent {
 
     try {
       // Rules are re-read on every message so edits apply immediately.
-      const rules = await loadRules(this.root, this.globalRulesPath);
+      const rules = await loadRules(this.root, this.globalRulesPath, this.ruleTrust);
       yield { type: "rules", sources: rules.sources };
       this.layout ??= await snapshotLayout(this.root);
       const system = buildSystemPrompt({ root: this.root, layout: this.layout, rules });

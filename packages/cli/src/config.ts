@@ -52,6 +52,27 @@ export async function loadConfig(): Promise<CliConfig> {
   }
 }
 
+const trustPath = () => path.join(configDir(), "trusted-rules.json");
+
+/** Trust decisions for project AGENTS.md / CLAUDE.md, by hash of path and text. */
+export async function loadTrustDecisions(): Promise<{ get(hash: string): boolean | undefined; set(hash: string, trusted: boolean): Promise<void> }> {
+  let all: Record<string, boolean> = {};
+  try {
+    const raw = JSON.parse(await fs.readFile(trustPath(), "utf8"));
+    if (raw && typeof raw === "object") all = raw;
+  } catch {
+    // none yet
+  }
+  return {
+    get: (hash) => (typeof all[hash] === "boolean" ? all[hash] : undefined),
+    async set(hash, trusted) {
+      all = { ...all, [hash]: trusted };
+      await fs.mkdir(configDir(), { recursive: true });
+      await fs.writeFile(trustPath(), JSON.stringify(all, null, 2) + "\n", "utf8");
+    },
+  };
+}
+
 export async function saveConfig(config: CliConfig): Promise<void> {
   await fs.mkdir(configDir(), { recursive: true });
   await fs.writeFile(configPath(), JSON.stringify(config, null, 2) + "\n", "utf8");

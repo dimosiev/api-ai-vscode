@@ -18,10 +18,12 @@ import {
   getPreset,
   maskKey,
   PRESETS,
+  rememberingTrust,
   type ApprovalHandler,
   type Provider,
+  type RuleFile,
 } from "@dimosi/core";
-import { configDir, loadConfig, migrateLegacyConfig, saveConfig, type CliConfig } from "./config";
+import { configDir, loadConfig, loadTrustDecisions, migrateLegacyConfig, saveConfig, type CliConfig } from "./config";
 import { EncryptedFileKeyStore, keyFileExists, keyFilePath } from "./keystore";
 import { fileSink, log, logFilePath } from "./log";
 import { c, Prompter, renderDiff } from "./ui";
@@ -281,13 +283,17 @@ function printPlan(items: PlanItem[]): void {
 }
 
 async function printRules(root: string): Promise<void> {
-  const rules = await loadRules(root);
+  const decisions = await loadTrustDecisions();
+  const rules = await loadRules(root, undefined, { isTrusted: async (f) => decisions.get(f.hash) ?? false });
   if (!rules.sources.length) {
     console.log("Правил пока нет.");
   } else {
-    console.log(c.bold("Действующие правила:"));
+    console.log(c.bold("Файлы правил:"));
     for (const r of rules.sources) {
-      console.log(`  ${r.scope === "global" ? "🌐" : "📁"} ${r.label}  ${c.dim(r.path)}${r.truncated ? c.yellow(" (обрезано)") : ""}`);
+      const note = r.skipped
+        ? c.yellow(decisions.get(r.hash!) === false ? " (не подключён: вы не доверяете)" : " (не подключён: dimosi спросит при следующей задаче)")
+        : r.truncated ? c.yellow(" (обрезано)") : "";
+      console.log(`  ${r.scope === "global" ? "🌐" : "📁"} ${r.label}  ${c.dim(r.path)}${note}`);
     }
   }
   console.log(c.dim(`Глобальные: ${defaultGlobalRulesPath()}. Проектные: AGENTS.md, .dimosi/rules.md, .dimosi/rules/*.md`));
@@ -317,6 +323,20 @@ async function cmdLog(): Promise<void> {
   console.log(text.trimEnd().split("\n").slice(-40).join("\n") || "Журнал пока пуст.");
 }
 
+/** Shows a project's AGENTS.md / CLAUDE.md and asks whether to follow it. Enter alone means "not now". */
+async function askAboutRules(io: Prompter, file: RuleFile): Promise<boolean | undefined> {
+  const lines = file.text.split("\n");
+  console.log();
+  console.log(c.yellow(c.bold(`В проекте найден ${file.label} (впервые или изменился): ${file.path}`)));
+  console.log(c.dim("Его текст станет указаниями для агента. В чужом проекте там могут быть вредные указания."));
+  console.log(lines.slice(0, 40).map((l) => `  │ ${l}`).join("\n"));
+  if (lines.length > 40) console.log(c.dim(`  │ ... ещё ${lines.length - 40} строк, полностью: ${file.path}`));
+  const answer = ((await io.ask(c.yellow(`Доверять правилам из ${file.label}? [y] да / [n] нет: `))) ?? "").toLowerCase();
+  if (["y", "yes", "д", "да"].includes(answer)) return true;
+  if (["n", "no", "н", "нет"].includes(answer)) return false;
+  return undefined;
+}
+
 // ---------- chat ----------
 
 async function chat(flags: Flags, io: Prompter): Promise<void> {
@@ -331,19 +351,22 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
   const approval: ApprovalHandler = {
     async approve(req) {
       console.log();
+      const warning = req.kind === "write" ? req.warning : undefined;
       if (req.kind === "write") {
         console.log(c.yellow(c.bold(req.oldContent === null ? `Создать файл ${req.relPath}` : `Изменить файл ${req.relPath}`)));
+        if (warning) console.log(c.red(c.bold(`⚠ ${warning} Такой файл dimosi всегда показывает отдельно, даже без подтверждений.`)));
         console.log(renderDiff(req.relPath, req.oldContent, req.newContent));
       } else {
         console.log(c.yellow(c.bold("Выполнить команду:")));
         console.log(`  $ ${req.command}`);
       }
-      const answer = (
-        (await io.ask(c.yellow(req.kind === "write" ? "Разрешить? [y] да / [n] нет / [a] да, и не спрашивать про файлы до конца сессии: " : "Разрешить? [y] да / [n] нет / [a] да, и не спрашивать про эту же команду: "), {
-          signal: controller?.signal,
-        })) ?? ""
-      ).toLowerCase();
-      if (["a", "а", "always", "всегда", "в"].includes(answer)) return "allow_always";
+      const question = warning
+        ? "Разрешить? [y] да / [n] нет: "
+        : req.kind === "write"
+          ? "Разрешить? [y] да / [n] нет / [a] да, и не спрашивать про файлы до конца сессии: "
+          : "Разрешить? [y] да / [n] нет / [a] да, и не спрашивать про эту же команду: ";
+      const answer = ((await io.ask(c.yellow(question), { signal: controller?.signal })) ?? "").toLowerCase();
+      if (["a", "а", "always", "всегда", "в"].includes(answer)) return warning ? "allow" : "allow_always";
       if (["y", "yes", "д", "да"].includes(answer)) return "allow";
       return "deny";
     },
@@ -357,6 +380,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
     mode: flags.auto ? "auto" : config.mode,
     contextWindow: getPreset(presetId).contextWindow,
     log,
+    ruleTrust: rememberingTrust(await loadTrustDecisions(), (file) => askAboutRules(io, file)),
   });
   log.info(`chat: provider ${presetId}, model ${agent.model}, approvals ${agent.gate.mode}`);
 

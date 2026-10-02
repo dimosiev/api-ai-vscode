@@ -85,6 +85,36 @@ describe("chat webview", () => {
     expect(card.textContent).toContain("Разрешено");
   });
 
+  it("a file that runs code later gets a warning and no Always button", () => {
+    send({
+      type: "approval_request",
+      id: "p1",
+      kind: "write",
+      relPath: ".vscode/tasks.json",
+      created: true,
+      diff: { rows: [{ t: "add", text: "{}", new: 1 }], added: 1, removed: 0, truncated: false },
+      warning: "Это файл настроек VS Code.",
+    });
+    const card = $$(".approval").at(-1)!;
+    expect(card.classList.contains("protected")).toBe(true);
+    expect(card.querySelector(".approval-warning")?.textContent).toContain("Это файл настроек VS Code.");
+    expect([...card.querySelectorAll(".approval-actions .btn")].map((b) => b.textContent)).not.toContain("Всегда");
+    ($$(".approval-actions .btn").find((b) => b.textContent === "Отклонить") as HTMLElement).click();
+    send({ type: "approval_resolved", id: "p1", decision: "deny" });
+  });
+
+  it("the rules chip counts untrusted files separately", () => {
+    send({
+      type: "rules",
+      rules: [
+        { label: ".dimosi/rules.md", path: "/p/.dimosi/rules.md", scope: "project", truncated: false },
+        { label: "AGENTS.md", path: "/p/AGENTS.md", scope: "project", truncated: false, skipped: true },
+      ],
+    });
+    expect($(".rules-chip")?.textContent).toBe("Правила: 1 · не доверено: 1");
+    expect($(".rules-chip")?.title).toContain("Не подключены (вы им не доверяете):\n• AGENTS.md");
+  });
+
   it("command approvals can be denied", () => {
     send({ type: "approval_request", id: "a2", kind: "command", command: "npm test" });
     const card = $$(".approval").at(-1)!;

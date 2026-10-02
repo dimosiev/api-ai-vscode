@@ -24,6 +24,8 @@ export interface RuleView {
   path: string;
   scope: "global" | "project";
   truncated: boolean;
+  /** Not used: the user has not trusted this file. */
+  skipped?: boolean;
 }
 
 export interface ChangedFileView {
@@ -58,7 +60,16 @@ export type ToWebview =
   | { type: "tool_start"; id: number; title: string; name: string }
   | { type: "tool_end"; id: number; result: string; isError: boolean }
   | { type: "plan"; items: PlanItemView[] }
-  | { type: "approval_request"; id: string; kind: "write"; relPath: string; created: boolean; diff: DiffView }
+  | {
+      type: "approval_request";
+      id: string;
+      kind: "write";
+      relPath: string;
+      created: boolean;
+      diff: DiffView;
+      /** A file that can run code later: shown as a warning, and "Always" is not offered. */
+      warning?: string;
+    }
   | { type: "approval_request"; id: string; kind: "command"; command: string }
   | { type: "approval_resolved"; id: string; decision: "allow" | "deny" | "allow_always" }
   | { type: "changes"; turn: number; files: ChangedFileView[] }

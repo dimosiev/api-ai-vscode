@@ -142,10 +142,10 @@ function diffTable(diff: DiffView): HTMLElement {
   return table;
 }
 
-export function approvalWriteCard(id: string, relPath: string, created: boolean, diff: DiffView, post: Post): HTMLElement {
+export function approvalWriteCard(id: string, relPath: string, created: boolean, diff: DiffView, post: Post, warning?: string): HTMLElement {
   return h(
     "div",
-    { class: "approval", "data-id": id },
+    { class: `approval${warning ? " protected" : ""}`, "data-id": id },
     h(
       "div",
       { class: "approval-head" },
@@ -153,8 +153,15 @@ export function approvalWriteCard(id: string, relPath: string, created: boolean,
       h("span", { class: "approval-title" }, created ? "Создать файл " : "Изменить файл ", h("b", {}, relPath)),
       h("span", { class: "stat" }, h("span", { class: "plus" }, `+${diff.added}`), " ", h("span", { class: "minus" }, `−${diff.removed}`)),
     ),
+    warning && h("div", { class: "approval-warning" }, svg(ICONS.warn, "inline-icon"), h("span", {}, `${warning} Такой файл dimosi всегда показывает отдельно, даже без подтверждений. Применяйте, только если понимаете изменение.`)),
     diffTable(diff),
-    approvalButtons(id, post, "Применить", "Больше не спрашивать про запись файлов до конца чата", h("button", { class: "btn link", onclick: () => post({ type: "open_diff", id }) }, svg(ICONS.diff, "inline-icon"), "Открыть сравнение")),
+    approvalButtons(
+      id,
+      post,
+      "Применить",
+      warning ? undefined : "Больше не спрашивать про запись файлов до конца чата",
+      h("button", { class: "btn link", onclick: () => post({ type: "open_diff", id }) }, svg(ICONS.diff, "inline-icon"), "Открыть сравнение"),
+    ),
   );
 }
 
@@ -168,14 +175,15 @@ export function approvalCommandCard(id: string, command: string, post: Post): HT
   );
 }
 
-function approvalButtons(id: string, post: Post, allowLabel: string, alwaysTitle: string, extra?: HTMLElement): HTMLElement {
+/** Without `alwaysTitle` there is no "Always" button. */
+function approvalButtons(id: string, post: Post, allowLabel: string, alwaysTitle: string | undefined, extra?: HTMLElement): HTMLElement {
   const send = (decision: "allow" | "deny" | "allow_always") => post({ type: "approval_response", id, decision });
   return h(
     "div",
     { class: "approval-actions" },
     h("button", { class: "btn primary", onclick: () => send("allow") }, allowLabel),
     h("button", { class: "btn", onclick: () => send("deny") }, "Отклонить"),
-    h("button", { class: "btn subtle", title: alwaysTitle, onclick: () => send("allow_always") }, "Всегда"),
+    alwaysTitle && h("button", { class: "btn subtle", title: alwaysTitle, onclick: () => send("allow_always") }, "Всегда"),
     extra && h("span", { class: "spacer" }),
     extra,
   );
@@ -219,15 +227,21 @@ export function changesCard(turn: number, files: ChangedFileView[], post: Post):
   );
 }
 
-export function rulesChip(rules: RuleView[], post: Post): HTMLElement {
+export function rulesChip(all: RuleView[], post: Post): HTMLElement {
+  const rules = all.filter((r) => !r.skipped);
+  const skipped = all.filter((r) => r.skipped);
+  const lines = [
+    rules.length ? `Агент следует правилам:\n${rules.map((r) => "• " + r.label).join("\n")}` : "Правил нет — нажмите, чтобы создать",
+    skipped.length ? `Не подключены (вы им не доверяете):\n${skipped.map((r) => "• " + r.label).join("\n")}` : "",
+  ];
   return h(
     "button",
     {
       class: `chip rules-chip${rules.length ? "" : " empty"}`,
-      title: rules.length ? `Агент следует правилам:\n${rules.map((r) => "• " + r.label).join("\n")}` : "Правил нет — нажмите, чтобы создать",
+      title: lines.filter(Boolean).join("\n\n"),
       onclick: () => post({ type: "command", command: "dimosi.showRules" }),
     },
     svg(ICONS.book, "chip-icon"),
-    h("span", { class: "chip-label" }, rules.length ? `Правила: ${rules.length}` : "Без правил"),
+    h("span", { class: "chip-label" }, (rules.length ? `Правила: ${rules.length}` : "Без правил") + (skipped.length ? ` · не доверено: ${skipped.length}` : "")),
   );
 }

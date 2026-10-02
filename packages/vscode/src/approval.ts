@@ -68,6 +68,7 @@ export class WebviewApproval implements ApprovalHandler {
           relPath: req.relPath,
           created: req.oldContent === null,
           diff: buildDiffView(req.oldContent, req.newContent),
+          warning: req.warning,
         });
       } else {
         this.ui.post({ type: "approval_request", id, kind: "command", command: req.command });

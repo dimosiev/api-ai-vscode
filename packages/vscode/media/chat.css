@@ -672,6 +672,27 @@ code {
   color: var(--del-fg);
 }
 
+.approval.protected:not(.resolved) {
+  border-color: var(--vscode-inputValidation-warningBorder, #cca700);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-inputValidation-warningBorder, #cca700) 25%, transparent);
+}
+
+.approval-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-inputValidation-warningBackground, transparent);
+  color: var(--vscode-editorWarning-foreground, inherit);
+  line-height: 1.45;
+}
+
+.approval-warning .inline-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
 .approval-actions {
   display: flex;
   flex-wrap: wrap;

@@ -202,7 +202,7 @@ function handle(msg: ToWebview): void {
       textEl = null;
       const card =
         msg.kind === "write"
-          ? approvalWriteCard(msg.id, msg.relPath, msg.created, msg.diff, post)
+          ? approvalWriteCard(msg.id, msg.relPath, msg.created, msg.diff, post, msg.warning)
           : approvalCommandCard(msg.id, msg.command, post);
       approvals.set(msg.id, add(card, currentTurn()));
       card.scrollIntoView({ block: "nearest", behavior: "smooth" });

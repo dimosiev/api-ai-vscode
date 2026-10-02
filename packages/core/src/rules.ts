@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -12,6 +13,64 @@ export interface RuleSource {
   path: string;
   chars: number;
   truncated: boolean;
+  /** For files that need trust: decisions are remembered by this hash of path and text. */
+  hash?: string;
+  /** Not used: the user has not trusted this file (yet). */
+  skipped?: boolean;
+}
+
+/** A rules file from the project that the user did not write through dimosi. */
+export interface RuleFile {
+  label: string;
+  path: string;
+  text: string;
+  hash: string;
+}
+
+/**
+ * Decides whether AGENTS.md / CLAUDE.md of a project may become instructions
+ * for the agent. A downloaded repository can carry harmful instructions there.
+ */
+export interface RuleTrust {
+  isTrusted(file: RuleFile): Promise<boolean>;
+}
+
+/** Where a host keeps trust decisions (VS Code global state, a CLI file). */
+export interface TrustDecisions {
+  get(hash: string): boolean | undefined;
+  set(hash: string, trusted: boolean): unknown;
+}
+
+/** Changes whenever the file's text changes, so an edited file is asked about again. */
+export function ruleHash(filePath: string, text: string): string {
+  return createHash("sha256").update(`${filePath}\0${text}`).digest("hex");
+}
+
+/**
+ * Asks once per file version and remembers the answer. A dismissed question
+ * (`ask` gives undefined) means "not now" and is asked again next time.
+ * Without `ask`, unknown files are simply not trusted.
+ */
+export function rememberingTrust(decisions: TrustDecisions, ask?: (file: RuleFile) => Promise<boolean | undefined>): RuleTrust {
+  const pending = new Map<string, Promise<boolean>>();
+  return {
+    async isTrusted(file) {
+      const known = decisions.get(file.hash);
+      if (known !== undefined) return known;
+      if (!ask) return false;
+      let answer = pending.get(file.hash);
+      if (!answer) {
+        answer = ask(file)
+          .then(async (a) => {
+            if (a !== undefined) await decisions.set(file.hash, a);
+            return a ?? false;
+          })
+          .finally(() => pending.delete(file.hash));
+        pending.set(file.hash, answer);
+      }
+      return answer;
+    },
+  };
 }
 
 export interface LoadedRules {
@@ -43,13 +102,15 @@ async function readIfExists(p: string): Promise<string | undefined> {
 
 /**
  * Collects rules in priority order: global first, then project files.
- * Re-read on every user message, so edits apply immediately.
+ * Re-read on every user message, so edits apply immediately. AGENTS.md and
+ * CLAUDE.md come with downloaded projects, so with `trust` they are used
+ * only once trusted; the global file and .dimosi/ are the user's own.
  */
-export async function loadRules(root: string, globalRulesPath = defaultGlobalRulesPath()): Promise<LoadedRules> {
-  const candidates: Array<{ scope: RuleSource["scope"]; label: string; path: string }> = [
+export async function loadRules(root: string, globalRulesPath = defaultGlobalRulesPath(), trust?: RuleTrust): Promise<LoadedRules> {
+  const candidates: Array<{ scope: RuleSource["scope"]; label: string; path: string; needsTrust?: boolean }> = [
     { scope: "global", label: "Глобальные правила", path: globalRulesPath },
-    { scope: "project", label: "AGENTS.md", path: path.join(root, "AGENTS.md") },
-    { scope: "project", label: "CLAUDE.md", path: path.join(root, "CLAUDE.md") },
+    { scope: "project", label: "AGENTS.md", path: path.join(root, "AGENTS.md"), needsTrust: true },
+    { scope: "project", label: "CLAUDE.md", path: path.join(root, "CLAUDE.md"), needsTrust: true },
     { scope: "project", label: `${PROJECT_RULES_DIR}/rules.md`, path: path.join(root, PROJECT_RULES_DIR, "rules.md") },
   ];
   try {
@@ -68,11 +129,16 @@ export async function loadRules(root: string, globalRulesPath = defaultGlobalRul
   for (const c of candidates) {
     const raw = (await readIfExists(c.path))?.trim();
     if (!raw || budget <= 0) continue;
+    const hash = c.needsTrust ? ruleHash(c.path, raw) : undefined;
+    if (hash && trust && !(await trust.isTrusted({ label: c.label, path: c.path, text: raw, hash }))) {
+      sources.push({ scope: c.scope, label: c.label, path: c.path, chars: raw.length, truncated: false, hash, skipped: true });
+      continue;
+    }
     const limit = Math.min(MAX_RULE_FILE_CHARS, budget);
     const truncated = raw.length > limit;
     const body = truncated ? raw.slice(0, limit) + "\n[... обрезано: файл слишком большой]" : raw;
     budget -= body.length;
-    sources.push({ scope: c.scope, label: c.label, path: c.path, chars: raw.length, truncated });
+    sources.push({ scope: c.scope, label: c.label, path: c.path, chars: raw.length, truncated, hash });
     blocks.push(`## ${c.label}${c.scope === "global" ? " (from the user, apply to every project)" : ""}\n${body}`);
   }
   return { sources, text: blocks.join("\n\n") };
