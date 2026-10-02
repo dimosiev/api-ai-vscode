@@ -467,6 +467,13 @@ function runShell(command: string, cwd: string, timeoutMs: number, signal?: Abor
       // Background processes may still hold the pipes open; stop listening to them.
       child.stdout.destroy();
       child.stderr.destroy();
+      // ...and stop them: a forgotten `server &` would keep running unseen and
+      // unsupervised. Its group outlives the shell (POSIX; on Windows the tree
+      // can't be found once the parent is gone).
+      if (!isWindows && !stopReason) {
+        killTree(child.pid, "SIGTERM");
+        setTimeout(() => killTree(child.pid, "SIGKILL"), 2000).unref();
+      }
       output.append(decoders[0].end() + decoders[1].end());
       resolve(`${header}\n${output.text().trim() || "(no output)"}`);
     };

@@ -69,6 +69,20 @@ describe("AUDIT-02: run_command and child processes", () => {
   }, 15_000);
 });
 
+describe("background processes", () => {
+  it("do not outlive a command that finished normally", async () => {
+    const root = tmp("dimosi-audit-bg-");
+    const r = await run(root, "run_command", {
+      command: "sleep 30 >/dev/null 2>&1 & echo $! > bg.pid; sh -c 'trap \"\" TERM; echo $$ > stubborn.pid; exec sleep 30' >/dev/null 2>&1 & while [ ! -s stubborn.pid ]; do sleep 0.05; done; echo started",
+    });
+    expect(r.content).toMatch(/Exit code: 0/);
+    for (const f of ["bg.pid", "stubborn.pid"]) {
+      const pid = Number(readFileSync(path.join(root, f), "utf8"));
+      expect(await diesWithin(pid, 5000), f).toBe(true);
+    }
+  }, 15_000);
+});
+
 /** A killed process can linger for a moment until the system reaps it, more so on a busy machine. */
 async function diesWithin(pid: number, ms: number): Promise<boolean> {
   const until = Date.now() + ms;
