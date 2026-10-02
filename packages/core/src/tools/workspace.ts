@@ -120,3 +120,23 @@ export async function walk(
   await visit(dir, 1);
   return { paths: out, truncated };
 }
+
+const SECRET_FILES = [
+  /^\.env(\..+)?$/,
+  /\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk)$/,
+  /^id_(rsa|dsa|ecdsa|ed25519)$/,
+  /^\.(npmrc|netrc|pypirc|pgpass)$/,
+  /^(credentials|secrets?)(\.(json|ya?ml|toml))?$/,
+  // dimosi's own release settings (update server address and SSH).
+  /^release\.config\.json$/,
+];
+const SECRET_TEMPLATE = /\.(example|sample|template|dist|defaults?)$/;
+
+/**
+ * Files that usually hold keys and passwords. The agent does not read or
+ * search them: whatever it reads goes to the AI service.
+ */
+export function isSecretFile(relPath: string): boolean {
+  const name = relPath.split(/[\\/]/).at(-1)!.toLowerCase();
+  return !SECRET_TEMPLATE.test(name) && SECRET_FILES.some((re) => re.test(name));
+}

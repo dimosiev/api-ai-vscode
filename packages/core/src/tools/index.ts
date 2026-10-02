@@ -6,7 +6,7 @@ import { Worker } from "node:worker_threads";
 import type { PermissionGate } from "../permissions";
 import type { ToolCallPart, ToolDefinition } from "../types";
 import { commandEnv } from "./sandbox";
-import { IgnoreMatcher, resolveInRoot, toRel, walk } from "./workspace";
+import { IgnoreMatcher, isSecretFile, resolveInRoot, toRel, walk } from "./workspace";
 
 export interface FileChange {
   /** Absolute path. */
@@ -265,6 +265,12 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
 
   async read_file(input, { root, files = diskFiles }) {
     const abs = resolveInRoot(root, str(input, "path"));
+    if (isSecretFile(toRel(root, abs))) {
+      throw new Error(
+        `${toRel(root, abs)} may contain secrets (keys, passwords), so it is not read: its text would be sent to the AI service. ` +
+          "If something from it is needed, ask the user (for example, the names of the settings, not their values).",
+      );
+    }
     const { size } = await fs.stat(abs);
     if (size > MAX_READ_BYTES) {
       throw new Error(`File is too large to read (${Math.round(size / 1024 / 1024)} MB). Use search to find the relevant part.`);
@@ -306,7 +312,7 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     const ignore = await IgnoreMatcher.load(root);
     const { paths } = await walk(root, dir, ignore, { limit: 20_000 });
     signal?.throwIfAborted();
-    const { matches, stopped } = await searchInWorker(root, paths, source, flags, signal, searchTimeoutMs ?? SEARCH_TIMEOUT_MS);
+    const { matches, stopped } = await searchInWorker(root, paths.filter((p) => !isSecretFile(p)), source, flags, signal, searchTimeoutMs ?? SEARCH_TIMEOUT_MS);
     if (stopped) return matches.join("\n") + "\n... (stopped at 200 matches)";
     return matches.length ? matches.join("\n") : "No matches.";
   },

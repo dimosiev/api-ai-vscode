@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dangerousCommandWarning, executeTool, PermissionGate, type ApprovalDecision, type ApprovalRequest } from "../src";
 import { commandEnv } from "../src/tools/sandbox";
+import { isSecretFile } from "../src/tools/workspace";
 
 let root: string;
 let requests: ApprovalRequest[];
@@ -108,5 +109,33 @@ describe("dangerous commands", () => {
     const r = await call("run_command", { command: "rm -f keep.txt" }, gate("auto"));
     expect(r.isError).toBe(true);
     expect(await fs.readFile(path.join(root, "keep.txt"), "utf8")).toBe("x");
+  });
+});
+
+describe("files with secrets", () => {
+  it.each([".env", ".env.local", "config/.env.production", "server.pem", "certs/tls.key", "id_ed25519", ".npmrc", ".netrc", "release.config.json", "secrets.json", "app.p12"])(
+    "%s is secret",
+    (p) => expect(isSecretFile(p)).toBe(true),
+  );
+
+  it.each([".env.example", ".env.sample", ".env.template", "id_ed25519.pub", "src/key.ts", "keys.md", "env.ts", "package.json", "src/secrets.ts"])(
+    "%s is ordinary",
+    (p) => expect(isSecretFile(p)).toBe(false),
+  );
+
+  it("read_file refuses a secret file and explains why", async () => {
+    await fs.writeFile(path.join(root, ".env"), "API_KEY=sk-very-secret\n");
+    const r = await call("read_file", { path: ".env" });
+    expect(r.isError).toBe(true);
+    expect(r.content).not.toContain("sk-very-secret");
+    expect(r.content).toMatch(/secrets/);
+  });
+
+  it("search does not look inside secret files", async () => {
+    await fs.writeFile(path.join(root, ".env.local"), "TOKEN=findme\n");
+    await fs.writeFile(path.join(root, "a.ts"), "// findme\n");
+    const r = await call("search", { pattern: "findme" });
+    expect(r.content).toContain("a.ts:1:");
+    expect(r.content).not.toContain(".env.local");
   });
 });
