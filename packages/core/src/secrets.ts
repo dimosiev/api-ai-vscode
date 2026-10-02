@@ -11,7 +11,12 @@ export interface KeyStore {
 const FORMAT = "dimosi-keys";
 /** Files exported by version 0.1 (API AI Agent) are still accepted. */
 const LEGACY_FORMATS = ["api-ai-keys"];
-const SCRYPT = { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
+/**
+ * For new files. Opening uses the numbers written in the file, so files made
+ * with N = 2^15 (up to 0.4.6) still open. 2^17 needs 128 MB; maxmem also caps
+ * what a crafted file can demand.
+ */
+const SCRYPT = { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
 
 interface EncryptedFile {
   format: string;

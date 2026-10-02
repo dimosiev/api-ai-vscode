@@ -1,3 +1,4 @@
+import { createCipheriv, randomBytes, scryptSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { decryptKeys, encryptKeys, exportKeys, importKeys, maskKey, type KeyStore } from "../src";
 
@@ -42,6 +43,25 @@ describe("key file encryption", () => {
     const b = new MemoryStore();
     expect(await importKeys(b, file, "pw")).toEqual(["openai", "polza"]);
     expect(await b.get("polza")).toBe("pz-2");
+  });
+
+  it("new files use a stronger scrypt (N = 2^17), and files made with the old one still open", () => {
+    expect(JSON.parse(encryptKeys({ a: "1" }, "pw")).kdf.N).toBe(2 ** 17);
+    // A file as dimosi 0.4.6 wrote it: N = 2^15.
+    const salt = randomBytes(16);
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", scryptSync("pw", salt, 32, { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }), iv);
+    const data = Buffer.concat([cipher.update(JSON.stringify({ polza: "pz-old" }), "utf8"), cipher.final()]);
+    const old = JSON.stringify({
+      format: "dimosi-keys",
+      version: 1,
+      kdf: { name: "scrypt", N: 2 ** 15, r: 8, p: 1, salt: salt.toString("base64") },
+      cipher: "aes-256-gcm",
+      iv: iv.toString("base64"),
+      tag: cipher.getAuthTag().toString("base64"),
+      data: data.toString("base64"),
+    });
+    expect(decryptKeys(old, "pw")).toEqual({ polza: "pz-old" });
   });
 
   it("masks keys", () => {
