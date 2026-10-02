@@ -6,7 +6,7 @@
 
 **Решение владельца:** dimosi остаётся личным инструментом и сотрудникам не раздаётся. Поэтому пункты про раздачу (В-12, В-13, В-14, поэтапный выпуск и отзыв доступа в К-4) больше не нужны.
 
-**Исправлено.** Каждое исправление закреплено тестом (ссылки в таблице; ранние — в [packages/core/test/audit.test.ts](../packages/core/test/audit.test.ts) и [update.test.ts](../packages/core/test/update.test.ts)). Всего 143 теста, все зелёные; на каждый push их запускает CI.
+**Исправлено.** Каждое исправление закреплено тестом (ссылки в таблице; ранние — в [packages/core/test/audit.test.ts](../packages/core/test/audit.test.ts) и [update.test.ts](../packages/core/test/update.test.ts)). Всего 146 тестов, все зелёные; на каждый push их запускает CI.
 
 | Пункт | Что сделано |
 |---|---|
@@ -32,6 +32,7 @@
 | В-15 (шаги 1–2) | GitHub Actions ([ci.yml](../.github/workflows/ci.yml)): `npm ci`, `npm run typecheck`, `npm test` на ubuntu-latest и macos-latest. Сквозные тесты в репозитории: [packages/vscode/test/e2e/](../packages/vscode/test/e2e/) (заглушка `vscode`, фейковый OpenAI-совместимый сервер; запись → подтверждение → откат, «Стоп» во время команды, 429 → повтор, переполнение контекста, восстановление чата после перезагрузки) и [packages/cli/test/cli.test.ts](../packages/cli/test/cli.test.ts) (собранный CLI, ввод через stdin). Шаги 3–4 (настоящий VS Code через `@vscode/test-electron`, выпуск только с зелёного CI) и Windows в CI не сделаны. |
 | Ж-4, Ж-12 | Обновление CLI через собственную временную папку. Исправлено название в подсказке. |
 | Экономия | Кэш для Claude через Polza AI и OpenRouter: пометки `cache_control` на системной инструкции и последнем сообщении. Если сервис их отвергнет (400), запрос повторяется без них, и до перезапуска они больше не ставятся. Счётчики `prompt_tokens_details.cached_tokens`/`cache_write_tokens` читаются, в журнале у каждого запроса видна доля из кэша (`hit N%`). Тесты: [providers.test.ts](../packages/core/test/providers.test.ts), [log.test.ts](../packages/core/test/log.test.ts). |
+| Окно доверия | Вопрос о доверии к `AGENTS.md`/`CLAUDE.md` больше не вставляет 1500 символов файла: системное окно не прокручивается, и на маленьком экране кнопки уходили за край. Теперь в окне путь, число строк и первые 5 строк, а кнопка «Открыть файл» показывает файл в редакторе и откладывает решение. Тесты: [ruleTrust.test.ts](../packages/vscode/test/ruleTrust.test.ts). |
 
 **Пока не сделано** (по-прежнему актуально для личной работы):
 

@@ -137,6 +137,10 @@ export const stub = {
   /** Answers modal and non-modal message boxes; undefined = dismissed. */
   answer: (_message: string, _items: string[]): string | undefined => undefined,
   messages: [] as string[],
+  /** Options ({ modal, detail }) passed with each message box, in order. */
+  messageOptions: [] as Array<Record<string, unknown> | undefined>,
+  /** Paths opened with window.showTextDocument. */
+  opened: [] as string[],
   executed: [] as Array<{ id: string; args: unknown[] }>,
   commands: new Map<string, (...args: unknown[]) => unknown>(),
   /** Lines written to output channels. */
@@ -146,6 +150,8 @@ export const stub = {
     this.config = {};
     this.answer = () => undefined;
     this.messages = [];
+    this.messageOptions = [];
+    this.opened = [];
     this.executed = [];
     workspace.textDocuments = [];
     workspace.workspaceFolders = undefined;
@@ -154,6 +160,7 @@ export const stub = {
 
 const message = async (text: string, ...rest: unknown[]) => {
   stub.messages.push(text);
+  stub.messageOptions.push(rest.find((r): r is Record<string, unknown> => typeof r === "object" && r !== null));
   const items = rest.filter((r): r is string => typeof r === "string");
   return stub.answer(text, items);
 };
@@ -194,7 +201,10 @@ export const window = {
   showInformationMessage: message,
   showWarningMessage: message,
   showErrorMessage: message,
-  showTextDocument: async () => undefined,
+  showTextDocument: async (doc: Uri | { uri: Uri }) => {
+    stub.opened.push((doc instanceof Uri ? doc : doc.uri).fsPath);
+    return undefined;
+  },
   showOpenDialog: async () => undefined,
   showSaveDialog: async () => undefined,
   showQuickPick: async () => undefined,
