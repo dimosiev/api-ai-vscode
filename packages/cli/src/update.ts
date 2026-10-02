@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { downloadVerified, fetchManifest, isNewerVersion, UPDATE_PUBLIC_KEYS } from "@dimosi/core";
 import { configDir } from "./config";
+import { log } from "./log";
 import { c } from "./ui";
 
 export const VERSION = __DIMOSI_VERSION__;
@@ -21,11 +22,13 @@ export async function notifyIfOutdated(): Promise<void> {
       return;
     }
     const manifest = await fetchManifest(UPDATE_URL, UPDATE_PUBLIC_KEYS, 3000);
+    log.info(`update check: server offers ${manifest.version} (signature ok), current ${VERSION}`);
     await fs.mkdir(configDir(), { recursive: true });
     await fs.writeFile(stampFile(), JSON.stringify({ at: Date.now(), latest: manifest.version }));
     if (manifest.cli && isNewerVersion(manifest.version, VERSION)) printHint(manifest.version);
-  } catch {
+  } catch (e) {
     // offline or server unavailable: stay quiet
+    log.warn(`update check failed: ${(e as Error).message}`);
   }
 }
 
@@ -36,6 +39,7 @@ function printHint(version: string): void {
 export async function cmdUpdate(): Promise<void> {
   if (!UPDATE_URL) throw new Error("Эта сборка dimosi собрана без адреса обновлений.");
   const manifest = await fetchManifest(UPDATE_URL, UPDATE_PUBLIC_KEYS);
+  log.info(`update: server offers ${manifest.version} (signature ok), current ${VERSION}`);
   if (!manifest.cli || !isNewerVersion(manifest.version, VERSION)) {
     console.log(`У вас последняя версия dimosi (${VERSION}).`);
     return;
@@ -53,6 +57,7 @@ export async function cmdUpdate(): Promise<void> {
     child.on("error", () => resolve(1));
   });
   await fs.rm(dir, { recursive: true, force: true });
+  log.info(`update ${manifest.version}: npm install exited with ${code}`);
   if (code !== 0) {
     throw new Error(
       "npm не смог установить обновление. Если дело в правах, выполните: sudo dimosi update",

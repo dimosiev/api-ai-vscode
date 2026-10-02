@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { KeyStore } from "@dimosi/core";
+import { log } from "./log";
 
 const INDEX_KEY = "dimosi.keyNames";
 
@@ -19,6 +20,7 @@ export class SecretKeyStore implements KeyStore {
   }
 
   async set(name: string, value: string) {
+    log.addSecret(value);
     await this.context.secrets.store(`dimosi.key.${name}`, value);
     const names = new Set(await this.list());
     names.add(name);

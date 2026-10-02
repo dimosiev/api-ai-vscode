@@ -97,30 +97,33 @@ function resolvePending(items: ToWebview[]): ToWebview[] {
  * JSON for the chat file, fitted into `maxBytes`. When too big, drops in
  * order: pictures, the originals kept for revert (those files then show
  * "revert unavailable"), old tool output, long tool output in the panel.
- * Undefined when even that does not fit.
+ * `text` is undefined when even that does not fit; `dropped` names what
+ * was left out.
  */
-export function serializeChat(chat: SavedChat, maxBytes = MAX_CHAT_BYTES): string | undefined {
+export function serializeChat(chat: SavedChat, maxBytes = MAX_CHAT_BYTES): { text?: string; dropped: string[] } {
   let text = JSON.stringify(chat);
-  if (Buffer.byteLength(text) <= maxBytes) return text;
+  if (Buffer.byteLength(text) <= maxBytes) return { text, dropped: [] };
   const copy: SavedChat = structuredClone(chat);
-  const steps = [
-    () => stripImages(copy.messages),
-    () => copy.trackers.forEach(dropOriginals),
-    () => trimToolResults(copy.messages, 0),
-    () => {
+  const dropped: string[] = [];
+  const steps: Array<[string, () => void]> = [
+    ["pictures", () => stripImages(copy.messages)],
+    ["revert originals", () => copy.trackers.forEach(dropOriginals)],
+    ["old tool output", () => trimToolResults(copy.messages, 0)],
+    ["long tool output in the panel", () => {
       copy.transcript = copy.transcript.map((m) =>
         m.type === "tool_end" ? { ...m, result: m.result.slice(0, 300) }
         : m.type === "approval_request" && m.kind === "write" ? { ...m, diff: { ...m.diff, rows: m.diff.rows.slice(0, 40), truncated: true } }
         : m,
       );
-    },
+    }],
   ];
-  for (const step of steps) {
+  for (const [name, step] of steps) {
     step();
+    dropped.push(name);
     text = JSON.stringify(copy);
-    if (Buffer.byteLength(text) <= maxBytes) return text;
+    if (Buffer.byteLength(text) <= maxBytes) return { text, dropped };
   }
-  return undefined;
+  return { dropped: [...dropped, "the whole chat"] };
 }
 
 /** Writes through a temporary file, so a crash never leaves half a chat. */

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import {
@@ -18,6 +19,7 @@ import { WebviewApproval } from "./approval";
 import { fileAttachment, imageAttachment, type Attachment } from "./attachments";
 import { ChangeTracker } from "./changes";
 import { editorFiles } from "./editorFiles";
+import { log } from "./log";
 import {
   CHAT_FORMAT,
   deleteChatFile,
@@ -80,7 +82,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     view.webview.options = { enableScripts: true, localResourceRoots: [media] };
     view.webview.html = this.html(view.webview, media);
     view.webview.onDidReceiveMessage((msg: FromWebview) => {
-      this.onMessage(msg).catch((e) => this.post({ type: "error", message: (e as Error).message }));
+      this.onMessage(msg).catch((e) => {
+        log.error(`panel action ${msg.type} failed: ${(e as Error).message}`);
+        this.post({ type: "error", message: (e as Error).message });
+      });
     });
     view.onDidDispose(() => {
       this.view = undefined;
@@ -333,6 +338,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (!settings.model) throw new Error("Не выбрана модель.");
       provider = await buildProvider(settings, this.keys);
     } catch (e) {
+      log.warn(`cannot start a task: ${(e as Error).message}`);
       this.post({
         type: "error",
         message: (e as Error).message,
@@ -345,7 +351,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     // Keep the conversation unless the folder changed.
     if (!this.agent || this.agent.root !== root) {
-      this.agent = new Agent({ provider, model: settings.model, root, approval: this.approval, files: editorFiles });
+      this.agent = new Agent({ provider, model: settings.model, root, approval: this.approval, files: editorFiles, log });
       if (this.restoredMessages) this.agent.restore(this.restoredMessages);
       this.restoredMessages = undefined;
     }
@@ -441,6 +447,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
       }
     } catch (e) {
+      log.error(`task crashed: ${(e as Error).message}`);
       this.post({ type: "error", message: (e as Error).message });
     } finally {
       this.controller = undefined;
@@ -468,7 +475,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const root = this.root();
     if (!file || !root || this.agent || this.transcript.items.length) return;
     const saved = await readChatFile(file, root);
-    if (!saved) return;
+    if (!saved) {
+      if (existsSync(file)) log.warn("the saved chat is damaged or from another version; starting a new chat");
+      return;
+    }
+    log.info(`chat restored: ${saved.messages.length} messages, ${saved.trackers.length} revert cards${saved.interrupted ? ", interrupted mid-task" : ""}`);
     this.turn = Math.max(this.turn, saved.turn);
     for (const t of saved.trackers) this.trackers.set(t.turn, ChangeTracker.fromJSON(t, editorFiles));
     this.restoredMessages = saved.messages;
@@ -490,10 +501,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       interrupted: Boolean(running),
     };
     // Serialized right away: the history keeps changing while the file is written.
-    const text = serializeChat(chat);
+    const { text, dropped } = serializeChat(chat);
+    if (dropped.length) log.warn(`chat is over the size limit; left out of the saved copy: ${dropped.join(", ")}`);
     this.saving = this.saving
       .then(() => (text ? writeChatFile(file, text) : deleteChatFile(file)))
-      .catch(() => undefined);
+      .catch((e) => log.warn(`could not save the chat: ${(e as Error).message}`));
   }
 
   private async revert(turn: number, relPath: string | null): Promise<void> {
@@ -519,7 +531,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (force) result = await tracker.revert(rel, true);
         else continue;
       }
-      if (!result.ok) this.post({ type: "error", message: `Не удалось откатить ${rel}: ${result.message}` });
+      if (!result.ok) {
+        log.warn(`revert of ${rel} failed: ${result.message}`);
+        this.post({ type: "error", message: `Не удалось откатить ${rel}: ${result.message}` });
+      }
     }
     this.post({ type: "changes", turn, files: tracker.summary() });
     this.saveChat();

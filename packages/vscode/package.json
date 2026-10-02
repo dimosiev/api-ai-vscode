@@ -137,6 +137,12 @@
         "command": "dimosi.checkForUpdates",
         "title": "Проверить обновления",
         "category": "dimosi"
+      },
+      {
+        "command": "dimosi.reportProblem",
+        "title": "Сообщить о проблеме",
+        "category": "dimosi",
+        "icon": "$(report)"
       }
     ],
     "submenus": [

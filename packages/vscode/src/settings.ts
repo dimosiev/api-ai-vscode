@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { createProvider, getPreset, type Provider } from "@dimosi/core";
 import type { SecretKeyStore } from "./keyStore";
+import { log } from "./log";
 
 export interface Settings {
   provider: string;
@@ -31,6 +32,7 @@ export class MissingKeyError extends Error {}
 export async function buildProvider(settings: Settings, keys: SecretKeyStore, presetId = settings.provider): Promise<Provider> {
   const preset = getPreset(presetId);
   const apiKey = await keys.get(presetId);
+  log.addSecret(apiKey); // masked if a server ever echoes it back
   if (preset.requiresKey && !apiKey) {
     throw new MissingKeyError(`Нет API-ключа для ${preset.label}.`);
   }

@@ -1,4 +1,5 @@
 import { PermissionGate, type ApprovalHandler, type ApprovalMode } from "./permissions";
+import type { Log } from "./log";
 import { buildSystemPrompt, snapshotLayout } from "./prompt";
 import { loadRules, type RuleSource } from "./rules";
 import { IncompleteResponseError } from "./providers/openai";
@@ -30,6 +31,8 @@ export interface AgentOptions {
   globalRulesPath?: string;
   /** How tools read and write files; defaults to the disk. */
   files?: FileAccess;
+  /** Diagnostic journal: request and tool metadata only, never content. */
+  log?: Log;
 }
 
 export type AgentEvent =
@@ -64,6 +67,7 @@ export class Agent {
   private maxTokens?: number;
   private globalRulesPath?: string;
   private files?: FileAccess;
+  private log?: Log;
   private layout?: string;
   private running = false;
 
@@ -76,6 +80,7 @@ export class Agent {
     this.maxTokens = opts.maxTokens;
     this.globalRulesPath = opts.globalRulesPath;
     this.files = opts.files;
+    this.log = opts.log;
     this.gate = new PermissionGate(opts.approval, opts.mode ?? "ask");
   }
 
@@ -126,8 +131,10 @@ export class Agent {
 
       for (let step = 0; step < this.maxSteps; step++) {
         // Trim rarely and in one go: every trim invalidates the prompt cache once.
-        if (estimateTokens(this.messages) > this.contextWindow * 0.7) {
+        const size = estimateTokens(this.messages);
+        if (size > this.contextWindow * 0.7) {
           trimToolResults(this.messages, this.contextWindow * 0.4);
+          this.log?.info(`context trimmed: ≈${size} → ≈${estimateTokens(this.messages)} tok (window ${this.contextWindow})`);
         }
         const done = yield* this.request(system, signal);
         if (done.usage) yield { type: "usage", usage: done.usage };
@@ -136,12 +143,14 @@ export class Agent {
         if (done.message.parts.length) this.messages.push(done.message);
 
         if (done.stopReason === "refusal") {
+          this.log?.warn("the model refused the request");
           this.closeDanglingToolCalls("The model declined this request.");
           yield { type: "error", message: "Модель отказалась выполнять этот запрос." };
           return;
         }
         if (!calls.length) {
           if (done.stopReason === "max_tokens") {
+            this.log?.warn("reply cut off at the output token limit");
             yield { type: "error", message: "Ответ упёрся в лимит длины и был обрезан. Напишите «продолжай»." };
           }
           yield { type: "done", stopReason: done.stopReason };
@@ -153,6 +162,7 @@ export class Agent {
           if (signal?.aborted) break;
           yield { type: "tool_start", call };
           const pending: AgentEvent[] = [];
+          const toolStarted = Date.now();
           // A tool call cut off by the token limit may have truncated arguments.
           const result = done.stopReason === "max_tokens"
             ? { content: "The reply hit the output token limit, so this tool call may be incomplete. Retry with smaller steps.", isError: true }
@@ -164,6 +174,7 @@ export class Agent {
                 onFileChange: (change) => pending.push({ type: "file_changed", change }),
                 onPlan: (items) => pending.push({ type: "plan", items }),
               });
+          this.logTool(call.name, Date.now() - toolStarted, result);
           results.push({ type: "tool_result", toolCallId: call.id, content: result.content, isError: result.isError });
           yield* pending;
           yield { type: "tool_end", call, result: result.content, isError: result.isError };
@@ -175,13 +186,16 @@ export class Agent {
           return;
         }
       }
+      this.log?.warn(`stopped after ${this.maxSteps} steps`);
       yield { type: "error", message: `Агент сделал ${this.maxSteps} шагов и остановился. Напишите «продолжай», чтобы он продолжил.` };
     } catch (e) {
       this.closeDanglingToolCalls("Cancelled by the user.");
       if (signal?.aborted) {
+        this.log?.info("stopped by the user");
         yield { type: "error", message: "Остановлено." };
         return;
       }
+      this.log?.error(`task failed: ${describeError(e)}`);
       yield { type: "error", message: describeError(e) };
     }
   }
@@ -191,6 +205,8 @@ export class Agent {
     let trimmedForOverflow = false;
     for (let attempt = 0; ; attempt++) {
       let started = false;
+      const at = Date.now();
+      const what = `request ${this.provider.id}/${this.model} (${this.messages.length} messages, ≈${estimateTokens(this.messages) + Math.ceil(system.length / 3)} tok${attempt ? `, attempt ${attempt + 1}` : ""})`;
       try {
         let done: DoneEvent | undefined;
         for await (const ev of this.provider.stream({
@@ -207,21 +223,48 @@ export class Agent {
           } else done = ev;
         }
         if (!done) throw new IncompleteResponseError();
+        const u = done.usage;
+        this.log?.info(`${what}: ok in ${seconds(at)}, stop ${done.stopReason}${u ? `, in ${u.inputTokens + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0)} out ${u.outputTokens}` : ""}`);
         return done;
       } catch (e) {
-        if (signal?.aborted || started) throw e;
+        const failure = `${what}: failed in ${seconds(at)}${statusOf(e) ? ` with ${statusOf(e)}` : ""} — ${errorText(e)}`;
+        if (signal?.aborted) {
+          this.log?.info(`${what}: stopped by the user after ${seconds(at)}`);
+          throw e;
+        }
+        if (started) {
+          this.log?.error(`${failure} (after the reply had started, not retried)`);
+          throw e;
+        }
         // The history no longer fits: drop old tool output and try again once.
         if (isContextOverflow(e) && !trimmedForOverflow) {
           trimmedForOverflow = true;
-          if (trimToolResults(this.messages, estimateTokens(this.messages) / 2)) continue;
+          const before = estimateTokens(this.messages);
+          if (trimToolResults(this.messages, before / 2)) {
+            this.log?.warn(`${failure}; context overflow, trimmed ≈${before} → ≈${estimateTokens(this.messages)} tok and retrying`);
+            continue;
+          }
         }
         if (attempt < RETRY_DELAYS_MS.length && isRetryable(e)) {
+          this.log?.warn(`${failure}; retrying in ${RETRY_DELAYS_MS[attempt] / 1000}s`);
           await sleep(RETRY_DELAYS_MS[attempt], signal);
           continue;
         }
+        this.log?.error(failure);
         throw e;
       }
     }
+  }
+
+  /** Name, time and outcome only: results hold file contents and command output. */
+  private logTool(name: string, ms: number, result: { content: string; isError: boolean }): void {
+    if (!this.log) return;
+    if (!result.isError) return this.log.info(`tool ${name}: ok in ${ms} ms`);
+    // Our own error texts carry no file contents, except the echo of broken arguments.
+    const reason = result.content.startsWith("Tool arguments were not valid JSON")
+      ? "arguments were not valid JSON"
+      : result.content.split("\n")[0].slice(0, 160);
+    this.log.warn(`tool ${name}: failed in ${ms} ms — ${reason}`);
   }
 
   private appendUserParts(parts: Part[]): void {
@@ -289,6 +332,14 @@ export function trimToolResults(messages: Message[], targetTokens: number): bool
     }
   }
   return trimmed;
+}
+
+function seconds(since: number): string {
+  return `${((Date.now() - since) / 1000).toFixed(1)}s`;
+}
+
+function errorText(e: unknown): string {
+  return (e instanceof Error ? e.message : String(e)).slice(0, 300);
 }
 
 function statusOf(e: unknown): number | undefined {

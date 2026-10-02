@@ -65,7 +65,7 @@ describe("chat file", () => {
   it("round-trips and keeps Claude's original content byte for byte", async () => {
     const dir = tmp();
     const file = path.join(dir, "store", "chat.json");
-    await writeChatFile(file, serializeChat(chat(dir))!);
+    await writeChatFile(file, serializeChat(chat(dir)).text!);
     const loaded = await readChatFile(file, dir);
     expect(loaded).toEqual(chat(dir));
     expect(JSON.stringify(loaded!.messages[1].providerData!.raw)).toBe(JSON.stringify(claudeRaw));
@@ -98,13 +98,13 @@ describe("chat file", () => {
     const full = Buffer.byteLength(JSON.stringify(base));
 
     // Room for everything except the picture.
-    const noImage = parseSavedChat(JSON.parse(serializeChat(base, full - 3000)!), dir)!;
+    const noImage = parseSavedChat(JSON.parse(serializeChat(base, full - 3000).text!), dir)!;
     expect(noImage.messages[0].parts.some((p) => p.type === "image")).toBe(false);
     expect(noImage.trackers[0].files[0].original).toHaveLength(3000);
     expect(noImage.messages[1]).toEqual(base.messages[1]); // Claude's message untouched
 
     // Not even room for the original version of big.txt.
-    const small = parseSavedChat(JSON.parse(serializeChat(base, full - 6000)!), dir)!;
+    const small = parseSavedChat(JSON.parse(serializeChat(base, full - 6000).text!), dir)!;
     const restored = ChangeTracker.fromJSON(small.trackers[0]);
     expect(restored.summary()).toEqual([
       { relPath: "big.txt", added: 1, removed: 1, created: false, reverted: false, unavailable: true },
@@ -113,7 +113,7 @@ describe("chat file", () => {
     expect(restored.revertible()).toEqual(["made.txt"]);
     expect(base.messages[0].parts.some((p) => p.type === "image")).toBe(true); // the live chat is not changed
 
-    expect(serializeChat(base, 100)).toBeUndefined();
+    expect(serializeChat(base, 100)).toEqual({ dropped: ["pictures", "revert originals", "old tool output", "long tool output in the panel", "the whole chat"] });
   });
 
   it("revert keeps working after a reload", async () => {

@@ -23,6 +23,7 @@ import {
 } from "@dimosi/core";
 import { configDir, loadConfig, migrateLegacyConfig, saveConfig, type CliConfig } from "./config";
 import { EncryptedFileKeyStore, keyFileExists, keyFilePath } from "./keystore";
+import { fileSink, log, logFilePath } from "./log";
 import { c, Prompter, renderDiff } from "./ui";
 import { cmdUpdate, notifyIfOutdated, VERSION } from "./update";
 
@@ -56,6 +57,9 @@ ${c.bold("Провайдеры и модели")}:
 
 ${c.bold("Обновление")}:
   dimosi update                    установить новую версию с сервера обновлений
+
+${c.bold("Журнал")} (для разбора проблем, без ключей и текста переписки):
+  dimosi log                       показать, где лежит журнал, и его последние строки
 
 ${c.bold("Команды внутри чата")}: /help /model /models /provider /key /rules /auto /ask /clear /exit
 `;
@@ -99,6 +103,7 @@ function parseArgs(argv: string[]): Flags {
 }
 
 function fail(message: string): never {
+  log.error(`exit with error: ${message}`);
   console.error(c.red(`Ошибка: ${message}`));
   process.exit(1);
 }
@@ -137,14 +142,16 @@ class Keys {
 
   async get(presetId: string): Promise<string | undefined> {
     const preset = getPreset(presetId);
-    if (preset.envVar && process.env[preset.envVar]) return process.env[preset.envVar];
-    return (await this.open(false))?.get(presetId);
+    const key = preset.envVar && process.env[preset.envVar] ? process.env[preset.envVar] : await (await this.open(false))?.get(presetId);
+    log.addSecret(key); // masked if a server ever echoes it back
+    return key;
   }
 
   async ask(presetId: string): Promise<string> {
     const preset = getPreset(presetId);
     const key = await this.io.ask(`API-ключ для ${preset.label}: `, { hidden: true });
     if (!key) fail("Ключ не введён.");
+    log.addSecret(key);
     const store = await this.open(true);
     await store!.set(presetId, key);
     console.log(c.green(`Ключ для ${preset.label} сохранён (${maskKey(key)}).`));
@@ -303,6 +310,13 @@ async function cmdRules(args: string[], flags: Flags): Promise<void> {
   await printRules(path.resolve(flags.dir ?? process.cwd()));
 }
 
+async function cmdLog(): Promise<void> {
+  const file = logFilePath();
+  const text = await fs.readFile(file, "utf8").catch(() => "");
+  console.log(c.dim(`Журнал: ${file}`));
+  console.log(text.trimEnd().split("\n").slice(-40).join("\n") || "Журнал пока пуст.");
+}
+
 // ---------- chat ----------
 
 async function chat(flags: Flags, io: Prompter): Promise<void> {
@@ -342,7 +356,9 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
     approval,
     mode: flags.auto ? "auto" : config.mode,
     contextWindow: getPreset(presetId).contextWindow,
+    log,
   });
+  log.info(`chat: provider ${presetId}, model ${agent.model}, approvals ${agent.gate.mode}`);
 
   console.log(`${c.bold(c.blue("dimosi"))} ${c.dim(VERSION)}  ${getPreset(presetId).label} · ${c.cyan(agent.model)}`);
   console.log(c.dim(`Проект: ${root}`));
@@ -448,6 +464,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         break;
       case "auto":
         agent.gate.mode = "auto";
+        log.info("approvals off");
         console.log(c.red("Подтверждения отключены до конца сессии."));
         break;
       case "ask":
@@ -461,6 +478,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
           break;
         }
         agent.model = arg;
+        log.info(`model changed: ${presetId}/${arg}`);
         config.models[presetId] = arg;
         await saveConfig(config);
         console.log(c.green(`Модель: ${arg}`));
@@ -488,6 +506,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
           agent.model = modelFor(arg, config);
           config.provider = arg;
           await saveConfig(config);
+          log.info(`provider changed: ${arg}/${agent.model}`);
           console.log(c.green(`${getPreset(arg).label} · ${agent.model}`));
         } catch (e) {
           console.log(c.red((e as Error).message));
@@ -521,7 +540,12 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
 // ---------- entry ----------
 
 async function main(): Promise<void> {
+  log.setSink(fileSink());
   const flags = parseArgs(process.argv.slice(2));
+  // A known command name only: anything else is the user's task text.
+  const known = ["help", "version", "keys", "use", "providers", "rules", "models", "update", "log"];
+  const what = known.includes(flags.positional[0]) ? `command "${flags.positional[0]}"` : "chat";
+  log.info(`dimosi ${VERSION} started: ${what}, Node ${process.versions.node}, ${process.platform} ${process.arch}`);
   if (await migrateLegacyConfig()) console.log(c.dim(`Настройки и ключи перенесены в ${configDir()}.`));
   const [command, ...rest] = flags.positional;
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY });
@@ -551,6 +575,9 @@ async function main(): Promise<void> {
         break;
       case "update":
         await cmdUpdate();
+        break;
+      case "log":
+        await cmdLog();
         break;
       default:
         await notifyIfOutdated();

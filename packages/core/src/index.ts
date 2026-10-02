@@ -5,6 +5,7 @@ export * from "./secrets";
 export * from "./rules";
 export * from "./usage";
 export * from "./history";
+export * from "./log";
 export { buildSystemPrompt, snapshotLayout } from "./prompt";
 export {
   TOOL_DEFINITIONS,

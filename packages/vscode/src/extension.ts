@@ -19,6 +19,8 @@ import { PROPOSED_SCHEME, ProposedContentProvider, WebviewApproval } from "./app
 import { selectionAttachment } from "./attachments";
 import { ChatViewProvider } from "./chatView";
 import { SecretKeyStore } from "./keyStore";
+import { log } from "./log";
+import { buildProblemReport, serverOrigin } from "./report";
 import { buildProvider, readSettings, updateSetting } from "./settings";
 import { Updater } from "./updater";
 
@@ -29,6 +31,12 @@ const EDITOR_PROMPTS = {
 };
 
 export function activate(context: vscode.ExtensionContext): void {
+  const channel = vscode.window.createOutputChannel("dimosi", { log: true });
+  log.setSink((level, message) => channel[level](message));
+  context.subscriptions.push(channel, { dispose: () => log.setSink(undefined) });
+  log.info(`dimosi ${context.extension.packageJSON.version} started: VS Code ${vscode.version}, ${describeOs()}`);
+  logSettings();
+
   const keys = new SecretKeyStore(context);
   const proposed = new ProposedContentProvider();
   const chat = new ChatViewProvider(context, keys, (ui) => new WebviewApproval(ui, proposed));
@@ -38,6 +46,7 @@ export function activate(context: vscode.ExtensionContext): void {
       try {
         await fn(...args);
       } catch (e) {
+        log.error(`command ${id} failed: ${(e as Error).message}`);
         void vscode.window.showErrorMessage(`dimosi: ${(e as Error).message}`);
       }
     });
@@ -60,7 +69,9 @@ export function activate(context: vscode.ExtensionContext): void {
       webviewOptions: { retainContextWhenHidden: true },
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("dimosi")) void chat.postStatus();
+      if (!e.affectsConfiguration("dimosi")) return;
+      logSettings();
+      void chat.postStatus();
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => void chat.postStatus()),
     keys.onDidChange(() => void chat.postStatus()),
@@ -69,6 +80,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     command("dimosi.newChat", () => chat.newChat()),
+    command("dimosi.reportProblem", () => reportProblem(context, keys)),
     command("dimosi.setApiKey", async () => {
       const presetId = await pickProvider(keys, "Для какого сервиса ввести ключ?", (p) => p.requiresKey || p.id === "custom");
       if (presetId) await askAndStoreKey(keys, presetId);
@@ -142,6 +154,62 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {}
+
+function describeOs(): string {
+  return `${os.type()} ${os.release()} ${process.arch}`;
+}
+
+function logSettings(): void {
+  const s = readSettings();
+  log.info(
+    `settings: provider ${s.provider}, model ${s.model || "(none)"}, approvals ${s.approvalMode}, max steps ${s.maxSteps}` +
+      (s.provider === "custom" ? `, server ${serverOrigin(s.customBaseUrl)}` : ""),
+  );
+}
+
+/** "dimosi: Сообщить о проблеме": versions, settings and the journal, to send to whoever helps. */
+async function reportProblem(context: vscode.ExtensionContext, keys: SecretKeyStore): Promise<void> {
+  const s = readSettings();
+  const report = buildProblemReport(
+    {
+      version: context.extension.packageJSON.version,
+      vscodeVersion: vscode.version,
+      os: describeOs(),
+      node: process.versions.node,
+      settings: {
+        provider: s.provider,
+        model: s.model,
+        customBaseUrl: serverOrigin(s.customBaseUrl),
+        approvalMode: s.approvalMode,
+        maxSteps: s.maxSteps,
+        autoUpdate: vscode.workspace.getConfiguration("dimosi").get<boolean>("autoUpdate", true),
+      },
+      savedKeys: await keys.list(),
+    },
+    log,
+  );
+  const COPY = "Скопировать в буфер обмена";
+  const SAVE = "Сохранить в файл…";
+  const choice = await vscode.window.showInformationMessage(
+    "Отчёт о проблеме готов: версии, настройки и журнал dimosi. Ключей, текста переписки и содержимого файлов в нём нет.",
+    COPY,
+    SAVE,
+  );
+  if (choice === COPY) {
+    await vscode.env.clipboard.writeText(report);
+    void vscode.window.showInformationMessage("Отчёт скопирован. Вставьте его в письмо или сообщение (Cmd+V / Ctrl+V).");
+  } else if (choice === SAVE) {
+    const date = new Date().toISOString().slice(0, 10);
+    const target = await vscode.window.showSaveDialog({
+      title: "Куда сохранить отчёт",
+      defaultUri: vscode.Uri.file(path.join(os.homedir(), "Desktop", `dimosi-report-${date}.txt`)),
+      filters: { "Текст": ["txt"] },
+    });
+    if (!target) return;
+    await vscode.workspace.fs.writeFile(target, Buffer.from(report, "utf8"));
+    void vscode.window.showInformationMessage(`Отчёт сохранён: ${target.fsPath}`);
+  }
+}
 
 /** Lightbulb on errors and warnings: "Fix with dimosi". */
 class FixWithDimosiProvider implements vscode.CodeActionProvider {

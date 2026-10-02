@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as vscode from "vscode";
 import { downloadVerified, fetchManifest, isNewerVersion, UPDATE_PUBLIC_KEYS, type UpdateManifest } from "@dimosi/core";
+import { log } from "./log";
 
 const UPDATE_URL = __DIMOSI_UPDATE_URL__;
 const FIRST_CHECK_DELAY_MS = 30_000;
@@ -53,8 +54,10 @@ export class Updater implements vscode.Disposable {
     if (this.running) return;
     this.running = true;
     try {
+      log.info(`update check (${manual ? "manual" : "background"}), current ${this.currentVersion}`);
       const manifest = await fetchManifest(UPDATE_URL, UPDATE_PUBLIC_KEYS);
       const installed = this.context.globalState.get<string>(INSTALLED_KEY);
+      log.info(`update server offers ${manifest.version} (signature ok)`);
       if (!isNewerVersion(manifest.version, this.currentVersion)) {
         if (manual) void vscode.window.showInformationMessage(`У вас последняя версия dimosi (${this.currentVersion}).`);
         return;
@@ -67,15 +70,17 @@ export class Updater implements vscode.Disposable {
       await this.waitUntilIdle();
       await this.install(manifest);
     } catch (e) {
+      log.warn(`update failed: ${(e as Error).message}`);
       if (manual) void vscode.window.showErrorMessage(`dimosi: не удалось проверить обновления. ${(e as Error).message}`);
-      else console.warn("[dimosi] update check failed:", e);
     } finally {
       this.running = false;
     }
   }
 
   private async install(manifest: UpdateManifest): Promise<void> {
+    log.info(`downloading update ${manifest.version}`);
     const data = await downloadVerified(UPDATE_URL, manifest.vsix);
+    log.info(`update ${manifest.version}: checksum ok, installing`);
     const dir = vscode.Uri.joinPath(this.context.globalStorageUri, "updates");
     await fs.mkdir(dir.fsPath, { recursive: true });
     const file = vscode.Uri.joinPath(dir, manifest.vsix.file);
@@ -83,6 +88,7 @@ export class Updater implements vscode.Disposable {
     await vscode.commands.executeCommand("workbench.extensions.installExtension", file);
     await this.context.globalState.update(INSTALLED_KEY, manifest.version);
     await fs.rm(file.fsPath, { force: true });
+    log.info(`update ${manifest.version} installed, waiting for a window reload`);
     await this.offerReload(manifest);
   }
 
