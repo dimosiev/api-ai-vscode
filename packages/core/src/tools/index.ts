@@ -5,7 +5,7 @@ import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
 import type { PermissionGate } from "../permissions";
 import type { ToolCallPart, ToolDefinition } from "../types";
-import { commandEnv } from "./sandbox";
+import { commandEnv, defaultSandboxPaths, sandboxAvailable, sandboxedCommand } from "./sandbox";
 import { IgnoreMatcher, isSecretFile, resolveInRoot, toRel, walk } from "./workspace";
 
 export interface FileChange {
@@ -75,6 +75,8 @@ export interface ToolContext {
   onPlan?: (items: PlanItem[]) => void;
   /** Override for tests; defaults to SEARCH_TIMEOUT_MS. */
   searchTimeoutMs?: number;
+  /** Run commands in the macOS sandbox. Default: true (ignored elsewhere). */
+  sandbox?: boolean;
 }
 
 export interface ToolResult {
@@ -380,25 +382,39 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     return `Edited ${toRel(root, abs)} (${input.replace_all === true ? count : 1} replacement${count > 1 && input.replace_all === true ? "s" : ""}).`;
   },
 
-  async run_command(input, { root, gate, signal }) {
+  async run_command(input, { root, gate, signal, sandbox = true }) {
     const command = str(input, "command");
     const timeout = Math.min(600, Math.max(1, num(input, "timeout_seconds", 120))) * 1000;
     const ok = await gate.check({ kind: "command", command, cwd: root });
     if (!ok) throw new Error("The user rejected this command.");
-    return runShell(command, root, timeout, signal);
+    if (!sandbox || process.platform !== "darwin") return runShell(command, root, timeout, signal);
+    if (!sandboxAvailable()) {
+      return "Note: the macOS sandbox could not start, so this command ran without it.\n" + (await runShell(command, root, timeout, signal));
+    }
+    const result = await runShell(command, root, timeout, signal, true);
+    return /Operation not permitted/.test(result)
+      ? `${result}\n\n${SANDBOX_HINT}`
+      : result;
   },
 };
 
-function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+const SANDBOX_HINT =
+  "Note: dimosi runs commands in a sandbox. It blocks writing outside the project (temp folders and package caches are allowed), " +
+  "changing .git/hooks, .git/config and .vscode, and reading private folders (~/.ssh, ~/Documents, ~/Desktop, ~/Downloads and others). " +
+  "Do not try to work around it. If the command really needs this, tell the user: they can run it in their own terminal.";
+
+function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal, sandboxed = false): Promise<string> {
   if (signal?.aborted) return Promise.resolve("Cancelled by the user.");
   const isWindows = process.platform === "win32";
+  const sandbox = sandboxed ? sandboxedCommand(command, defaultSandboxPaths(cwd)) : undefined;
   return new Promise((resolve) => {
-    const child = spawn(command, {
+    const child = spawn(sandbox?.file ?? command, sandbox?.args ?? [], {
       cwd,
-      shell: true,
+      shell: !sandbox,
       // Own process group, so the whole tree can be stopped (POSIX).
       detached: !isWindows,
       windowsHide: true,
+      // Nobody can answer a prompt: commands must not wait for input.
       stdio: ["ignore", "pipe", "pipe"],
       env: commandEnv(),
     });

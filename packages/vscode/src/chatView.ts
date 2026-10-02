@@ -369,6 +369,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     agent.provider = provider;
     agent.model = settings.model;
     agent.maxSteps = settings.maxSteps;
+    agent.sandbox = settings.sandbox;
     agent.contextWindow = getPreset(settings.provider).contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     agent.gate.mode = settings.approvalMode;
 

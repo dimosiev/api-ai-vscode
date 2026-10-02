@@ -3,7 +3,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dangerousCommandWarning, executeTool, PermissionGate, type ApprovalDecision, type ApprovalRequest } from "../src";
-import { commandEnv } from "../src/tools/sandbox";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { commandEnv, sandboxAvailable, sandboxedCommand, type SandboxPaths } from "../src/tools/sandbox";
 import { isSecretFile } from "../src/tools/workspace";
 
 let root: string;
@@ -137,5 +139,94 @@ describe("files with secrets", () => {
     const r = await call("search", { pattern: "findme" });
     expect(r.content).toContain("a.ts:1:");
     expect(r.content).not.toContain(".env.local");
+  });
+});
+
+describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
+  let home: string;
+  let project: string;
+  let paths: SandboxPaths;
+  const run = (command: string) => {
+    const { file, args } = sandboxedCommand(command, paths);
+    const r = spawnSync(file, args, { cwd: project, encoding: "utf8" });
+    return { code: r.status, out: r.stdout + r.stderr };
+  };
+
+  beforeEach(() => {
+    home = mkdtempSync(path.join(os.tmpdir(), "dimosi-home-"));
+    mkdirSync(path.join(home, ".ssh"));
+    writeFileSync(path.join(home, ".ssh/id_ed25519"), "PRIVATE");
+    writeFileSync(path.join(home, ".git-credentials"), "https://user:PRIVATE@github.com");
+    mkdirSync(path.join(home, "Documents/other"), { recursive: true });
+    writeFileSync(path.join(home, "Documents/other/diary.txt"), "DIARY");
+    mkdirSync(path.join(home, ".config/dimosi"), { recursive: true });
+    writeFileSync(path.join(home, ".config/dimosi/keys"), "KEYS");
+    // The project lies inside Documents: it must still work.
+    project = path.join(home, "Documents/project");
+    mkdirSync(path.join(project, ".git/hooks"), { recursive: true });
+    writeFileSync(path.join(project, ".git/config"), "[core]\n");
+    // No writable temp folders here: the test home itself is in the temp folder.
+    paths = { root: project, home, tmpDirs: [], private: [path.join(home, ".config/dimosi")] };
+  });
+
+  it("is available", () => {
+    expect(sandboxAvailable()).toBe(true);
+  });
+
+  it("lets a command work in the project and in package caches", () => {
+    const r = run(`echo hi > a.txt && mkdir -p src && cat a.txt && mkdir -p "${home}/.npm" && echo c > "${home}/.npm/cache"`);
+    expect(r.out).toContain("hi");
+    expect(r.code).toBe(0);
+    expect(existsSync(path.join(home, ".npm/cache"))).toBe(true);
+  });
+
+  it("blocks writing outside the project", () => {
+    const r = run(`echo x > "${home}/evil.txt"`);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toMatch(/Operation not permitted/);
+    expect(existsSync(path.join(home, "evil.txt"))).toBe(false);
+  });
+
+  it("blocks reading keys, dimosi settings and other personal folders", () => {
+    for (const f of [".ssh/id_ed25519", ".git-credentials", "Documents/other/diary.txt", ".config/dimosi/keys"]) {
+      const r = run(`cat "${home}/${f}"`);
+      expect(r.code, f).not.toBe(0);
+      expect(r.out).not.toMatch(/PRIVATE|DIARY|KEYS/);
+    }
+  });
+
+  it("blocks git hooks, git settings and .vscode, which run code later", () => {
+    for (const f of [".git/hooks/pre-commit", ".git/config", ".vscode/tasks.json"]) {
+      const r = run(`mkdir -p "$(dirname ${f})" 2>/dev/null; echo x >> ${f}`);
+      expect(r.code, f).not.toBe(0);
+    }
+    expect(readFileSync(path.join(project, ".git/config"), "utf8")).toBe("[core]\n");
+  });
+
+  it("run_command goes through the sandbox and explains a refusal", async () => {
+    root = project;
+    const probe = path.join(os.homedir(), `dimosi-sandbox-probe-${process.pid}-${Date.now()}.txt`);
+    try {
+      const r = await call("run_command", { command: `echo x > "${probe}"` });
+      expect(r.content).toMatch(/Operation not permitted/);
+      expect(r.content).toMatch(/sandbox/);
+      expect(existsSync(probe)).toBe(false);
+    } finally {
+      await fs.rm(probe, { force: true });
+    }
+  });
+
+  it("can be switched off", async () => {
+    const probe = path.join(os.homedir(), `dimosi-sandbox-off-probe-${process.pid}-${Date.now()}.txt`);
+    try {
+      const r = await executeTool(
+        { type: "tool_call", id: "1", name: "run_command", input: { command: `echo x > "${probe}"` } },
+        { root, gate: gate(), sandbox: false },
+      );
+      expect(r.content).toContain("Exit code: 0");
+      expect(existsSync(probe)).toBe(true);
+    } finally {
+      await fs.rm(probe, { force: true });
+    }
   });
 });

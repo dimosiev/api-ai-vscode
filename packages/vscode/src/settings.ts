@@ -9,6 +9,7 @@ export interface Settings {
   customBaseUrl: string;
   approvalMode: "ask" | "auto";
   maxSteps: number;
+  sandbox: boolean;
 }
 
 export function readSettings(): Settings {
@@ -20,6 +21,7 @@ export function readSettings(): Settings {
     customBaseUrl: cfg.get<string>("customBaseUrl", "").trim(),
     approvalMode: cfg.get<"ask" | "auto">("approvalMode", "ask"),
     maxSteps: cfg.get<number>("maxSteps", 50),
+    sandbox: cfg.get<boolean>("sandbox", true),
   };
 }
 

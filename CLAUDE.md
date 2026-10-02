@@ -5,7 +5,7 @@ dimosi — AI-агент для программирования: расшире
 ## Состояние (обновляй после каждого выпуска)
 
 - Версия **0.4.4**, выпущена 2 октября 2026. Номер хранится в `package.json` всех пакетов, `npm run release` поднимает его сам.
-- 146 тестов, CI зелёный (ubuntu-latest, macos-latest).
+- 210 тестов, CI зелёный (ubuntu-latest, macos-latest).
 - Требования: VS Code 1.140+, Node.js 22.12+.
 - Владелец работает в основном через **Polza AI**, модель по умолчанию `anthropic/claude-opus-5.5` (у Anthropic напрямую — `claude-opus-5-5`).
 
@@ -49,7 +49,7 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
 
 ## Настройки расширения
 
-`dimosi.provider` (`anthropic` | `openai` | `polza` | `openrouter` | `deepseek` | `ollama` | `custom`, по умолчанию `anthropic`), `dimosi.model` (пусто — модель сервиса по умолчанию), `dimosi.customBaseUrl`, `dimosi.approvalMode` (`ask` | `auto`), `dimosi.maxSteps` (50), `dimosi.autoUpdate` (true). Все с `"scope": "application"`: действуют только из личных настроек, `.vscode/settings.json` проекта их не меняет. Ключи — в SecretStorage (Keychain), не в настройках. Новая настройка: `packages/vscode/package.json` + таблица в разделе 13 руководства.
+`dimosi.provider` (`anthropic` | `openai` | `polza` | `openrouter` | `deepseek` | `ollama` | `custom`, по умолчанию `anthropic`), `dimosi.model` (пусто — модель сервиса по умолчанию), `dimosi.customBaseUrl`, `dimosi.approvalMode` (`ask` | `auto`), `dimosi.maxSteps` (50), `dimosi.sandbox` (true), `dimosi.autoUpdate` (true). Все с `"scope": "application"`: действуют только из личных настроек, `.vscode/settings.json` проекта их не меняет. Ключи — в SecretStorage (Keychain), не в настройках. Новая настройка: `packages/vscode/package.json` + таблица в разделе 13 руководства.
 
 ## Устройство
 
@@ -61,7 +61,8 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
   - `providers/` — Anthropic SDK и OpenAI-совместимые сервисы (Polza AI, OpenRouter, DeepSeek, Ollama, custom). `presets.ts` — сервисы и модели по умолчанию.
     - Кэш: у Anthropic — `cache_control` на весь запрос. Через OpenAI-совместимый путь для моделей с `claude` в имени ставятся пометки на системной инструкции и последнем сообщении (`toOpenAIMessages(…, { cache: true })`). При 400 запрос повторяется без пометок, и до перезапуска они выключены. Счётчики кэша берутся из `prompt_tokens_details`, в журнале видны как `hit N%`.
   - `prompt.ts` — системная инструкция. Структура проекта снимается один раз на чат, чтобы начало запроса не менялось и попадало в кэш.
-  - `permissions.ts` — подтверждения; `protectedPathWarning` для `.vscode/`, `.github/workflows/`, `package.json`.
+  - `permissions.ts` — подтверждения; `protectedPathWarning` для `.vscode/`, `.github/workflows/`, `package.json`; `dangerousCommandWarning` (`rm -rf`, `git push`, `sudo`…). И то и другое спрашивается всегда, даже в `auto`.
+  - `tools/sandbox.ts` — песочница macOS (`sandbox-exec`) и `commandEnv` (окружение команд без ключей). `tools/workspace.ts` — `isSecretFile` (`.env` и т. п. агент не читает).
   - `rules.ts` — правила, перечитываются перед каждой задачей. Порядок: глобальные (`~/.config/dimosi/rules.md`, Windows `%APPDATA%\dimosi\rules.md`, `DIMOSI_HOME` переопределяет) → `AGENTS.md` → `CLAUDE.md` → `.dimosi/rules.md` → `.dimosi/rules/*.md`. Лимиты: 30 тыс. символов на файл, 80 тыс. всего. Доверие нужно только для `AGENTS.md`/`CLAUDE.md` (`RuleTrust`, `rememberingTrust`, решение по хэшу пути и текста).
   - `log.ts` — журнал с маскировкой ключей. Пишет только метаданные, без текста переписки и файлов.
   - `update.ts`, `update-key.ts` — подписанные обновления (Ed25519).
@@ -113,12 +114,13 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
 - Библиотека OpenAI сама повторяет запросы при 429/5xx. Эти повторы не видны в журнале агента.
 - Этот файл (`CLAUDE.md`) dimosi тоже читает как правила проекта. После каждой правки файла dimosi снова спросит владельца, доверять ли ему. Держи файл коротким: в dimosi он уходит в каждом запросе.
 - Системные модальные окна VS Code (`showWarningMessage` с `modal: true`) не прокручиваются. Длинный текст в `detail` выталкивает кнопки за край экрана. Пиши туда пару строк, а длинное открывай в редакторе.
+- Песочница macOS (`tools/sandbox.ts`) запрещает командам писать вне проекта (кроме временных папок и кэшей) и читать личные папки. Новой программе нужна ещё одна папка для записи — добавь её в `HOME_WRITABLE` и закрепи тестом. Если dimosi сам запущен в песочнице (например, тесты из Claude Code), вложенная не стартует, и команды идут без неё с пометкой.
 - Любое изменение начала запроса сбрасывает кэш: системной инструкции (дата, правила), набора инструментов, ранних сообщений. Обрезка старых результатов инструментов делается редко и сразу пачкой. Проверка — `hit N%` в журнале.
 
 ## Что не сделано (из AUDIT.md)
 
 - В-15, шаги 3–4: тест в настоящем VS Code (`@vscode/test-electron`), выпуск только с зелёного CI.
-- Windows в CI.
+- Windows в CI. Песочница для Windows и Linux.
 - Желательные пункты Ж-1…Ж-3, Ж-5…Ж-11, Ж-13.
 - Экономия, следующие шаги: переключатель «усердия» модели (`output_config.effort`; через Polza — как передать, проверить); стабильная системная инструкция на весь чат (дата и правила сейчас сбрасывают кэш); для прямого Anthropic — серверная очистка контекста вместо правки истории (новые модели привязывают размышления к неизменной истории).
 - Справка CLI (`packages/cli/src/index.ts`, строки с перечнем правил) не упоминает `CLAUDE.md`, хотя он подключается.

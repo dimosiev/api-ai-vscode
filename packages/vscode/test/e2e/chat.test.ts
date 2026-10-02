@@ -185,6 +185,30 @@ describe("VS Code chat, end to end", () => {
     expect(fresh).toContainEqual({ type: "error", message: "Остановлено." });
   }, 20_000);
 
+  it.runIf(process.platform === "darwin")("commands run in the sandbox unless the setting turns it off", async () => {
+    const probe = path.join(os.homedir(), `dimosi-e2e-sandbox-probe-${process.pid}-${Date.now()}.txt`);
+    const command = `echo x > "${probe}"`;
+    try {
+      // The fake server takes replies from this array as they are asked for.
+      const script: Parameters<typeof startFakeServer>[0] = [{ toolCalls: [{ name: "run_command", args: { command } }] }, { text: "ok" }];
+      const panel = await setup(script, "auto");
+      let from = panel.posted.length;
+      panel.send({ type: "send", text: "запиши файл" });
+      expect((await panel.waitFor(isType("tool_end"), from)).result).toMatch(/sandbox/);
+      expect(existsSync(probe)).toBe(false);
+      await panel.waitFor((m): m is ToWebview => m.type === "busy" && !m.busy, from);
+
+      script.push({ toolCalls: [{ name: "run_command", args: { command } }] }, { text: "ok" });
+      stub.config["dimosi.sandbox"] = false;
+      from = panel.posted.length;
+      panel.send({ type: "send", text: "ещё раз" });
+      expect((await panel.waitFor(isType("tool_end"), from)).result).toContain("Exit code: 0");
+      expect(existsSync(probe)).toBe(true);
+    } finally {
+      await fs.rm(probe, { force: true });
+    }
+  }, 20_000);
+
   it("a 429 from the service is retried and the task finishes", async () => {
     const panel = await setup([{ status: 429, error: "Rate limit reached" }, { text: "Ответ после повтора." }]);
     const events = await panel.task("привет");

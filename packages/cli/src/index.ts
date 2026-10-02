@@ -38,6 +38,7 @@ ${c.bold("Запуск чата")} (в папке проекта):
   dimosi --dir ПУТЬ              работать с другой папкой
   dimosi --provider polza --model anthropic/claude-opus-5.5
   dimosi --auto                  не спрашивать подтверждений (осторожно!)
+  dimosi --no-sandbox            команды без песочницы macOS (осторожно!)
 
 ${c.bold("Ключи")}:
   dimosi keys set ПРОВАЙДЕР      сохранить API-ключ (например: anthropic, openai, polza)
@@ -80,6 +81,7 @@ interface Flags {
   baseUrl?: string;
   dir?: string;
   auto?: boolean;
+  noSandbox?: boolean;
   positional: string[];
 }
 
@@ -97,6 +99,7 @@ function parseArgs(argv: string[]): Flags {
     else if (a === "--base-url") flags.baseUrl = next();
     else if (a === "--dir" || a === "-d") flags.dir = next();
     else if (a === "--auto") flags.auto = true;
+    else if (a === "--no-sandbox") flags.noSandbox = true;
     else if (a === "--help" || a === "-h") flags.positional.unshift("help");
     else if (a === "--version" || a === "-v") flags.positional.unshift("version");
     else flags.positional.push(a);
@@ -379,15 +382,17 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
     root,
     approval,
     mode: flags.auto ? "auto" : config.mode,
+    sandbox: !flags.noSandbox,
     contextWindow: getPreset(presetId).contextWindow,
     log,
     ruleTrust: rememberingTrust(await loadTrustDecisions(), (file) => askAboutRules(io, file)),
   });
-  log.info(`chat: provider ${presetId}, model ${agent.model}, approvals ${agent.gate.mode}`);
+  log.info(`chat: provider ${presetId}, model ${agent.model}, approvals ${agent.gate.mode}, sandbox ${agent.sandbox ? "on" : "off"}`);
 
   console.log(`${c.bold(c.blue("dimosi"))} ${c.dim(VERSION)}  ${getPreset(presetId).label} · ${c.cyan(agent.model)}`);
   console.log(c.dim(`Проект: ${root}`));
   if (agent.gate.mode === "auto") console.log(c.red("Режим без подтверждений: агент сам меняет файлы и запускает команды."));
+  if (!agent.sandbox && process.platform === "darwin") console.log(c.red("Песочница выключена: команды агента работают со всеми вашими правами."));
   console.log(c.dim("Напишите задачу. /help — команды, Ctrl+C — остановить агента, /exit — выход.\n"));
 
   io.rl.on("SIGINT", () => {

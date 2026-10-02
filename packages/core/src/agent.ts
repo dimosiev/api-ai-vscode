@@ -24,6 +24,8 @@ export interface AgentOptions {
   approval: ApprovalHandler;
   mode?: ApprovalMode;
   maxSteps?: number;
+  /** Run commands in the macOS sandbox. Default: true. */
+  sandbox?: boolean;
   maxTokens?: number;
   /** Model context window in tokens; old tool output is trimmed to stay inside it. */
   contextWindow?: number;
@@ -62,6 +64,8 @@ export class Agent {
   provider: Provider;
   model: string;
   maxSteps: number;
+  /** Commands run in the macOS sandbox. */
+  sandbox: boolean;
   contextWindow: number;
   readonly root: string;
   readonly gate: PermissionGate;
@@ -79,6 +83,7 @@ export class Agent {
     this.model = opts.model;
     this.root = opts.root;
     this.maxSteps = opts.maxSteps ?? 50;
+    this.sandbox = opts.sandbox ?? true;
     this.contextWindow = opts.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     this.maxTokens = opts.maxTokens;
     this.globalRulesPath = opts.globalRulesPath;
@@ -174,6 +179,7 @@ export class Agent {
                 root: this.root,
                 gate: this.gate,
                 files: this.files,
+                sandbox: this.sandbox,
                 signal,
                 onFileChange: (change) => pending.push({ type: "file_changed", change }),
                 onPlan: (items) => pending.push({ type: "plan", items }),
