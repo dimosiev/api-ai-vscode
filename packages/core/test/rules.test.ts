@@ -46,4 +46,24 @@ describe("loadRules", () => {
     expect(rules.sources[0]).toMatchObject({ label: "CLAUDE.md", truncated: true });
     expect(rules.text).toContain("обрезано");
   });
+
+  it("does not follow links out of the project, into secret files or to huge files", async () => {
+    const root = tmp();
+    const outside = path.join(tmp(), "private.md");
+    await fs.writeFile(outside, "OUTSIDE SECRET");
+    await fs.writeFile(path.join(root, ".env"), "API_KEY=ENV SECRET");
+    await fs.mkdir(path.join(root, ".dimosi/rules"), { recursive: true });
+    await fs.symlink(outside, path.join(root, ".dimosi/rules/a.md"));
+    await fs.symlink(path.join(root, ".env"), path.join(root, ".dimosi/rules/b.md"));
+    await fs.symlink(outside, path.join(root, "AGENTS.md"));
+    await fs.writeFile(path.join(root, "own.md"), "OWN RULE");
+    await fs.symlink(path.join(root, "own.md"), path.join(root, "CLAUDE.md"));
+    await fs.writeFile(path.join(root, ".dimosi/rules/huge.md"), "x".repeat(1024 * 1024 + 1));
+    const rules = await loadRules(root, path.join(root, "none.md"));
+    expect(rules.text).not.toContain("OUTSIDE SECRET");
+    expect(rules.text).not.toContain("ENV SECRET");
+    expect(rules.text).toContain("OWN RULE"); // a link inside the project is fine
+    expect(rules.sources.map((s) => s.label)).toEqual(["CLAUDE.md"]);
+  });
 });
+

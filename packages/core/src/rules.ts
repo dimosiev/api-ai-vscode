@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { isSecretFile } from "./tools/workspace";
 
 export const MAX_RULE_FILE_CHARS = 30_000;
 export const MAX_RULES_CHARS = 80_000;
@@ -96,10 +97,22 @@ export function defaultGlobalRulesPath(): string {
 
 export const PROJECT_RULES_DIR = ".dimosi";
 
-async function readIfExists(p: string): Promise<string | undefined> {
+/** Bigger files are not rules; reading them would only waste memory. */
+const MAX_RULE_FILE_BYTES = 1024 * 1024;
+
+/**
+ * With `root`, the file must really be inside the project and not hold
+ * secrets: a link in a downloaded repository could point to ~/.ssh or .env.
+ */
+async function readIfExists(p: string, root?: string): Promise<string | undefined> {
   try {
+    if (root) {
+      const real = await fs.realpath(p);
+      const rel = path.relative(await fs.realpath(root), real);
+      if (rel.startsWith("..") || path.isAbsolute(rel) || isSecretFile(rel)) return undefined;
+    }
     const stat = await fs.stat(p);
-    if (!stat.isFile()) return undefined;
+    if (!stat.isFile() || stat.size > MAX_RULE_FILE_BYTES) return undefined;
     return await fs.readFile(p, "utf8");
   } catch {
     return undefined;
@@ -139,7 +152,7 @@ export async function loadRules(root: string, globalRulesPath = defaultGlobalRul
   const blocks: string[] = [];
   let budget = MAX_RULES_CHARS;
   for (const c of candidates) {
-    const raw = (await readIfExists(c.path))?.trim();
+    const raw = (await readIfExists(c.path, c.scope === "project" ? root : undefined))?.trim();
     if (!raw || budget <= 0) continue;
     const hash = c.needsTrust ? ruleHash(c.path, raw) : undefined;
     if (hash && trust && !(await trust.isTrusted({ label: c.label, path: c.path, text: raw, hash }))) {
