@@ -305,6 +305,34 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
     }
   });
 
+  it("blocks reading more private files: ~/.config, cloud and build tool logins, other editors", () => {
+    const priv = [
+      ".config/some-cli/token.json", ".config/git/credentials", ".azure/accessTokens.json", ".terraform.d/credentials.tfrc.json",
+      ".gem/credentials", ".cargo/credentials.toml", ".cargo/credentials", ".gradle/gradle.properties", ".m2/settings.xml",
+      ".claude/.credentials.json", ".claude.json", ".docker/config.json", ".kube/config",
+      "Library/Application Support/Code - Insiders/User/globalStorage/state.vscdb", "Library/Application Support/Cursor/User/x",
+      "Library/Application Support/VSCodium/User/x",
+    ];
+    for (const f of [...priv, ".config/git/ignore", ".config/git/config"]) {
+      mkdirSync(path.dirname(path.join(home, f)), { recursive: true });
+      writeFileSync(path.join(home, f), f === ".config/git/ignore" ? "*.log\n" : f === ".config/git/config" ? "[core]\n" : "PRIVATE");
+    }
+    for (const f of priv) {
+      const r = run(`cat "${home}/${f}"`);
+      expect(r.code, f).not.toBe(0);
+      expect(r.out, f).not.toContain("PRIVATE");
+    }
+    // git reads its own settings from ~/.config/git.
+    expect(run(`cat "${home}/.config/git/ignore"`).out).toContain("*.log");
+    rmSync(path.join(project, ".git"), { recursive: true });
+    const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: "" };
+    const { file, args } = sandboxedCommand("git init -q && touch a.log b.txt && git status --short", paths);
+    const r = spawnSync(file, args, { cwd: project, encoding: "utf8", env });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("b.txt");
+    expect(r.stdout).not.toContain("a.log");
+  });
+
   it("blocks writing outside the project", () => {
     const r = run(`echo x > "${home}/evil.txt"`);
     expect(r.code).not.toBe(0);

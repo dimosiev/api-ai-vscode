@@ -29,7 +29,12 @@ const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 
 /** Home folders with keys, passwords and personal files: no reading, no writing. */
 const HOME_PRIVATE = [
-  ".ssh", ".aws", ".gnupg", ".kube", ".docker", ".password-store", ".config/gh",
+  ".ssh", ".aws", ".gnupg", ".kube", ".docker", ".password-store",
+  // Settings of command-line tools, often with their logins (gh, cloud tools...). git's own folder is opened again below.
+  ".config",
+  // Logins of cloud and build tools.
+  ".azure", ".terraform.d", ".gem/credentials", ".cargo/credentials", ".cargo/credentials.toml",
+  ".gradle/gradle.properties", ".m2/settings.xml", ".claude", ".claude.json",
   // Tokens in plain text: git's "store" helper, curl/ftp, npm and PyPI logins.
   ".git-credentials", ".config/git/credentials", ".netrc", ".npmrc", ".pypirc",
   // Shell settings and history: tokens are often exported there.
@@ -43,8 +48,14 @@ const HOME_PRIVATE = [
   "Library/Application Support/Google/Chrome", "Library/Application Support/Firefox",
   "Library/Application Support/Yandex", "Library/Application Support/BraveSoftware",
   "Library/Application Support/Arc", "Library/Application Support/Microsoft Edge",
-  "Library/Application Support/Code",
+  "Library/Application Support/Code", "Library/Application Support/Code - Insiders",
+  "Library/Application Support/Cursor", "Library/Application Support/VSCodium",
 ];
+
+/** Inside private folders, but needed by everyday tools: git's settings. Read only. */
+const HOME_READABLE = [".config/git"];
+/** ...except what is private inside them again. */
+const HOME_PRIVATE_AGAIN = [".config/git/credentials"];
 
 /**
  * Package caches outside the project that builds and installs write to.
@@ -129,6 +140,8 @@ export function sandboxProfile(paths: SandboxPaths): string {
     `(deny file-read* ${secrets.secret.map((r) => `(regex #"${r}")`).join(" ")})`,
     `(allow file-read* (regex #"${secrets.template}"))`,
     within.length ? `(deny file-read* file-write* ${sub(within)})` : "",
+    `(allow file-read* ${sub(HOME_READABLE.map((p) => path.join(home, p)))})`,
+    `(deny file-read* file-write* ${sub(HOME_PRIVATE_AGAIN.map((p) => path.join(home, p)))})`,
     // Files that run code later, outside the sandbox: VS Code tasks and git hooks.
     `(deny file-write* (subpath ${q(path.join(root, ".vscode"))}))`,
     // The agent's own rules: a command must not give it new instructions.
