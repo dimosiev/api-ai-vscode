@@ -38,6 +38,16 @@ describe("update manifest", () => {
     expect(() => parseManifest({ version: "1.0.0", vsix: { file: "a.vsix", sha256: HASH }, cli: { file: "x y", sha256: HASH } })).toThrow();
   });
 
+  it("accepts only .vsix and .tgz files and a YYYY-MM-DD date", () => {
+    const ok = { version: "1.0.0", date: "2026-10-02", vsix: { file: "dimosi-1.0.0.vsix", sha256: HASH }, cli: { file: "dimosi-cli-1.0.0.tgz", sha256: HASH } };
+    expect(parseManifest(ok).date).toBe("2026-10-02");
+    expect(() => parseManifest({ ...ok, vsix: { file: "dimosi.exe", sha256: HASH } })).toThrow();
+    expect(() => parseManifest({ ...ok, vsix: { file: "dimosi.vsix.sh", sha256: HASH } })).toThrow();
+    expect(() => parseManifest({ ...ok, cli: { file: "dimosi-cli.vsix", sha256: HASH } })).toThrow();
+    expect(() => parseManifest({ ...ok, date: "вчера" })).toThrow();
+    expect(() => parseManifest({ ...ok, date: "2026-10-02\nnotes=x" })).toThrow();
+  });
+
   it("compares versions numerically", () => {
     expect(isNewerVersion("0.3.0", "0.2.0")).toBe(true);
     expect(isNewerVersion("0.10.0", "0.9.9")).toBe(true);
@@ -101,6 +111,26 @@ describe("download", () => {
       await expect(fetchManifest("https://example.test/secret/", [keyPair().pub])).rejects.toThrow(/не сходится/);
       expect(await downloadVerified("https://example.test/secret", m.vsix)).toEqual(body);
       await expect(downloadVerified("https://example.test/secret", { file: "d.vsix", sha256: HASH })).rejects.toThrow(/Контрольная сумма/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("does not read an endless latest.json or update file", async () => {
+    // 12 MB: far over both limits, but finite, so old code can't eat the memory.
+    const endless = () => {
+      let chunks = 200;
+      return new ReadableStream({
+        pull(controller) {
+          if (chunks-- > 0) controller.enqueue(new Uint8Array(64 * 1024).fill(32));
+          else controller.close();
+        },
+      });
+    };
+    globalThis.fetch = (async () => new Response(endless())) as unknown as typeof fetch;
+    try {
+      await expect(fetchManifest("https://example.test/secret/", [owner.pub])).rejects.toThrow(/слишком большой/);
+      await expect(downloadVerified("https://example.test/secret", { file: "d.vsix", sha256: HASH }, 120_000, 1024 * 1024)).rejects.toThrow(/слишком большой/);
     } finally {
       globalThis.fetch = realFetch;
     }
