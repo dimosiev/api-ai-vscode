@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { defaultGlobalRulesPath } from "../rules";
+import { secretPathPatterns } from "./workspace";
 
 /** Variables a command needs that only look like secrets. */
 const KEEP = new Set(["SSH_AUTH_SOCK", "XAUTHORITY"]);
@@ -114,6 +115,7 @@ export function sandboxProfile(paths: SandboxPaths): string {
   const around = priv.filter((p) => inside(root, p));
   const within = priv.filter((p) => !inside(root, p));
   const way = around.flatMap((p) => foldersBetween(p, root));
+  const secrets = secretPathPatterns(regexQuote(root));
   const lines = [
     "(version 1)",
     "(allow default)",
@@ -123,6 +125,9 @@ export function sandboxProfile(paths: SandboxPaths): string {
     // Tools (git init, for one) check every folder on the way to the project; listing them stays closed.
     way.length ? `(allow file-read-metadata ${way.map((p) => `(literal ${q(p)})`).join(" ")})` : "",
     `(allow file-read* file-write* (subpath ${q(root)}))`,
+    // The project's own secrets (.env, keys...): a command's output goes to the AI service.
+    `(deny file-read* ${secrets.secret.map((r) => `(regex #"${r}")`).join(" ")})`,
+    `(allow file-read* (regex #"${secrets.template}"))`,
     within.length ? `(deny file-read* file-write* ${sub(within)})` : "",
     // Files that run code later, outside the sandbox: VS Code tasks and git hooks.
     `(deny file-write* (subpath ${q(path.join(root, ".vscode"))}))`,

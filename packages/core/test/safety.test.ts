@@ -396,6 +396,23 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
     expect(run(`echo '{}' > package.json && mkdir -p .github && echo x > .github/README.md`).code).toBe(0);
   });
 
+  it("blocks reading the project's secret files, but not their samples", () => {
+    const secret = [".env", "config/.ENV.local", "certs/tls.key", "deploy/id_ed25519", "wp-config.php", "my-service-account.json", "prod.tfvars", "release.config.json"];
+    const open = [".env.example", "config/.env.sample", "src/key.ts", "wp-config-sample.php", ".env.d/settings.txt", "keys.md", "id_ed25519.pub", "Service.ts"];
+    for (const f of [...secret, ...open]) {
+      mkdirSync(path.dirname(path.join(project, f)), { recursive: true });
+      writeFileSync(path.join(project, f), `CONTENT of ${f}`);
+    }
+    for (const f of secret) {
+      const r = run(`cat "${f}"`);
+      expect(r.code, f).not.toBe(0);
+      expect(r.out, f).not.toContain("CONTENT");
+    }
+    for (const f of open) expect(run(`cat "${f}"`).out, f).toContain(`CONTENT of ${f}`);
+    // Writing is still allowed: a setup script may create .env.
+    expect(run("echo A=1 > .env.local").code).toBe(0);
+  });
+
   it("blocks writing the agent's own rules in .dimosi", () => {
     const r = run(`mkdir -p .dimosi/rules 2>/dev/null; echo x >> .dimosi/rules.md`);
     expect(r.code).not.toBe(0);

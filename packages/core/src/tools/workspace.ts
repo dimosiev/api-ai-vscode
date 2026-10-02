@@ -121,25 +121,45 @@ export async function walk(
   return { paths: out, truncated };
 }
 
-const SECRET_FILES = [
-  /^\.env(\..+)?$/,
-  /\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk)$/,
-  /^id_(rsa|dsa|ecdsa|ed25519)$/,
-  /^\.(npmrc|netrc|pypirc|pgpass)$/,
-  /^(credentials|secrets?)(\.(json|ya?ml|toml))?$/,
-  /^\.(htpasswd|my\.cnf|git-credentials)$/,
+/** File names (lower case) that usually hold keys and passwords. Plain sources: the sandbox reuses them. */
+const SECRET_NAMES = [
+  String.raw`^\.env(\..+)?$`,
+  String.raw`\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk)$`,
+  String.raw`^id_(rsa|dsa|ecdsa|ed25519)$`,
+  String.raw`^\.(npmrc|netrc|pypirc|pgpass)$`,
+  String.raw`^(credentials|secrets?)(\.(json|ya?ml|toml))?$`,
+  String.raw`^\.(htpasswd|my\.cnf|git-credentials)$`,
   // WordPress database password; Composer tokens.
-  /^wp-config\.php$/,
-  /^auth\.json$/,
+  String.raw`^wp-config\.php$`,
+  String.raw`^auth\.json$`,
   // Google keys: service accounts and OAuth clients.
-  /service[-_]?account.*\.json$/,
-  /^client_secret.*\.json$/,
+  String.raw`service[-_]?account.*\.json$`,
+  String.raw`^client_secret.*\.json$`,
   // Terraform variables and state hold passwords in plain text.
-  /\.(tfvars|tfstate)$/,
+  String.raw`\.(tfvars|tfstate)$`,
   // dimosi's own release settings (update server address and SSH).
-  /^release\.config\.json$/,
+  String.raw`^release\.config\.json$`,
 ];
-const SECRET_TEMPLATE = /\.(example|sample|template|dist|defaults?)$/;
+/** Samples such as .env.example are not secret. */
+const SECRET_TEMPLATE_NAME = String.raw`\.(example|sample|template|dist|defaults?)$`;
+const SECRET_FILES = SECRET_NAMES.map((src) => new RegExp(src));
+const SECRET_TEMPLATE = new RegExp(SECRET_TEMPLATE_NAME);
+
+/**
+ * The same names as patterns for whole paths under `dir`, for the macOS
+ * sandbox: any letter case (the disk ignores it), wildcards stay inside one
+ * folder name. `escapedDir` must already be escaped for a regular expression.
+ */
+export function secretPathPatterns(escapedDir: string): { secret: string[]; template: string } {
+  const toPath = (name: string) => {
+    const body = name
+      .replace(/^\^/, "")
+      .replace(/(?<!\\)\.(?=[+*])/g, "[^/]")
+      .replace(/[a-z]/g, (c) => `[${c}${c.toUpperCase()}]`);
+    return `^${escapedDir}/(.*/)?${name.startsWith("^") ? "" : "[^/]*"}${body}`;
+  };
+  return { secret: SECRET_NAMES.map(toPath), template: toPath(SECRET_TEMPLATE_NAME) };
+}
 
 /**
  * Files that usually hold keys and passwords. The agent does not read or

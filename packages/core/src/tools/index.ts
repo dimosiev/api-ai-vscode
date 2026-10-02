@@ -433,7 +433,7 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
 
 const SANDBOX_HINT =
   "Note: dimosi runs commands in a sandbox. It blocks writing outside the project (temp folders and package caches are allowed), " +
-  "changing git hooks and settings, .vscode, .dimosi, .husky, .devcontainer, .github/workflows and .envrc, starting apps (open, osascript), and reading private folders (~/.ssh, ~/Documents, ~/Desktop, ~/Downloads and others). " +
+  "changing git hooks and settings, .vscode, .dimosi, .husky, .devcontainer, .github/workflows and .envrc, starting apps (open, osascript), reading the project's secret files (.env, keys) and private folders (~/.ssh, ~/Documents, ~/Desktop, ~/Downloads and others). " +
   "Do not try to work around it. If the command really needs this, tell the user: they can run it in their own terminal.";
 
 function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal, sandboxed = false): Promise<string> {
