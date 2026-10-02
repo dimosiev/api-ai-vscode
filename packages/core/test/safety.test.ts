@@ -273,6 +273,20 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
     expect(existsSync(path.join(home, ".npm/cache"))).toBe(true);
   });
 
+  it("lets package caches be written, but not folders with programs that run outside the sandbox", () => {
+    // The tools are installed: their home folders exist.
+    for (const dir of [".cargo", "go/pkg", ".gradle", ".m2", ".bun/install", "Library/pnpm", ".yarn/berry", ".rustup"]) mkdirSync(path.join(home, dir), { recursive: true });
+    for (const dir of [".cargo/registry", ".cargo/git", "go/pkg/mod", ".gradle/caches", ".m2/repository", ".bun/install/cache", "Library/pnpm/store", ".yarn/berry/cache"]) {
+      const r = run(`mkdir -p "${home}/${dir}" && echo c > "${home}/${dir}/f"`);
+      expect(r.code, dir).toBe(0);
+    }
+    for (const dir of [".cargo/bin", "go/bin", ".gradle/init.d", ".m2", ".bun/bin", "Library/pnpm", ".yarn/bin", ".rustup/toolchains"]) {
+      const r = run(`mkdir -p "${home}/${dir}" 2>/dev/null; echo x > "${home}/${dir}/evil"`);
+      expect(r.code, dir).not.toBe(0);
+      expect(existsSync(path.join(home, dir, "evil")), dir).toBe(false);
+    }
+  });
+
   it("blocks writing outside the project", () => {
     const r = run(`echo x > "${home}/evil.txt"`);
     expect(r.code).not.toBe(0);

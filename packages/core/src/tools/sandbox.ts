@@ -45,10 +45,15 @@ const HOME_PRIVATE = [
   "Library/Application Support/Code",
 ];
 
-/** Package caches outside the project that builds and installs write to. */
+/**
+ * Package caches outside the project that builds and installs write to.
+ * Only the caches: next to them live installed programs (~/.cargo/bin,
+ * ~/go/bin, ~/.bun/bin...) that the user later runs outside the sandbox.
+ */
 const HOME_WRITABLE = [
-  ".npm", ".cache", "Library/Caches", ".yarn", ".pnpm-store", "Library/pnpm", ".bun", ".node-gyp",
-  ".cargo", ".rustup", "go", ".gradle", ".m2", "Library/Developer/Xcode/DerivedData",
+  ".npm", ".cache", "Library/Caches", ".yarn/berry/cache", ".pnpm-store", "Library/pnpm/store", ".bun/install/cache", ".node-gyp",
+  ".cargo/registry", ".cargo/git", "go/pkg/mod", ".gradle/caches", ".gradle/wrapper/dists", ".m2/repository",
+  "Library/Developer/Xcode/DerivedData",
 ];
 
 export interface SandboxPaths {
