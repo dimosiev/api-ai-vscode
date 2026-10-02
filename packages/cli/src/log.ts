@@ -17,7 +17,7 @@ export function fileSink(file = logFilePath(), maxBytes = MAX_LOG_BYTES): LogSin
   return (level, message) => {
     try {
       if (size < 0) {
-        mkdirSync(path.dirname(file), { recursive: true });
+        mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
         try {
           size = statSync(file).size;
         } catch {

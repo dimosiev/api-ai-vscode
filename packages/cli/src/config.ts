@@ -23,6 +23,46 @@ export function configDir(): string {
   return process.env.DIMOSI_HOME ?? baseDir("dimosi");
 }
 
+const POSIX = process.platform !== "win32";
+/** Everything dimosi keeps in its folder; all of it is private. */
+const OWN_FILES = ["config.json", "trusted-rules.json", "update-check.json", "keys.aienc", "dimosi.log", "dimosi.log.1", "rules.md"];
+
+/** Creates the folder readable by the owner only (0700) and fixes an existing one. */
+export async function ensureConfigDir(): Promise<string> {
+  const dir = configDir();
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  if (POSIX) await fs.chmod(dir, 0o700);
+  return dir;
+}
+
+/** On start: an older dimosi created the folder and files readable by everyone. */
+export async function secureConfigDir(): Promise<void> {
+  if (!POSIX) return;
+  try {
+    await fs.chmod(configDir(), 0o700);
+  } catch {
+    return; // no folder yet
+  }
+  for (const f of OWN_FILES) await fs.chmod(path.join(configDir(), f), 0o600).catch(() => undefined);
+}
+
+/**
+ * Writes a file in the folder for the owner only (0600), through a temporary
+ * file and a rename: a crash mid-write can't leave keys.aienc half-written.
+ */
+export async function writePrivateFile(file: string, text: string): Promise<void> {
+  await ensureConfigDir();
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    await fs.writeFile(tmp, text, { encoding: "utf8", mode: 0o600 });
+    if (POSIX) await fs.chmod(tmp, 0o600);
+    await fs.rename(tmp, file);
+  } catch (e) {
+    await fs.rm(tmp, { force: true });
+    throw e;
+  }
+}
+
 /** Version 0.1 kept its files in ".../api-ai"; copy them over once. */
 export async function migrateLegacyConfig(): Promise<boolean> {
   if (process.env.DIMOSI_HOME) return false;
@@ -67,13 +107,11 @@ export async function loadTrustDecisions(): Promise<{ get(hash: string): boolean
     get: (hash) => (typeof all[hash] === "boolean" ? all[hash] : undefined),
     async set(hash, trusted) {
       all = { ...all, [hash]: trusted };
-      await fs.mkdir(configDir(), { recursive: true });
-      await fs.writeFile(trustPath(), JSON.stringify(all, null, 2) + "\n", "utf8");
+      await writePrivateFile(trustPath(), JSON.stringify(all, null, 2) + "\n");
     },
   };
 }
 
 export async function saveConfig(config: CliConfig): Promise<void> {
-  await fs.mkdir(configDir(), { recursive: true });
-  await fs.writeFile(configPath(), JSON.stringify(config, null, 2) + "\n", "utf8");
+  await writePrivateFile(configPath(), JSON.stringify(config, null, 2) + "\n");
 }

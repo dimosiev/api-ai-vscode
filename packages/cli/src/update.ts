@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { downloadVerified, fetchManifest, isNewerVersion, UPDATE_PUBLIC_KEYS } from "@dimosi/core";
-import { configDir } from "./config";
+import { configDir, writePrivateFile } from "./config";
 import { log } from "./log";
 import { c } from "./ui";
 
@@ -23,8 +23,7 @@ export async function notifyIfOutdated(): Promise<void> {
     }
     const manifest = await fetchManifest(UPDATE_URL, UPDATE_PUBLIC_KEYS, 3000);
     log.info(`update check: server offers ${manifest.version} (signature ok), current ${VERSION}`);
-    await fs.mkdir(configDir(), { recursive: true });
-    await fs.writeFile(stampFile(), JSON.stringify({ at: Date.now(), latest: manifest.version }));
+    await writePrivateFile(stampFile(), JSON.stringify({ at: Date.now(), latest: manifest.version }));
     if (manifest.cli && isNewerVersion(manifest.version, VERSION)) printHint(manifest.version);
   } catch (e) {
     // offline or server unavailable: stay quiet

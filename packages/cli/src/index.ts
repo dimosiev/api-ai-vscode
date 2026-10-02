@@ -26,7 +26,7 @@ import {
   type Provider,
   type RuleFile,
 } from "@dimosi/core";
-import { configDir, loadConfig, loadTrustDecisions, migrateLegacyConfig, saveConfig, type CliConfig } from "./config";
+import { configDir, loadConfig, loadTrustDecisions, migrateLegacyConfig, saveConfig, secureConfigDir, writePrivateFile, type CliConfig } from "./config";
 import { EncryptedFileKeyStore, keyFileExists, keyFilePath } from "./keystore";
 import { fileSink, log, logFilePath } from "./log";
 import { c, Prompter, renderDiff } from "./ui";
@@ -235,8 +235,7 @@ async function cmdKeys(args: string[], io: Prompter): Promise<void> {
       }
       if (!(await keyFileExists())) {
         // First key file on this machine: adopt it as is, with the same password.
-        await fs.mkdir(configDir(), { recursive: true });
-        await fs.writeFile(keyFilePath(), text, { encoding: "utf8", mode: 0o600 });
+        await writePrivateFile(keyFilePath(), text);
       } else {
         const store = await keys.open(false);
         for (const [name, value] of Object.entries(imported)) await store!.set(name, value);
@@ -322,8 +321,8 @@ async function cmdRules(args: string[], flags: Flags): Promise<void> {
     try {
       await fs.access(p);
     } catch {
-      await fs.mkdir(path.dirname(p), { recursive: true });
-      await fs.writeFile(p, GLOBAL_RULES_TEMPLATE, "utf8");
+      await fs.mkdir(path.dirname(p), { recursive: true, mode: 0o700 });
+      await fs.writeFile(p, GLOBAL_RULES_TEMPLATE, { encoding: "utf8", mode: 0o600 });
       console.log(c.green("Создан файл глобальных правил из шаблона."));
     }
     console.log(`Глобальные правила: ${p}`);
@@ -592,6 +591,7 @@ async function main(): Promise<void> {
   const what = known.includes(flags.positional[0]) ? `command "${flags.positional[0]}"` : "chat";
   log.info(`dimosi ${VERSION} started: ${what}, Node ${process.versions.node}, ${process.platform} ${process.arch}`);
   if (await migrateLegacyConfig()) console.log(c.dim(`Настройки и ключи перенесены в ${configDir()}.`));
+  await secureConfigDir();
   const [command, ...rest] = flags.positional;
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY });
   const io = new Prompter(rl);

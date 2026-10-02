@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { decryptKeys, encryptKeys, type KeyStore } from "@dimosi/core";
-import { configDir } from "./config";
+import { configDir, writePrivateFile } from "./config";
 
 export const keyFilePath = () => path.join(configDir(), "keys.aienc");
 
@@ -50,7 +50,6 @@ export class EncryptedFileKeyStore implements KeyStore {
   }
 
   private async save() {
-    await fs.mkdir(configDir(), { recursive: true });
-    await fs.writeFile(keyFilePath(), encryptKeys(this.keys, this.password), { encoding: "utf8", mode: 0o600 });
+    await writePrivateFile(keyFilePath(), encryptKeys(this.keys, this.password));
   }
 }
