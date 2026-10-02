@@ -6,6 +6,7 @@ import { decryptKeys } from "@dimosi/core";
 import { loadTrustDecisions, saveConfig, secureConfigDir } from "../src/config";
 import { EncryptedFileKeyStore } from "../src/keystore";
 import { fileSink } from "../src/log";
+import { npmInstallInvocation } from "../src/update";
 
 const mode = (p: string) => statSync(p).mode & 0o777;
 let home: string;
@@ -50,3 +51,16 @@ describe.skipIf(process.platform === "win32")("the dimosi settings folder", () =
     expect(Object.keys(decryptKeys(text, "pw"))).toHaveLength(5);
   });
 });
+
+describe("installing a CLI update", () => {
+  it("runs npm from the download folder, so a project's own npm.cmd is never picked up on Windows", () => {
+    const file = "C:\\Users\\Ivan Petrov\\AppData\\Local\\Temp\\dimosi-update-x\\dimosi-cli-0.4.7.tgz";
+    const win = npmInstallInvocation(file, "C:\\Users\\Ivan Petrov\\AppData\\Local\\Temp\\dimosi-update-x", "win32");
+    expect(win.args).toEqual(["install", "-g", `"${file}"`]);
+    expect(win.options).toMatchObject({ cwd: "C:\\Users\\Ivan Petrov\\AppData\\Local\\Temp\\dimosi-update-x", shell: true });
+    const mac = npmInstallInvocation("/tmp/x/dimosi-cli-0.4.7.tgz", "/tmp/x", "darwin");
+    expect(mac.args).toEqual(["install", "-g", "/tmp/x/dimosi-cli-0.4.7.tgz"]);
+    expect(mac.options).toMatchObject({ cwd: "/tmp/x", shell: false });
+  });
+});
+

@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { errorText } from "../src/errorText";
-import { codeCliCandidates, installVsix } from "../src/vsixInstall";
+import { codeCliCandidates, codeCliInvocation, installVsix } from "../src/vsixInstall";
 import { stub, Uri } from "./e2e/vscode";
 
 beforeEach(() => stub.reset());
@@ -49,4 +49,20 @@ describe("installing an update", () => {
     expect(codeCliCandidates("/usr/share/code/resources/app", "linux")).toContain(path.join("/usr/share/code", "bin", "code"));
     expect(codeCliCandidates("C:\\VSCode\\resources\\app", "win32").some((p) => p.endsWith("code.cmd"))).toBe(true);
   });
+
+  it("on Windows quotes the paths, because the .cmd runs through the shell", () => {
+    const cli = "C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd";
+    const vsix = "C:\\Users\\Ivan Petrov\\AppData\\Local\\Temp\\dimosi-update-x\\dimosi-0.4.7.vsix";
+    expect(codeCliInvocation(cli, vsix, "win32")).toEqual({
+      file: `"${cli}"`,
+      args: ["--install-extension", `"${vsix}"`, "--force"],
+      shell: true,
+    });
+    expect(codeCliInvocation("/Applications/VS Code.app/bin/code", "/tmp/a b.vsix", "darwin")).toEqual({
+      file: "/Applications/VS Code.app/bin/code",
+      args: ["--install-extension", "/tmp/a b.vsix", "--force"],
+      shell: false,
+    });
+  });
 });
+

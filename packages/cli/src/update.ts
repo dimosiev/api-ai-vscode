@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -31,6 +31,16 @@ export async function notifyIfOutdated(): Promise<void> {
   }
 }
 
+/**
+ * npm runs from the download folder: on Windows the shell looks for npm.cmd
+ * in the current folder first, and that could be a project's own file. The
+ * path is quoted there, since the shell splits it at spaces.
+ */
+export function npmInstallInvocation(file: string, dir: string, platform: NodeJS.Platform): { args: string[]; options: SpawnOptions } {
+  const win = platform === "win32";
+  return { args: ["install", "-g", win ? `"${file}"` : file], options: { cwd: dir, stdio: "inherit", shell: win } };
+}
+
 function printHint(version: string): void {
   console.log(c.yellow(`Доступна новая версия dimosi ${version} (у вас ${VERSION}). Обновить: dimosi update`));
 }
@@ -51,7 +61,8 @@ export async function cmdUpdate(): Promise<void> {
   await fs.writeFile(file, data);
   console.log("Контрольная сумма совпала. Устанавливаю…");
   const code = await new Promise<number>((resolve) => {
-    const child = spawn("npm", ["install", "-g", file], { stdio: "inherit", shell: process.platform === "win32" });
+    const { args, options } = npmInstallInvocation(file, dir, process.platform);
+    const child = spawn("npm", args, options);
     child.on("close", (c) => resolve(c ?? 1));
     child.on("error", () => resolve(1));
   });

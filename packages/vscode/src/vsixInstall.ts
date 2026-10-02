@@ -15,15 +15,26 @@ export function codeCliCandidates(appRoot: string, platform: NodeJS.Platform): s
   ];
 }
 
+/**
+ * On Windows code.cmd only runs through the shell, which splits the line at
+ * spaces ("C:\Program Files\..."): both paths go in quotes there.
+ */
+export function codeCliInvocation(cli: string, vsixPath: string, platform: NodeJS.Platform): { file: string; args: string[]; shell: boolean } {
+  const win = platform === "win32";
+  const quote = (s: string) => (win ? `"${s}"` : s);
+  return { file: quote(cli), args: ["--install-extension", quote(vsixPath), "--force"], shell: win };
+}
+
 /** Installs a VSIX with VS Code's own command line, the way `code --install-extension` does. */
 export function runCodeCli(vsixPath: string): Promise<void> {
   const cli = codeCliCandidates(vscode.env.appRoot, process.platform).find((c) => existsSync(c));
   if (!cli) return Promise.reject(new Error("не найдена командная строка VS Code (bin/code)"));
+  const { file, args, shell } = codeCliInvocation(cli, vsixPath, process.platform);
   return new Promise((resolve, reject) => {
     execFile(
-      cli,
-      ["--install-extension", vsixPath, "--force"],
-      { timeout: 120_000, shell: process.platform === "win32", windowsHide: true },
+      file,
+      args,
+      { timeout: 120_000, shell, windowsHide: true },
       (err, stdout, stderr) => {
         if (!err) return resolve();
         const detail = `${stderr}\n${stdout}`.split("\n").map((l) => l.trim()).filter((l) => l && !/DeprecationWarning|trace-deprecation/.test(l));
