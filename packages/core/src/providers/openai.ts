@@ -19,6 +19,8 @@ export class OpenAIProvider implements Provider {
   readonly id: string;
   private client: OpenAI;
   private includeUsage: boolean;
+  /** Mark cache points for Claude models; turned off if the service rejects the marks. */
+  private promptCache = true;
   private pricing?: Promise<Map<string, Pricing>>;
 
   constructor(opts: OpenAIProviderOptions) {
@@ -33,11 +35,11 @@ export class OpenAIProvider implements Provider {
   }
 
   async *stream(req: ChatRequest): AsyncIterable<StreamEvent> {
-    const create = (withUsage: boolean) =>
+    const create = (withUsage: boolean, withCache: boolean) =>
       this.client.chat.completions.create(
         {
           model: req.model,
-          messages: toOpenAIMessages(req.system, req.messages),
+          messages: toOpenAIMessages(req.system, req.messages, { cache: withCache }),
           tools: req.tools.length
             ? req.tools.map((t) => ({
                 type: "function" as const,
@@ -49,16 +51,29 @@ export class OpenAIProvider implements Provider {
         },
         { signal: req.signal },
       );
+    let cache = this.promptCache && isClaude(req.model);
+    let withUsage = this.includeUsage;
     let stream;
-    try {
-      stream = await create(this.includeUsage);
-    } catch (e) {
-      // Some servers reject stream_options; retry once without it and stop asking.
-      const status = (e as { status?: number }).status;
-      if (!this.includeUsage || status !== 400 || !/stream_options|include_usage/i.test(String((e as Error).message))) throw e;
-      this.includeUsage = false;
-      stream = await create(false);
+    for (;;) {
+      try {
+        stream = await create(withUsage, cache);
+        break;
+      } catch (e) {
+        if ((e as { status?: number }).status !== 400) throw e;
+        if (cache) {
+          // Any 400 with cache marks: retry once without them. If that works,
+          // the service does not accept them and they are not sent again.
+          cache = false;
+        } else if (withUsage && /stream_options|include_usage/i.test(String((e as Error).message))) {
+          // Some servers reject stream_options; retry once without it and stop asking.
+          withUsage = false;
+        } else {
+          throw e;
+        }
+      }
     }
+    if (this.promptCache && isClaude(req.model) && !cache) this.promptCache = false;
+    this.includeUsage = withUsage;
 
     let text = "";
     let finishReason: string | null = null;
@@ -151,10 +166,17 @@ export function parsePricing(raw: Record<string, unknown>): Pricing | undefined 
 
 /** Token counts plus the exact cost when the service reports it. */
 export function parseUsage(raw: Record<string, unknown>, providerId: string): Usage {
+  // prompt_tokens is the whole input; the details say how much of it came from
+  // or went into the cache. Usage.inputTokens counts only the uncached rest.
+  const details = (raw.prompt_tokens_details ?? {}) as Record<string, unknown>;
+  const cacheRead = Number(details.cached_tokens) || 0;
+  const cacheWrite = Number(details.cache_write_tokens) || 0;
   const usage: Usage = {
-    inputTokens: Number(raw.prompt_tokens) || 0,
+    inputTokens: Math.max(0, (Number(raw.prompt_tokens) || 0) - cacheRead - cacheWrite),
     outputTokens: Number(raw.completion_tokens) || 0,
   };
+  if (cacheRead) usage.cacheReadTokens = cacheRead;
+  if (cacheWrite) usage.cacheWriteTokens = cacheWrite;
   const rub = Number(raw.cost_rub);
   const generic = Number(raw.cost);
   if (raw.cost_rub !== undefined && Number.isFinite(rub)) usage.cost = { amount: rub, currency: "RUB" };
@@ -190,9 +212,40 @@ export class IncompleteResponseError extends Error {
   }
 }
 
+/** Claude needs explicit cache marks; other models cache automatically or not at all. */
+export function isClaude(model: string): boolean {
+  return /claude/i.test(model);
+}
+
+const CACHE_MARK = { type: "ephemeral" } as const;
+
+/**
+ * Copy of a message whose last content part carries a cache mark.
+ * cache_control is a Polza AI / OpenRouter extension unknown to the OpenAI types.
+ */
+function withCacheMark(m: OpenAI.Chat.ChatCompletionMessageParam): OpenAI.Chat.ChatCompletionMessageParam {
+  const content: unknown = m.content;
+  let parts: Record<string, unknown>[];
+  if (typeof content === "string") parts = [{ type: "text", text: content }];
+  else if (Array.isArray(content) && content.length) parts = [...(content as Record<string, unknown>[])];
+  else return m;
+  parts[parts.length - 1] = { ...parts[parts.length - 1], cache_control: CACHE_MARK };
+  return { ...m, content: parts } as unknown as OpenAI.Chat.ChatCompletionMessageParam;
+}
+
+export interface OpenAIMessageOptions {
+  /**
+   * Mark the system prompt and the last message for prompt caching (Claude via
+   * Polza AI or OpenRouter). Everything before the last mark is read from the
+   * cache on the next step, so earlier messages must not change between steps.
+   */
+  cache?: boolean;
+}
+
 export function toOpenAIMessages(
   system: string,
   messages: Message[],
+  opts: OpenAIMessageOptions = {},
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
   const ids = new ToolIdMapper();
   const out: OpenAI.Chat.ChatCompletionMessageParam[] = [{ role: "system", content: system }];
@@ -245,6 +298,10 @@ export function toOpenAIMessages(
     } else if (text) {
       out.push({ role: "user", content: text });
     }
+  }
+  if (opts.cache) {
+    out[0] = withCacheMark(out[0]);
+    if (out.length > 1) out[out.length - 1] = withCacheMark(out[out.length - 1]);
   }
   return out;
 }

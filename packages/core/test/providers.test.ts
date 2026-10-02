@@ -88,6 +88,106 @@ describe("OpenAI-compatible adapter (Polza AI preset)", () => {
   });
 });
 
+describe("prompt caching through OpenAI-compatible services (Polza AI, OpenRouter)", () => {
+  const cc = { type: "ephemeral" };
+
+  it("marks the system prompt and the last message for Claude", () => {
+    const out = toOpenAIMessages("sys", history, { cache: true });
+    expect(out[0]).toEqual({ role: "system", content: [{ type: "text", text: "sys", cache_control: cc }] });
+    // Earlier messages stay unchanged so the cached prefix is byte-identical next time.
+    expect(out[1]).toEqual({ role: "user", content: "read a.txt" });
+    expect(out.at(-1)).toEqual({
+      role: "tool",
+      tool_call_id: "t1",
+      content: [{ type: "text", text: "1\thello", cache_control: cc }],
+    });
+  });
+
+  it("marks the last part of a user message with images", () => {
+    const out = toOpenAIMessages("sys", [
+      { role: "user", parts: [{ type: "text", text: "look" }, { type: "image", mediaType: "image/png", data: "AAA" }] },
+    ], { cache: true });
+    const content = out.at(-1)!.content as any[];
+    expect(content[0]).toEqual({ type: "text", text: "look" });
+    expect(content[1]).toMatchObject({ type: "image_url", cache_control: cc });
+  });
+
+  it("marks only the last of several tool results", () => {
+    const out = toOpenAIMessages("sys", [
+      ...history.slice(0, 1),
+      {
+        role: "assistant",
+        parts: [
+          { type: "tool_call", id: "a", name: "read_file", input: { path: "a" } },
+          { type: "tool_call", id: "b", name: "read_file", input: { path: "b" } },
+        ],
+      },
+      {
+        role: "user",
+        parts: [
+          { type: "tool_result", toolCallId: "a", content: "A" },
+          { type: "tool_result", toolCallId: "b", content: "B" },
+        ],
+      },
+    ], { cache: true });
+    expect(out.at(-2)).toEqual({ role: "tool", tool_call_id: "a", content: "A" });
+    expect(out.at(-1)!.content).toEqual([{ type: "text", text: "B", cache_control: cc }]);
+  });
+
+  it("sends cache marks to Polza for Claude models only", async () => {
+    const bodies: any[] = [];
+    const fetchMock = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return sseResponse([
+        `data: ${JSON.stringify({ id: "x", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }] })}\n\n`,
+        "data: [DONE]\n\n",
+      ]);
+    }) as unknown as typeof fetch;
+    const provider = createProvider({ presetId: "polza", apiKey: "k", fetch: fetchMock });
+    await collect(provider.stream({ model: "anthropic/claude-opus-5.5", system: "s", messages: history, tools: [] }));
+    await collect(provider.stream({ model: "openai/gpt-6.1-sol", system: "s", messages: history, tools: [] }));
+    expect(bodies[0].messages[0].content).toEqual([{ type: "text", text: "s", cache_control: cc }]);
+    expect(bodies[1].messages[0].content).toBe("s");
+  });
+
+  it("retries without cache marks when the service rejects them, and stops sending them", async () => {
+    const bodies: any[] = [];
+    const fetchMock = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      bodies.push(body);
+      if (Array.isArray(body.messages[0].content)) {
+        return new Response(JSON.stringify({ error: { message: "Unknown field: cache_control" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return sseResponse([
+        `data: ${JSON.stringify({ id: "x", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }] })}\n\n`,
+        "data: [DONE]\n\n",
+      ]);
+    }) as unknown as typeof fetch;
+    const provider = createProvider({ presetId: "custom", baseURL: "http://x.test/v1", apiKey: "k", fetch: fetchMock });
+    const req = { model: "claude-opus-5-5", system: "s", messages: history, tools: [] };
+    expect((await collect(provider.stream(req))).at(-1)).toMatchObject({ type: "done", stopReason: "end_turn" });
+    await collect(provider.stream(req));
+    expect(bodies.map((b) => Array.isArray(b.messages[0].content))).toEqual([true, false, false]);
+  });
+
+  it("reads cached and written tokens from usage", () => {
+    const u = parseUsage(
+      { prompt_tokens: 1500, completion_tokens: 100, prompt_tokens_details: { cached_tokens: 1400, cache_write_tokens: 50 }, cost_rub: 2.5 },
+      "polza",
+    );
+    expect(u).toEqual({
+      inputTokens: 50,
+      outputTokens: 100,
+      cacheReadTokens: 1400,
+      cacheWriteTokens: 50,
+      cost: { amount: 2.5, currency: "RUB" },
+    });
+  });
+});
+
 describe("Anthropic adapter", () => {
   it("streams text, returns tool_use and keeps raw content for replay", async () => {
     let body: any;

@@ -228,7 +228,7 @@ export class Agent {
         }
         if (!done) throw new IncompleteResponseError();
         const u = done.usage;
-        this.log?.info(`${what}: ok in ${seconds(at)}, stop ${done.stopReason}${u ? `, in ${u.inputTokens + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0)} out ${u.outputTokens}` : ""}`);
+        this.log?.info(`${what}: ok in ${seconds(at)}, stop ${done.stopReason}${u ? `, ${usageText(u)}` : ""}`);
         return done;
       } catch (e) {
         const failure = `${what}: failed in ${seconds(at)}${statusOf(e) ? ` with ${statusOf(e)}` : ""} — ${errorText(e)}`;
@@ -323,6 +323,15 @@ export function estimateTokens(messages: Message[]): number {
  * original content) must be resent exactly as received. Returns true if
  * anything was trimmed.
  */
+/** "in 1000 (cache read 900, write 50, hit 90%) out 5": shows whether prompt caching works. */
+function usageText(u: Usage): string {
+  const read = u.cacheReadTokens ?? 0;
+  const write = u.cacheWriteTokens ?? 0;
+  const total = u.inputTokens + read + write;
+  const cache = read || write ? ` (cache read ${read}, write ${write}, hit ${Math.round((read / total) * 100)}%)` : "";
+  return `in ${total}${cache} out ${u.outputTokens}`;
+}
+
 export function trimToolResults(messages: Message[], targetTokens: number): boolean {
   let trimmed = false;
   for (const m of messages) {

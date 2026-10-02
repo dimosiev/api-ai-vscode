@@ -79,7 +79,14 @@ describe("agent journal", () => {
           },
         },
       ],
-      () => [{ type: "done", stopReason: "end_turn", message: { role: "assistant", parts: [{ type: "text", text: "Готово" }] } }],
+      () => [
+        {
+          type: "done",
+          stopReason: "end_turn",
+          usage: { inputTokens: 50, outputTokens: 5, cacheReadTokens: 900, cacheWriteTokens: 50 },
+          message: { role: "assistant", parts: [{ type: "text", text: "Готово" }] },
+        },
+      ],
     ]);
     const agent = new Agent({
       provider,
@@ -101,6 +108,7 @@ describe("agent journal", () => {
     const text = lines.join("\n");
     expect(text).toMatch(/warn request polza\/anthropic\/claude-opus-5\.5 \(1 messages, ≈\d+ tok\): failed in [\d.]+s with 429 .*retrying in 2s/);
     expect(text).toMatch(/info request polza\/.*attempt 2\): ok in [\d.]+s, stop tool_use, in 1200 out 40/);
+    expect(text).toMatch(/stop end_turn, in 1000 \(cache read 900, write 50, hit 90%\) out 5/);
     expect(text).toMatch(/info tool write_file: ok in \d+ ms/);
     expect(text).toMatch(/warn tool read_file: failed in \d+ ms — ENOENT/);
     expect(text).not.toContain(KEY);
