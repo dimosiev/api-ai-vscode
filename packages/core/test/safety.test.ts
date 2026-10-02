@@ -340,6 +340,16 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
     expect(r.code).toBe(0);
   });
 
+  it("git init works in a project without git, even inside Documents", () => {
+    rmSync(path.join(project, ".git"), { recursive: true });
+    const r = run("git init -q && git status --short");
+    expect(r.code, r.out).toBe(0);
+    // The folder around the project is still closed.
+    expect(run(`ls "${home}/Documents"`).code).not.toBe(0);
+    paths = { ...paths, root: path.join(home, "Documents") };
+    expect(run(`echo ok`).out).toContain("ok"); // the project is Documents itself
+  });
+
   it("blocks writing the agent's own rules in .dimosi", () => {
     const r = run(`mkdir -p .dimosi/rules 2>/dev/null; echo x >> .dimosi/rules.md`);
     expect(r.code).not.toBe(0);

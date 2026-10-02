@@ -90,6 +90,13 @@ function regexQuote(p: string): string {
   return p.replace(/[.*+?^${}()|[\]\\/"-]/g, "\\$&");
 }
 
+/** `from` and the folders below it on the way to `to` (not `to` itself). */
+function foldersBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let p = path.dirname(to); inside(p, from); p = path.dirname(p)) out.push(p);
+  return out;
+}
+
 const inside = (child: string, parent: string) => child === parent || child.startsWith(parent + "/");
 
 /**
@@ -106,12 +113,15 @@ export function sandboxProfile(paths: SandboxPaths): string {
   // A project inside, say, Documents stays usable: its folder is allowed after the ban.
   const around = priv.filter((p) => inside(root, p));
   const within = priv.filter((p) => !inside(root, p));
+  const way = around.flatMap((p) => foldersBetween(p, root));
   const lines = [
     "(version 1)",
     "(allow default)",
     "(deny file-write*)",
     `(allow file-write* (subpath "/dev") ${sub(paths.tmpDirs.map(real))} ${sub(HOME_WRITABLE.map((p) => path.join(home, p)))})`,
     around.length ? `(deny file-read* file-write* ${sub(around)})` : "",
+    // Tools (git init, for one) check every folder on the way to the project; listing them stays closed.
+    way.length ? `(allow file-read-metadata ${way.map((p) => `(literal ${q(p)})`).join(" ")})` : "",
     `(allow file-read* file-write* (subpath ${q(root)}))`,
     within.length ? `(deny file-read* file-write* ${sub(within)})` : "",
     // Files that run code later, outside the sandbox: VS Code tasks and git hooks.
