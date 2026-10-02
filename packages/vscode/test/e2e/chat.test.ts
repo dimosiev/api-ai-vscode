@@ -1,6 +1,6 @@
 // End-to-end: the real chat panel logic (ChatViewProvider, agent, tools,
 // OpenAI SDK) against a fake VS Code API and a fake model server over HTTP.
-import { existsSync, mkdtempSync, promises as fs } from "node:fs";
+import { existsSync, mkdtempSync, promises as fs, readFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -106,6 +106,16 @@ const isType =
   (m: ToWebview): m is Extract<ToWebview, { type: K }> =>
     m.type === type;
 
+/** Polls a condition: background saves take longer on a busy machine (CI). */
+async function eventually(check: () => boolean, ms = 5000): Promise<boolean> {
+  const until = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > until) return false;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return true;
+}
+
 let root: string;
 let storage: string;
 let server: FakeServer | undefined;
@@ -209,7 +219,15 @@ describe("VS Code chat, end to end", () => {
     ]);
     await panel.task("создай a.txt");
     // Wait for the background save, then "reload": a fresh provider and webview on the same storage.
-    await new Promise((r) => setTimeout(r, 200));
+    const saved = () => {
+      try {
+        const text = readFileSync(path.join(storage, "chat.json"), "utf8");
+        return text.includes('"interrupted":false') && text.includes("Файл создан.");
+      } catch {
+        return false;
+      }
+    };
+    expect(await eventually(saved)).toBe(true);
     panel.close();
 
     const reloaded = new Panel(context);
@@ -236,8 +254,7 @@ describe("VS Code chat, end to end", () => {
 
     // "New chat" forgets the saved chat.
     reloaded.provider.newChat();
-    await new Promise((r) => setTimeout(r, 100));
-    expect(existsSync(path.join(storage, "chat.json"))).toBe(false);
+    expect(await eventually(() => !existsSync(path.join(storage, "chat.json")))).toBe(true);
   });
 });
 

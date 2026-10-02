@@ -54,16 +54,37 @@ describe("AUDIT-02: run_command and child processes", () => {
       timeout_seconds: 1,
     });
     const pid = Number(readFileSync(path.join(root, "child.pid"), "utf8"));
-    let alive = true;
+    expect(await diesWithin(pid, 5000)).toBe(true);
+  }, 15_000);
+
+  it("also stops a child that ignores the polite stop signal", async () => {
+    const root = tmp("dimosi-audit-stubborn-");
+    // The child ignores SIGTERM; only the SIGKILL that follows can end it.
+    await run(root, "run_command", {
+      command: "sh -c 'trap \"\" TERM; echo $$ > child.pid; exec sleep 30' >/dev/null 2>&1; echo end",
+      timeout_seconds: 1,
+    });
+    const pid = Number(readFileSync(path.join(root, "child.pid"), "utf8"));
+    expect(await diesWithin(pid, 5000)).toBe(true);
+  }, 15_000);
+});
+
+/** A killed process can linger for a moment until the system reaps it, more so on a busy machine. */
+async function diesWithin(pid: number, ms: number): Promise<boolean> {
+  const until = Date.now() + ms;
+  for (;;) {
     try {
       process.kill(pid, 0);
     } catch {
-      alive = false;
+      return true;
     }
-    if (alive) process.kill(pid, "SIGKILL"); // clean up after ourselves
-    expect(alive).toBe(false);
-  }, 15_000);
-});
+    if (Date.now() > until) {
+      process.kill(pid, "SIGKILL"); // clean up after ourselves
+      return false;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
 
 describe("AUDIT-03: files that are not plain UTF-8 with LF", () => {
   it("edits a Windows (CRLF) file with a multi-line snippet copied from read_file", async () => {

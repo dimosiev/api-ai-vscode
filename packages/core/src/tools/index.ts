@@ -419,7 +419,9 @@ function runShell(command: string, cwd: string, timeoutMs: number, signal?: Abor
       if (stopReason) return;
       stopReason = reason;
       killTree(child.pid, "SIGTERM");
-      timers.push(setTimeout(() => killTree(child.pid, "SIGKILL"), 2000));
+      // Not in `timers`: the result may be ready before a child that ignores
+      // SIGTERM is gone, and that child must still be killed.
+      setTimeout(() => killTree(child.pid, "SIGKILL"), 2000).unref();
       // Never hang, even if something survives the kill.
       timers.push(setTimeout(() => finish(reason), 5000));
     };
