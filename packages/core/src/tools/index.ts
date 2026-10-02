@@ -385,10 +385,14 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
   async run_command(input, { root, gate, signal, sandbox = true }) {
     const command = str(input, "command");
     const timeout = Math.min(600, Math.max(1, num(input, "timeout_seconds", 120))) * 1000;
-    const ok = await gate.check({ kind: "command", command, cwd: root });
+    const sandboxed = sandbox && process.platform === "darwin";
+    const unprotected = sandboxed && !sandboxAvailable();
+    // Without the sandbox a command can reach the whole computer: the user decides every time.
+    const warning = unprotected ? "Песочница macOS не запустилась: команда будет работать со всеми вашими правами." : undefined;
+    const ok = await gate.check({ kind: "command", command, cwd: root, warning });
     if (!ok) throw new Error("The user rejected this command.");
-    if (!sandbox || process.platform !== "darwin") return runShell(command, root, timeout, signal);
-    if (!sandboxAvailable()) {
+    if (!sandboxed) return runShell(command, root, timeout, signal);
+    if (unprotected) {
       return "Note: the macOS sandbox could not start, so this command ran without it.\n" + (await runShell(command, root, timeout, signal));
     }
     const result = await runShell(command, root, timeout, signal, true);

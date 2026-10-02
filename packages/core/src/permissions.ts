@@ -108,7 +108,8 @@ export class PermissionGate {
   ) {}
 
   async check(req: ApprovalRequest): Promise<boolean> {
-    const warning = req.kind === "write" ? protectedPathWarning(req.relPath) : dangerousCommandWarning(req.command);
+    const own = req.kind === "write" ? protectedPathWarning(req.relPath) : dangerousCommandWarning(req.command);
+    const warning = [req.warning, own].filter(Boolean).join(" ") || undefined;
     if (warning) return (await this.handler.approve({ ...req, warning })) !== "deny";
     if (this.mode === "auto" || this.alwaysAllowed.has(approvalKey(req))) return true;
     const decision = await this.handler.approve(req);

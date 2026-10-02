@@ -124,3 +124,8 @@ export function sandboxAvailable(): boolean {
   }
   return available;
 }
+
+/** Tests only: pretend the sandbox does (not) start; undefined probes again. */
+export function overrideSandboxAvailable(value: boolean | undefined): void {
+  available = value;
+}

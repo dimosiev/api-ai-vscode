@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dangerousCommandWarning, executeTool, PermissionGate, type ApprovalDecision, type ApprovalRequest } from "../src";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { commandEnv, sandboxAvailable, sandboxedCommand, type SandboxPaths } from "../src/tools/sandbox";
+import { commandEnv, overrideSandboxAvailable, sandboxAvailable, sandboxedCommand, type SandboxPaths } from "../src/tools/sandbox";
 import { isSecretFile } from "../src/tools/workspace";
 
 let root: string;
@@ -241,5 +241,28 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
     } finally {
       await fs.rm(probe, { force: true });
     }
+  });
+});
+
+describe.runIf(process.platform === "darwin")("when the sandbox can't start", () => {
+  afterEach(() => overrideSandboxAvailable(undefined));
+
+  it("every command is asked about with a warning, even with approvals off", async () => {
+    overrideSandboxAvailable(false);
+    decision = "allow_always";
+    const g = gate("auto");
+    const r = await call("run_command", { command: "echo ordinary" }, g);
+    await call("run_command", { command: "echo ordinary" }, g);
+    expect(requests).toHaveLength(2);
+    expect(requests[0].kind === "command" && requests[0].warning).toMatch(/Песочница macOS не запустилась/);
+    expect(r.content).toMatch(/without it/);
+  });
+
+  it("a denied command does not run", async () => {
+    overrideSandboxAvailable(false);
+    decision = "deny";
+    const r = await call("run_command", { command: "touch made.txt" }, gate("auto"));
+    expect(r.isError).toBe(true);
+    expect(existsSync(path.join(root, "made.txt"))).toBe(false);
   });
 });
