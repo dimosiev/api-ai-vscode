@@ -78,3 +78,15 @@ describe.skipIf(process.platform === "win32")("signing key creation", () => {
     expect(readFileSync(path.join(dir, "packages/core/src/update-key.ts"), "utf8")).toMatch(/"[A-Za-z0-9+/=]{40,}",/);
   });
 });
+
+describe("CI workflow", () => {
+  it("pins every action to a full commit hash, with the version in a comment", () => {
+    const yml = readFileSync(path.join(REPO, ".github/workflows/ci.yml"), "utf8");
+    const uses = [...yml.matchAll(/uses:\s*(\S+)(.*)/g)];
+    expect(uses.length).toBeGreaterThan(0);
+    for (const [, ref, rest] of uses) {
+      expect(ref, ref).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+      expect(rest, ref).toMatch(/#\s*v\d+\.\d+\.\d+/);
+    }
+  });
+});
