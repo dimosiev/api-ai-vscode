@@ -233,3 +233,21 @@ describe("chat.css", () => {
   });
 });
 
+
+describe("plan progress bar", () => {
+  it("is filled through the style property: the panel's security policy blocks style attributes", () => {
+    const setAttribute = Element.prototype.setAttribute;
+    const styleAttrs: string[] = [];
+    Element.prototype.setAttribute = function (name: string, value: string) {
+      if (name.toLowerCase() === "style") styleAttrs.push(value);
+      return setAttribute.call(this, name, value);
+    };
+    try {
+      send({ type: "plan", items: [{ title: "Шаг 1", status: "done" }, { title: "Шаг 2", status: "in_progress" }] });
+    } finally {
+      Element.prototype.setAttribute = setAttribute;
+    }
+    expect(styleAttrs).toEqual([]);
+    expect($$(".plan-bar-fill").at(-1)?.style.width).toBe("50%");
+  });
+});

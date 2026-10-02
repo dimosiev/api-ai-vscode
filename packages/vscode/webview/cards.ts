@@ -82,6 +82,9 @@ export function planCard(): HTMLElement {
 
 export function renderPlan(card: HTMLElement, items: PlanItemView[]): void {
   const done = items.filter((i) => i.status === "done").length;
+  const fill = h("div", { class: "plan-bar-fill" });
+  // Through the style property: the panel's security policy ignores style="" attributes.
+  fill.style.width = `${items.length ? (done / items.length) * 100 : 0}%`;
   card.replaceChildren(
     h(
       "div",
@@ -90,7 +93,7 @@ export function renderPlan(card: HTMLElement, items: PlanItemView[]): void {
       h("span", {}, "План"),
       h("span", { class: "plan-progress" }, `${done}/${items.length}`),
     ),
-    h("div", { class: "plan-bar" }, h("div", { class: "plan-bar-fill", style: `width:${items.length ? (done / items.length) * 100 : 0}%` })),
+    h("div", { class: "plan-bar" }, fill),
     h(
       "ol",
       { class: "plan-list" },
