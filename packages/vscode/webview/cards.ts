@@ -191,7 +191,7 @@ export function resolveApproval(card: HTMLElement, decision: "allow" | "deny" | 
 }
 
 export function changesCard(turn: number, files: ChangedFileView[], post: Post): HTMLElement {
-  const active = files.filter((f) => !f.reverted);
+  const active = files.filter((f) => !f.reverted && !f.unavailable);
   return h(
     "div",
     { class: "changes", "data-turn": String(turn) },
@@ -211,7 +211,9 @@ export function changesCard(turn: number, files: ChangedFileView[], post: Post):
         h("span", { class: "stat" }, h("span", { class: "plus" }, `+${f.added}`), " ", h("span", { class: "minus" }, `−${f.removed}`)),
         f.reverted
           ? h("span", { class: "muted" }, "откачено")
-          : h("button", { class: "btn link", title: f.created ? "Удалить созданный файл" : "Вернуть версию до агента", onclick: () => post({ type: "revert", turn, relPath: f.relPath }) }, "Откатить"),
+          : f.unavailable
+            ? h("span", { class: "muted", title: "Исходная версия файла не сохранилась: чат был слишком большим" }, "откат недоступен")
+            : h("button", { class: "btn link", title: f.created ? "Удалить созданный файл" : "Вернуть версию до агента", onclick: () => post({ type: "revert", turn, relPath: f.relPath }) }, "Откатить"),
       ),
     ),
   );

@@ -81,6 +81,19 @@ export class Agent {
     this.gate.resetSessionApprovals();
   }
 
+  /**
+   * Continues a saved conversation. A save made mid-step may hold tool calls
+   * without results; they are answered so the next request stays valid.
+   * Assistant messages (Claude's original content) are kept exactly as saved.
+   */
+  restore(messages: Message[]): void {
+    this.reset();
+    this.messages = messages;
+    this.closeDanglingToolCalls(
+      "The result of this call was lost because the editor window was reloaded. Check the current state before repeating it.",
+    );
+  }
+
   /** Runs one user turn: model calls and tool executions until the model stops. */
   async *run(input: UserInput, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
     // Two runs on one history would interleave messages and break the chat for good.

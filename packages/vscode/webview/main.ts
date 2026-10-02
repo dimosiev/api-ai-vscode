@@ -131,8 +131,9 @@ log.addEventListener("click", (e) => {
 
 // ---------- messages ----------
 
-window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
-  const msg = event.data;
+window.addEventListener("message", (event: MessageEvent<ToWebview>) => handle(event.data));
+
+function handle(msg: ToWebview): void {
   switch (msg.type) {
     case "status": {
       status = msg;
@@ -143,6 +144,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
       break;
     }
     case "user": {
+      flushText();
       turnEl = null;
       textEl = null;
       plan = null;
@@ -259,8 +261,17 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
       activityText.textContent = "";
       showWelcome();
       break;
+    case "restore":
+      handle({ type: "clear" });
+      for (const item of msg.items) handle(item);
+      flushText();
+      textEl = null;
+      turnEl = null;
+      plan = null;
+      log.scrollTop = log.scrollHeight;
+      break;
   }
-});
+}
 
 void busy;
 post({ type: "ready" });

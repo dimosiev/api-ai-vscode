@@ -94,10 +94,10 @@ describe("chat webview", () => {
   });
 
   it("shows changed files with revert, then usage and finishes", () => {
-    send({ type: "changes", turn: 1, files: [{ relPath: "hello.txt", added: 1, removed: 0, created: true, reverted: false }] });
+    send({ type: "changes", turn: 1, files: [{ relPath: "hello.txt", added: 1, removed: 0, created: true, reverted: false, unavailable: false }] });
     ($(".changes .btn.link") as HTMLElement).click();
     expect(posted.at(-1)).toEqual({ type: "revert", turn: 1, relPath: "hello.txt" });
-    send({ type: "changes", turn: 1, files: [{ relPath: "hello.txt", added: 1, removed: 0, created: true, reverted: true }] });
+    send({ type: "changes", turn: 1, files: [{ relPath: "hello.txt", added: 1, removed: 0, created: true, reverted: true, unavailable: false }] });
     expect($$(".changes")).toHaveLength(1);
     expect($(".change-row.reverted")).not.toBeNull();
 
@@ -139,5 +139,44 @@ describe("chat webview", () => {
     send({ type: "clear" });
     expect($(".turn")).toBeNull();
     expect($(".welcome")).not.toBeNull();
+  });
+
+  it("redraws a saved chat: messages, plan, decided approvals and revert buttons", async () => {
+    send({
+      type: "restore",
+      items: [
+        { type: "user", text: "первая задача", chips: [] },
+        { type: "plan", items: [{ title: "Шаг 1", status: "done" }] },
+        { type: "text", text: "Сделано **всё**." },
+        { type: "approval_request", id: "a1", kind: "command", command: "npm test" },
+        { type: "approval_resolved", id: "a1", decision: "deny" },
+        {
+          type: "changes",
+          turn: 1,
+          files: [
+            { relPath: "a.txt", added: 1, removed: 0, created: false, reverted: false, unavailable: false },
+            { relPath: "big.txt", added: 1, removed: 1, created: false, reverted: false, unavailable: true },
+          ],
+        },
+        { type: "user", text: "вторая", chips: [] },
+        { type: "text", text: "Ответ два" },
+      ],
+    });
+    await nextFrame();
+    expect($(".welcome")).toBeNull();
+    expect($$(".turn")).toHaveLength(2);
+    expect($$(".assistant").map((e) => e.textContent?.trim())).toEqual(["Сделано всё.", "Ответ два"]);
+    expect($(".plan-progress")?.textContent).toBe("1/1");
+    expect($(".approval")?.classList.contains("denied")).toBe(true);
+    const rows = $$(".change-row");
+    expect(rows[0].querySelector("button.btn.link")?.textContent).toBe("Откатить");
+    expect(rows[1].textContent).toContain("откат недоступен");
+    expect(rows[1].querySelector("button.btn.link")).toBeNull();
+    ($(".change-row .btn.link") as HTMLElement).click();
+    expect(posted.at(-1)).toEqual({ type: "revert", turn: 1, relPath: "a.txt" });
+
+    // The restored chat continues like a normal one.
+    send({ type: "user", text: "третья", chips: [] });
+    expect($$(".turn")).toHaveLength(3);
   });
 });

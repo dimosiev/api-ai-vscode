@@ -48,7 +48,7 @@ describe("ChangeTracker", () => {
     t.record({ path: file, relPath: "a.txt", oldContent: "v1", newContent: "v2" });
     await fs.writeFile(file, "v3");
     t.record({ path: file, relPath: "a.txt", oldContent: "v2", newContent: "v3" });
-    expect(t.summary()).toEqual([{ relPath: "a.txt", added: 1, removed: 1, created: false, reverted: false }]);
+    expect(t.summary()).toEqual([{ relPath: "a.txt", added: 1, removed: 1, created: false, reverted: false, unavailable: false }]);
     expect(await t.revert("a.txt")).toEqual({ ok: true });
     expect(await fs.readFile(file, "utf8")).toBe("v1");
     expect(t.summary()[0].reverted).toBe(true);

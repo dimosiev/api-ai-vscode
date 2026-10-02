@@ -32,6 +32,8 @@ export interface ChangedFileView {
   removed: number;
   created: boolean;
   reverted: boolean;
+  /** The original version was not kept, so this file can't be reverted. */
+  unavailable: boolean;
 }
 
 export interface PlanItemView {
@@ -75,7 +77,9 @@ export type ToWebview =
   | { type: "active_file"; label: string | null }
   | { type: "mentions"; query: string; items: string[] }
   | { type: "focus_input" }
-  | { type: "clear" };
+  | { type: "clear" }
+  /** Redraws a saved chat: the same messages the panel got while it ran. */
+  | { type: "restore"; items: ToWebview[] };
 
 export type FromWebview =
   | { type: "ready" }
