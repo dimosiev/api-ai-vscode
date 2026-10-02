@@ -121,13 +121,17 @@ export async function walk(
   return { paths: out, truncated };
 }
 
+const CREDENTIALS = String.raw`^(credentials|secrets?)(\.(json|ya?ml|toml))?$`;
+/** For the sandbox, which can't tell files from folders: a folder named "credentials" is common in packages. */
+const CREDENTIALS_FILE = String.raw`^(credentials|secrets?)\.(json|ya?ml|toml)$`;
+
 /** File names (lower case) that usually hold keys and passwords. Plain sources: the sandbox reuses them. */
 const SECRET_NAMES = [
   String.raw`^\.env(\..+)?$`,
   String.raw`\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk)$`,
   String.raw`^id_(rsa|dsa|ecdsa|ed25519)$`,
   String.raw`^\.(npmrc|netrc|pypirc|pgpass)$`,
-  String.raw`^(credentials|secrets?)(\.(json|ya?ml|toml))?$`,
+  CREDENTIALS,
   String.raw`^\.(htpasswd|my\.cnf|git-credentials)$`,
   // WordPress database password; Composer tokens.
   String.raw`^wp-config\.php$`,
@@ -150,7 +154,7 @@ const SECRET_TEMPLATE = new RegExp(SECRET_TEMPLATE_NAME);
  * sandbox: any letter case (the disk ignores it), wildcards stay inside one
  * folder name. `escapedDir` must already be escaped for a regular expression.
  */
-export function secretPathPatterns(escapedDir: string): { secret: string[]; template: string } {
+export function secretPathPatterns(escapedDir: string): { secret: string[]; template: string; dependencies: string } {
   const toPath = (name: string) => {
     const body = name
       .replace(/^\^/, "")
@@ -158,7 +162,12 @@ export function secretPathPatterns(escapedDir: string): { secret: string[]; temp
       .replace(/[a-z]/g, (c) => `[${c}${c.toUpperCase()}]`);
     return `^${escapedDir}/(.*/)?${name.startsWith("^") ? "" : "[^/]*"}${body}`;
   };
-  return { secret: SECRET_NAMES.map(toPath), template: toPath(SECRET_TEMPLATE_NAME) };
+  return {
+    secret: SECRET_NAMES.map((n) => toPath(n === CREDENTIALS ? CREDENTIALS_FILE : n)),
+    template: toPath(SECRET_TEMPLATE_NAME),
+    // Dependencies ship certificates (cacert.pem) and test keys that they read themselves.
+    dependencies: `^${escapedDir}/(.*/)?(node_modules|\\.venv|venv|site-packages|vendor)/`,
+  };
 }
 
 /**

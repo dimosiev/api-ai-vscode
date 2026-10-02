@@ -139,8 +139,9 @@ export function sandboxProfile(paths: SandboxPaths): string {
     way.length ? `(allow file-read-metadata ${way.map((p) => `(literal ${q(p)})`).join(" ")})` : "",
     `(allow file-read* file-write* (subpath ${q(root)}))`,
     // The project's own secrets (.env, keys...): a command's output goes to the AI service.
-    `(deny file-read* ${secrets.secret.map((r) => `(regex #"${r}")`).join(" ")})`,
-    `(allow file-read* (regex #"${secrets.template}"))`,
+    // Only their contents: tools may still see that they exist.
+    `(deny file-read-data ${secrets.secret.map((r) => `(regex #"${r}")`).join(" ")})`,
+    `(allow file-read-data (regex #"${secrets.template}") (regex #"${secrets.dependencies}"))`,
     within.length ? `(deny file-read* file-write* ${sub(within)})` : "",
     `(allow file-read* ${sub(HOME_READABLE.map((p) => path.join(home, p)))})`,
     `(deny file-read* file-write* ${sub(HOME_PRIVATE_AGAIN.map((p) => path.join(home, p)))})`,

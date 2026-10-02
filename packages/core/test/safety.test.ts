@@ -456,6 +456,14 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
       expect(r.out, f).not.toContain("CONTENT");
     }
     for (const f of open) expect(run(`cat "${f}"`).out, f).toContain(`CONTENT of ${f}`);
+    // Folders that happen to have such names, and certificates inside dependencies, stay usable (npm ci, builds, Python requests).
+    const deps = ["lib/credentials/types.mjs", "node_modules/pkg/lib/credentials/index.js", "node_modules/certs/cacert.pem", ".venv/lib/site-packages/certifi/cacert.pem", "vendor/x/server.key"];
+    for (const f of deps) {
+      mkdirSync(path.dirname(path.join(project, f)), { recursive: true });
+      writeFileSync(path.join(project, f), `CONTENT of ${f}`);
+      expect(run(`cat "${f}"`).out, f).toContain(`CONTENT of ${f}`);
+    }
+    expect(run("ls lib/credentials node_modules/pkg/lib/credentials").out).toContain("types.mjs");
     // Writing is still allowed: a setup script may create .env.
     expect(run("echo A=1 > .env.local").code).toBe(0);
   });
