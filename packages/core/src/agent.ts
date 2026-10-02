@@ -243,7 +243,7 @@ export class Agent {
         this.log?.info(`${what}: ok in ${seconds(at)}, stop ${done.stopReason}${u ? `, ${usageText(u)}` : ""}`);
         return done;
       } catch (e) {
-        const failure = `${what}: failed in ${seconds(at)}${statusOf(e) ? ` with ${statusOf(e)}` : ""} — ${errorText(e)}`;
+        const failure = `${what}: failed in ${seconds(at)}${statusOf(e) ? ` with ${statusOf(e)}` : ""} — ${errorText(e, this.log)}`;
         if (signal?.aborted) {
           this.log?.info(`${what}: stopped by the user after ${seconds(at)}`);
           throw e;
@@ -279,7 +279,7 @@ export class Agent {
     // Our own error texts carry no file contents, except the echo of broken arguments.
     const reason = result.content.startsWith("Tool arguments were not valid JSON")
       ? "arguments were not valid JSON"
-      : result.content.split("\n")[0].slice(0, 160);
+      : this.log.redact(result.content.split("\n")[0]).slice(0, 160);
     this.log.warn(`tool ${name}: failed in ${ms} ms — ${reason}`);
   }
 
@@ -363,8 +363,10 @@ function seconds(since: number): string {
   return `${((Date.now() - since) / 1000).toFixed(1)}s`;
 }
 
-function errorText(e: unknown): string {
-  return (e instanceof Error ? e.message : String(e)).slice(0, 300);
+/** Masked before it is cut: a key split at the cut would no longer be recognized. */
+function errorText(e: unknown, log?: Log): string {
+  const text = e instanceof Error ? e.message : String(e);
+  return (log ? log.redact(text) : text).slice(0, 300);
 }
 
 function statusOf(e: unknown): number | undefined {

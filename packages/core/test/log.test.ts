@@ -46,6 +46,32 @@ describe("Log", () => {
     expect(log.lastError).toContain("[error] 401 Incorrect API key provided");
   });
 
+  it.each([
+    ["access_token=ya29.a0AfH6SMBlongtokenvalue", "ya29"],
+    ['{"refresh_token": "1//0gLongRefreshTokenValue"}', "1//0g"],
+    ["client_secret: GOCSPX-abcdefghijkl", "GOCSPX"],
+    ["Authorization: Basic dXNlcjpodW50ZXIy", "dXNlcjpodW50ZXIy"],
+    ["connect to postgres://admin:hunter2pass@db.example.com/app failed", "hunter2pass"],
+    ["key AIzaSyD-1234567890abcdefghijklmnopqrstu rejected", "AIzaSyD"],
+    ["token ghp_0123456789abcdefghijABCDEFGHIJ0123 invalid", "ghp_0123"],
+    ["github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz", "github_pat_11ABC"],
+    ["gho_0123456789abcdefghijABCDEFGHIJ0123", "gho_0123"],
+    ["jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", "eyJzdWIi"],
+    ["aws AKIAIOSFODNN7EXAMPLE used", "AKIAIOSFODNN7EXAMPLE"],
+  ])("masks %s", (line, secret) => {
+    const log = new Log();
+    log.info(line);
+    expect(log.recent()[0]).not.toContain(secret);
+    expect(log.recent()[0]).toContain(SECRET_MASK);
+  });
+
+  it("leaves ordinary metadata alone", () => {
+    const log = new Log();
+    log.info("request polza/anthropic/claude-opus-5.5 (12 msgs, ≈34000 tok): ok in 2.1s, stop end_turn, in 1200 out 300 hit 85%");
+    log.info("server https://polza.ai/api/v1, max_tokens 8192");
+    expect(log.recent().join("\n")).not.toContain(SECRET_MASK);
+  });
+
   it("keeps only the latest lines and survives a broken sink", () => {
     const log = new Log(() => {
       throw new Error("disk full");
@@ -115,6 +141,20 @@ describe("agent journal", () => {
     expect(text).not.toContain(USER_TEXT);
     expect(text).not.toContain(FILE_TEXT);
     expect(text).not.toContain("Готово");
+  });
+
+  it("masks a key before cutting a long error, so no piece of it is left", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-log-"));
+    const log = new Log();
+    log.addSecret(KEY);
+    const provider = new FakeProvider([
+      () => {
+        throw httpError(401, `${"x".repeat(290)} ${KEY}`);
+      },
+    ]);
+    const agent = new Agent({ provider, model: "m", root, approval: { approve: async () => "allow" }, globalRulesPath: path.join(root, "none.md"), log });
+    await collect(agent.run("привет"));
+    expect(log.recent().join("\n")).not.toContain(KEY.slice(0, 8));
   });
 
   it("records context trimming and the final error", async () => {

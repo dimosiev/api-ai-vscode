@@ -3,14 +3,25 @@ export type LogLevel = "info" | "warn" | "error";
 /** Where log lines go: VS Code's output channel, the CLI's log file. */
 export type LogSink = (level: LogLevel, message: string) => void;
 
-/** Things that look like API keys even when we don't know the key itself. */
+export const SECRET_MASK = "[ключ скрыт]";
+
+/** Things that look like API keys even when we don't know the key itself: masked whole. */
 const KEY_PATTERNS = [
   /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{10,}/g,
-  /\bBearer\s+[A-Za-z0-9._~+/=-]{10,}/gi,
-  /\b(?:api[_-]?key|token|secret|password)(["'\s:=]+)[^\s"',;&]{8,}/gi,
+  // Google API keys, GitHub tokens, AWS access keys, JWTs (OAuth access tokens).
+  /\bAIza[0-9A-Za-z_-]{30,}/g,
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g,
+  /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g,
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
 ];
-
-export const SECRET_MASK = "[ключ скрыт]";
+/** Here the label stays and only the value is masked. */
+const LABELLED_PATTERNS: Array<[RegExp, string]> = [
+  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${SECRET_MASK}`],
+  // A password inside an address: postgres://user:password@host.
+  [/(:\/\/[^\s/:@]*:)[^\s/@]+@/g, `$1${SECRET_MASK}@`],
+  // access_token=..., "client_secret": "...", password: ...
+  [/\b([A-Za-z0-9_]*?(?:api[_-]?key|token|secret|password))(["'\s:=]+)[^\s"',;&]{8,}/gi, `$1$2${SECRET_MASK}`],
+];
 
 /**
  * The diagnostic journal. Only metadata goes in: what happened, how long it
@@ -58,8 +69,9 @@ export class Log {
     let out = text;
     // Longest first, so a key that contains another key is masked whole.
     for (const s of [...this.secrets].sort((a, b) => b.length - a.length)) out = out.split(s).join(SECRET_MASK);
-    out = out.replace(KEY_PATTERNS[0], SECRET_MASK).replace(KEY_PATTERNS[1], `Bearer ${SECRET_MASK}`);
-    return out.replace(KEY_PATTERNS[2], (_m, sep: string) => `${_m.slice(0, _m.indexOf(sep))}${sep}${SECRET_MASK}`);
+    for (const re of KEY_PATTERNS) out = out.replace(re, SECRET_MASK);
+    for (const [re, to] of LABELLED_PATTERNS) out = out.replace(re, to);
+    return out;
   }
 
   private write(level: LogLevel, message: string): void {
