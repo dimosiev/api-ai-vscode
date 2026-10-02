@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -52,4 +52,29 @@ describe.skipIf(process.platform === "win32")("release script", () => {
     // The version is put back: nothing was released.
     expect(git("status", "--porcelain")).toBe("");
   }, 30_000);
+});
+
+describe.skipIf(process.platform === "win32")("signing key creation", () => {
+  it("writes the private key to a private temporary folder, not to the Desktop (which may sync to iCloud)", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "dimosi-keygen-"));
+    for (const f of ["scripts/signing-key.mjs", "scripts/release-config.mjs"]) {
+      mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      cpSync(path.join(REPO, f), path.join(dir, f));
+    }
+    mkdirSync(path.join(dir, "packages/core/src"), { recursive: true });
+    writeFileSync(path.join(dir, "packages/core/src/update-key.ts"), "export const UPDATE_PUBLIC_KEYS: string[] = [];\n");
+    const home = path.join(dir, "home");
+    const tmp = path.join(dir, "tmp");
+    mkdirSync(path.join(home, "Desktop"), { recursive: true });
+    mkdirSync(tmp);
+    const r = spawnSync(process.execPath, ["scripts/signing-key.mjs"], { cwd: dir, encoding: "utf8", env: { ...process.env, HOME: home, TMPDIR: tmp } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(path.join(home, "Desktop/dimosi-signing-key.txt"))).toBe(false);
+    const file = r.stdout.match(/(\/\S+dimosi-signing-key\.txt)/)?.[1];
+    expect(file && file.startsWith(tmp)).toBe(true);
+    expect(statSync(path.dirname(file!)).mode & 0o777).toBe(0o700);
+    expect(statSync(file!).mode & 0o777).toBe(0o600);
+    expect(readFileSync(file!, "utf8")).toMatch(/^[A-Za-z0-9+/=]{40,}$/m);
+    expect(readFileSync(path.join(dir, "packages/core/src/update-key.ts"), "utf8")).toMatch(/"[A-Za-z0-9+/=]{40,}",/);
+  });
 });
