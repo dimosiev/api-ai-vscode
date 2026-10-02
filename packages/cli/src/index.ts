@@ -1,0 +1,564 @@
+import { promises as fs } from "node:fs";
+import * as path from "node:path";
+import { createInterface } from "node:readline/promises";
+import {
+  Agent,
+  createProvider,
+  loadRules,
+  decryptKeys,
+  describeToolCall,
+  formatCost,
+  formatTokens,
+  GLOBAL_RULES_TEMPLATE,
+  defaultGlobalRulesPath,
+  UsageTotals,
+  type PlanItem,
+  type Pricing,
+  getPreset,
+  maskKey,
+  PRESETS,
+  type ApprovalHandler,
+  type Provider,
+} from "@dimosi/core";
+import { configDir, loadConfig, migrateLegacyConfig, saveConfig, type CliConfig } from "./config";
+import { EncryptedFileKeyStore, keyFileExists, keyFilePath } from "./keystore";
+import { c, Prompter, renderDiff } from "./ui";
+import { cmdUpdate, notifyIfOutdated, VERSION } from "./update";
+
+
+const HELP = `${c.bold("dimosi")} — AI-агент для работы с кодом через ваши API-ключи
+
+${c.bold("Запуск чата")} (в папке проекта):
+  dimosi                         открыть чат в текущей папке
+  dimosi "задача"                сразу выполнить задачу, затем продолжить чат
+  dimosi --dir ПУТЬ              работать с другой папкой
+  dimosi --provider polza --model anthropic/claude-opus-5.5
+  dimosi --auto                  не спрашивать подтверждений (осторожно!)
+
+${c.bold("Ключи")}:
+  dimosi keys set ПРОВАЙДЕР      сохранить API-ключ (например: anthropic, openai, polza)
+  dimosi keys list               показать сохранённые ключи
+  dimosi keys delete ПРОВАЙДЕР   удалить ключ
+  dimosi keys export ФАЙЛ        сохранить все ключи в зашифрованный файл для переноса
+  dimosi keys import ФАЙЛ        загрузить ключи из такого файла
+
+${c.bold("Правила")} (агент читает их перед каждым ответом):
+  dimosi rules                     показать, какие правила действуют в текущей папке
+  dimosi rules global              создать/показать путь к глобальным правилам
+  Правила проекта: файлы AGENTS.md, .dimosi/rules.md, .dimosi/rules/*.md
+
+${c.bold("Провайдеры и модели")}:
+  dimosi providers               список поддерживаемых провайдеров
+  dimosi use ПРОВАЙДЕР [МОДЕЛЬ]  выбрать провайдера (и модель) по умолчанию
+  dimosi use custom МОДЕЛЬ --base-url URL   свой OpenAI-совместимый сервер
+  dimosi models [ПРОВАЙДЕР]      список моделей провайдера
+
+${c.bold("Обновление")}:
+  dimosi update                    установить новую версию с сервера обновлений
+
+${c.bold("Команды внутри чата")}: /help /model /models /provider /key /rules /auto /ask /clear /exit
+`;
+
+const CHAT_HELP = `${c.bold("Команды:")}
+  /model ИМЯ        сменить модель          /models [фильтр]   список моделей
+  /provider ИМЯ     сменить провайдера      /key               ввести ключ текущего провайдера
+  /auto             работать без подтверждений   /ask   снова спрашивать подтверждения
+  /rules            какие правила действуют
+  /clear            начать новый диалог     /exit              выйти (или Ctrl+D)
+  Ctrl+C во время работы агента — остановить его.`;
+
+interface Flags {
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  dir?: string;
+  auto?: boolean;
+  positional: string[];
+}
+
+function parseArgs(argv: string[]): Flags {
+  const flags: Flags = { positional: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    const next = () => {
+      const v = argv[++i];
+      if (v === undefined) fail(`После ${a} нужно значение.`);
+      return v;
+    };
+    if (a === "--provider" || a === "-p") flags.provider = next();
+    else if (a === "--model" || a === "-m") flags.model = next();
+    else if (a === "--base-url") flags.baseUrl = next();
+    else if (a === "--dir" || a === "-d") flags.dir = next();
+    else if (a === "--auto") flags.auto = true;
+    else if (a === "--help" || a === "-h") flags.positional.unshift("help");
+    else if (a === "--version" || a === "-v") flags.positional.unshift("version");
+    else flags.positional.push(a);
+  }
+  return flags;
+}
+
+function fail(message: string): never {
+  console.error(c.red(`Ошибка: ${message}`));
+  process.exit(1);
+}
+
+// ---------- key access ----------
+
+class Keys {
+  private store?: EncryptedFileKeyStore;
+  constructor(private io: Prompter) {}
+
+  /** Unlocks (or creates) the encrypted key file, asking for its password once. */
+  async open(createIfMissing: boolean): Promise<EncryptedFileKeyStore | undefined> {
+    if (this.store) return this.store;
+    const exists = await keyFileExists();
+    if (!exists && !createIfMissing) return undefined;
+    let password = process.env.DIMOSI_PASSWORD ?? "";
+    if (!password) {
+      if (exists) {
+        password = (await this.io.ask("Пароль от хранилища ключей: ", { hidden: true })) ?? "";
+      } else {
+        console.log(c.dim(`Создаю хранилище ключей: ${keyFilePath()}`));
+        console.log(c.dim("Придумайте пароль — он будет нужен при каждом запуске и при переносе ключей."));
+        password = (await this.io.ask("Новый пароль: ", { hidden: true })) ?? "";
+        const again = (await this.io.ask("Повторите пароль: ", { hidden: true })) ?? "";
+        if (password !== again) fail("Пароли не совпадают.");
+      }
+    }
+    if (!password) fail("Пароль не может быть пустым.");
+    try {
+      this.store = await EncryptedFileKeyStore.open(password);
+    } catch (e) {
+      fail((e as Error).message === "Wrong password, or the file is damaged." ? "Неверный пароль." : (e as Error).message);
+    }
+    return this.store;
+  }
+
+  async get(presetId: string): Promise<string | undefined> {
+    const preset = getPreset(presetId);
+    if (preset.envVar && process.env[preset.envVar]) return process.env[preset.envVar];
+    return (await this.open(false))?.get(presetId);
+  }
+
+  async ask(presetId: string): Promise<string> {
+    const preset = getPreset(presetId);
+    const key = await this.io.ask(`API-ключ для ${preset.label}: `, { hidden: true });
+    if (!key) fail("Ключ не введён.");
+    const store = await this.open(true);
+    await store!.set(presetId, key);
+    console.log(c.green(`Ключ для ${preset.label} сохранён (${maskKey(key)}).`));
+    return key;
+  }
+}
+
+async function makeProvider(presetId: string, config: CliConfig, keys: Keys, interactive: boolean): Promise<Provider> {
+  const preset = getPreset(presetId);
+  let key = await keys.get(presetId);
+  if (!key && preset.requiresKey) {
+    if (!interactive) fail(`Нет API-ключа для ${preset.label}. Выполните: dimosi keys set ${presetId}`);
+    console.log(c.yellow(`Для ${preset.label} ещё нет ключа.`));
+    key = await keys.ask(presetId);
+  }
+  return createProvider({ presetId, apiKey: key, baseURL: config.baseUrls[presetId] });
+}
+
+function modelFor(presetId: string, config: CliConfig): string {
+  const model = config.models[presetId] || getPreset(presetId).defaultModel;
+  if (!model) fail(`Не задана модель для ${presetId}. Выполните: dimosi use ${presetId} ИМЯ_МОДЕЛИ`);
+  return model;
+}
+
+// ---------- commands ----------
+
+async function cmdKeys(args: string[], io: Prompter): Promise<void> {
+  const [sub, arg] = args;
+  const keys = new Keys(io);
+  switch (sub) {
+    case "set": {
+      if (!arg) fail("Укажите провайдера, например: dimosi keys set polza");
+      getPreset(arg);
+      await keys.ask(arg);
+      return;
+    }
+    case "list": {
+      const store = await keys.open(false);
+      const names = store ? await store.list() : [];
+      if (!names.length) console.log("Сохранённых ключей нет.");
+      for (const name of names) console.log(`  ${name.padEnd(12)} ${maskKey((await store!.get(name)) ?? "")}`);
+      for (const p of PRESETS) {
+        if (p.envVar && process.env[p.envVar]) console.log(`  ${p.id.padEnd(12)} из переменной окружения ${p.envVar}`);
+      }
+      return;
+    }
+    case "delete": {
+      if (!arg) fail("Укажите провайдера.");
+      const store = await keys.open(false);
+      if (!store || !(await store.get(arg))) fail(`Ключа для ${arg} нет.`);
+      await store.delete(arg);
+      console.log(`Ключ ${arg} удалён.`);
+      return;
+    }
+    case "export": {
+      if (!arg) fail("Укажите имя файла, например: dimosi keys export ~/Desktop/keys.aienc");
+      if (!(await keyFileExists())) fail("Сохранённых ключей нет.");
+      await keys.open(false); // verifies the password before copying
+      await fs.copyFile(keyFilePath(), path.resolve(arg));
+      console.log(c.green(`Ключи сохранены в ${path.resolve(arg)}.`));
+      console.log("Файл зашифрован тем же паролем, что и хранилище. Его можно загрузить и в расширение VS Code: команда «API AI: Импортировать ключи из файла…».");
+      return;
+    }
+    case "import": {
+      if (!arg) fail("Укажите файл с ключами.");
+      const text = await fs.readFile(path.resolve(arg), "utf8").catch(() => fail(`Не удалось прочитать ${arg}.`));
+      const password = process.env.DIMOSI_IMPORT_PASSWORD ?? (await io.ask("Пароль этого файла: ", { hidden: true })) ?? "";
+      let imported: Record<string, string>;
+      try {
+        imported = decryptKeys(text, password);
+      } catch {
+        fail("Неверный пароль или повреждённый файл.");
+      }
+      if (!(await keyFileExists())) {
+        // First key file on this machine: adopt it as is, with the same password.
+        await fs.mkdir(configDir(), { recursive: true });
+        await fs.writeFile(keyFilePath(), text, { encoding: "utf8", mode: 0o600 });
+      } else {
+        const store = await keys.open(false);
+        for (const [name, value] of Object.entries(imported)) await store!.set(name, value);
+      }
+      console.log(c.green(`Импортировано ключей: ${Object.keys(imported).length} (${Object.keys(imported).join(", ")}).`));
+      return;
+    }
+    default:
+      fail("Неизвестная команда. Варианты: keys set | list | delete | export | import");
+  }
+}
+
+async function cmdUse(args: string[], flags: Flags): Promise<void> {
+  const [presetId, model] = args;
+  if (!presetId) fail("Укажите провайдера: " + PRESETS.map((p) => p.id).join(", "));
+  const preset = getPreset(presetId);
+  const config = await loadConfig();
+  config.provider = presetId;
+  if (model) config.models[presetId] = model;
+  if (flags.baseUrl) config.baseUrls[presetId] = flags.baseUrl;
+  if (presetId === "custom" && !config.baseUrls.custom) fail("Для custom нужен адрес: --base-url http://...");
+  await saveConfig(config);
+  console.log(c.green(`По умолчанию: ${preset.label}, модель ${config.models[presetId] || preset.defaultModel || "(не задана)"}.`));
+}
+
+async function cmdProviders(): Promise<void> {
+  const config = await loadConfig();
+  for (const p of PRESETS) {
+    const current = p.id === config.provider ? c.green(" ← выбран") : "";
+    const model = config.models[p.id] || p.defaultModel || "—";
+    console.log(`  ${c.bold(p.id.padEnd(11))} ${p.label.padEnd(26)} модель: ${model}${current}`);
+  }
+}
+
+async function cmdModels(args: string[], io: Prompter): Promise<void> {
+  const config = await loadConfig();
+  const presetId = args[0] ?? config.provider;
+  const provider = await makeProvider(presetId, config, new Keys(io), true);
+  const models = await provider.listModels();
+  console.log(models.join("\n") || "Провайдер не вернул список моделей.");
+}
+
+function printPlan(items: PlanItem[]): void {
+  console.log(c.bold("План:"));
+  for (const item of items) {
+    const mark = item.status === "done" ? c.green("✓") : item.status === "in_progress" ? c.yellow("▸") : c.dim("○");
+    const title = item.status === "done" ? c.dim(item.title) : item.status === "in_progress" ? c.bold(item.title) : item.title;
+    console.log(`  ${mark} ${title}`);
+  }
+}
+
+async function printRules(root: string): Promise<void> {
+  const rules = await loadRules(root);
+  if (!rules.sources.length) {
+    console.log("Правил пока нет.");
+  } else {
+    console.log(c.bold("Действующие правила:"));
+    for (const r of rules.sources) {
+      console.log(`  ${r.scope === "global" ? "🌐" : "📁"} ${r.label}  ${c.dim(r.path)}${r.truncated ? c.yellow(" (обрезано)") : ""}`);
+    }
+  }
+  console.log(c.dim(`Глобальные: ${defaultGlobalRulesPath()}. Проектные: AGENTS.md, .dimosi/rules.md, .dimosi/rules/*.md`));
+}
+
+async function cmdRules(args: string[], flags: Flags): Promise<void> {
+  if (args[0] === "global") {
+    const p = defaultGlobalRulesPath();
+    try {
+      await fs.access(p);
+    } catch {
+      await fs.mkdir(path.dirname(p), { recursive: true });
+      await fs.writeFile(p, GLOBAL_RULES_TEMPLATE, "utf8");
+      console.log(c.green("Создан файл глобальных правил из шаблона."));
+    }
+    console.log(`Глобальные правила: ${p}`);
+    console.log(c.dim("Откройте его в любом текстовом редакторе и впишите свои правила."));
+    return;
+  }
+  await printRules(path.resolve(flags.dir ?? process.cwd()));
+}
+
+// ---------- chat ----------
+
+async function chat(flags: Flags, io: Prompter): Promise<void> {
+  const config = await loadConfig();
+  if (flags.baseUrl && flags.provider) config.baseUrls[flags.provider] = flags.baseUrl;
+  let presetId = flags.provider ?? config.provider;
+  getPreset(presetId);
+  const root = path.resolve(flags.dir ?? process.cwd());
+  const keys = new Keys(io);
+  let controller: AbortController | undefined;
+
+  const approval: ApprovalHandler = {
+    async approve(req) {
+      console.log();
+      if (req.kind === "write") {
+        console.log(c.yellow(c.bold(req.oldContent === null ? `Создать файл ${req.relPath}` : `Изменить файл ${req.relPath}`)));
+        console.log(renderDiff(req.relPath, req.oldContent, req.newContent));
+      } else {
+        console.log(c.yellow(c.bold("Выполнить команду:")));
+        console.log(`  $ ${req.command}`);
+      }
+      const answer = (
+        (await io.ask(c.yellow("Разрешить? [y] да / [n] нет / [a] да, и больше не спрашивать: "), {
+          signal: controller?.signal,
+        })) ?? ""
+      ).toLowerCase();
+      if (["a", "а", "always", "всегда", "в"].includes(answer)) return "allow_always";
+      if (["y", "yes", "д", "да"].includes(answer)) return "allow";
+      return "deny";
+    },
+  };
+
+  const agent = new Agent({
+    provider: await makeProvider(presetId, config, keys, true),
+    model: flags.model ?? modelFor(presetId, config),
+    root,
+    approval,
+    mode: flags.auto ? "auto" : config.mode,
+  });
+
+  console.log(`${c.bold(c.blue("dimosi"))} ${c.dim(VERSION)}  ${getPreset(presetId).label} · ${c.cyan(agent.model)}`);
+  console.log(c.dim(`Проект: ${root}`));
+  if (agent.gate.mode === "auto") console.log(c.red("Режим без подтверждений: агент сам меняет файлы и запускает команды."));
+  console.log(c.dim("Напишите задачу. /help — команды, Ctrl+C — остановить агента, /exit — выход.\n"));
+
+  io.rl.on("SIGINT", () => {
+    if (controller) controller.abort();
+    else io.rl.close();
+  });
+
+  let lastRulesKey = "";
+  const chatUsage = new UsageTotals();
+
+  const runTurn = async (text: string) => {
+    controller = new AbortController();
+    let atLineStart = true;
+    const usage = new UsageTotals();
+    const newline = () => {
+      if (!atLineStart) process.stdout.write("\n");
+      atLineStart = true;
+    };
+    try {
+      for await (const ev of agent.run(text, controller.signal)) {
+        switch (ev.type) {
+          case "rules": {
+            // Mention rules when they first appear or change, not on every message.
+            const key = ev.sources.map((r) => `${r.path}:${r.chars}`).join("|");
+            if (key !== lastRulesKey) {
+              lastRulesKey = key;
+              if (ev.sources.length) console.log(c.dim(`Правила: ${ev.sources.map((r) => r.label).join(", ")}`));
+            }
+            break;
+          }
+          case "text":
+            process.stdout.write(ev.text);
+            atLineStart = ev.text.endsWith("\n");
+            break;
+          case "tool_start":
+            if (ev.call.name === "update_plan") break;
+            newline();
+            console.log(c.blue(`● ${describeToolCall(ev.call)}`));
+            break;
+          case "plan":
+            newline();
+            printPlan(ev.items);
+            break;
+          case "tool_end": {
+            if (ev.call.name === "update_plan" && !ev.isError) break;
+            const first = ev.result.split("\n")[0].slice(0, 160);
+            console.log(ev.isError ? c.red(`  ✗ ${first}`) : c.dim(`  ✓ ${first}`));
+            break;
+          }
+          case "usage":
+            usage.add(ev.usage);
+            chatUsage.add(ev.usage);
+            break;
+          case "error":
+            newline();
+            console.log(c.red(ev.message));
+            break;
+          case "file_changed":
+          case "done":
+            break;
+        }
+      }
+    } finally {
+      controller = undefined;
+    }
+    newline();
+    if (usage.totalInput || usage.output) {
+      const pricing: Pricing | undefined = await agent.provider.getPricing?.(agent.model).catch(() => undefined);
+      const cost = formatCost(usage.cost(pricing));
+      const total = formatCost(chatUsage.cost(pricing));
+      console.log(
+        c.dim(
+          `токены: вход ${formatTokens(usage.totalInput)}, выход ${formatTokens(usage.output)}` +
+            (cost ? ` · ≈ ${cost} (за чат ≈ ${total})` : "") +
+            ` · контекст ${formatTokens(usage.lastContext)}`,
+        ),
+      );
+    }
+    console.log();
+  };
+
+  const handleSlash = async (line: string): Promise<boolean> => {
+    const [cmd, ...rest] = line.slice(1).split(/\s+/);
+    const arg = rest.join(" ").trim();
+    switch (cmd) {
+      case "exit":
+      case "quit":
+        return false;
+      case "help":
+        console.log(CHAT_HELP);
+        break;
+      case "rules":
+        await printRules(root);
+        break;
+      case "clear":
+        agent.reset();
+        lastRulesKey = "";
+        console.log(c.dim("Новый диалог."));
+        break;
+      case "auto":
+        agent.gate.mode = "auto";
+        console.log(c.red("Подтверждения отключены до конца сессии."));
+        break;
+      case "ask":
+        agent.gate.mode = "ask";
+        agent.gate.resetSessionApprovals();
+        console.log(c.dim("Агент снова будет спрашивать подтверждения."));
+        break;
+      case "model":
+        if (!arg) {
+          console.log(`Текущая модель: ${agent.model}. Сменить: /model ИМЯ (список: /models)`);
+          break;
+        }
+        agent.model = arg;
+        config.models[presetId] = arg;
+        await saveConfig(config);
+        console.log(c.green(`Модель: ${arg}`));
+        break;
+      case "models": {
+        const models = await agent.provider.listModels().catch((e) => {
+          console.log(c.red(`Не удалось получить список: ${(e as Error).message}`));
+          return [] as string[];
+        });
+        const filtered = arg ? models.filter((m) => m.toLowerCase().includes(arg.toLowerCase())) : models;
+        console.log(filtered.slice(0, 150).join("\n"));
+        if (filtered.length > 150) console.log(c.dim(`... и ещё ${filtered.length - 150}. Уточните: /models фильтр`));
+        break;
+      }
+      case "provider":
+        if (!arg) {
+          console.log(`Текущий: ${presetId}. Доступные: ${PRESETS.map((p) => p.id).join(", ")}`);
+          break;
+        }
+        try {
+          getPreset(arg);
+          agent.provider = await makeProvider(arg, config, keys, true);
+          presetId = arg;
+          agent.model = modelFor(arg, config);
+          config.provider = arg;
+          await saveConfig(config);
+          console.log(c.green(`${getPreset(arg).label} · ${agent.model}`));
+        } catch (e) {
+          console.log(c.red((e as Error).message));
+        }
+        break;
+      case "key":
+        await keys.ask(presetId);
+        agent.provider = await makeProvider(presetId, config, keys, true);
+        break;
+      default:
+        console.log(c.red(`Неизвестная команда /${cmd}. /help — список команд.`));
+    }
+    return true;
+  };
+
+  const initial = flags.positional.join(" ").trim();
+  if (initial) await runTurn(initial);
+
+  for (;;) {
+    const line = await io.ask(c.bold("› "));
+    if (line === null) break; // Ctrl+D / input closed
+    if (!line) continue;
+    if (line.startsWith("/")) {
+      if (!(await handleSlash(line))) break;
+      continue;
+    }
+    await runTurn(line);
+  }
+}
+
+// ---------- entry ----------
+
+async function main(): Promise<void> {
+  const flags = parseArgs(process.argv.slice(2));
+  if (await migrateLegacyConfig()) console.log(c.dim(`Настройки и ключи перенесены в ${configDir()}.`));
+  const [command, ...rest] = flags.positional;
+  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY });
+  const io = new Prompter(rl);
+  try {
+    switch (command) {
+      case "help":
+        console.log(HELP);
+        break;
+      case "version":
+        console.log(VERSION);
+        break;
+      case "keys":
+        await cmdKeys(rest, io);
+        break;
+      case "use":
+        await cmdUse(rest, flags);
+        break;
+      case "providers":
+        await cmdProviders();
+        break;
+      case "rules":
+        await cmdRules(rest, flags);
+        break;
+      case "models":
+        await cmdModels(rest, io);
+        break;
+      case "update":
+        await cmdUpdate();
+        break;
+      default:
+        await notifyIfOutdated();
+        await chat(flags, io);
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+main().then(
+  () => process.exit(0),
+  (e) => fail(e instanceof Error ? e.message : String(e)),
+);

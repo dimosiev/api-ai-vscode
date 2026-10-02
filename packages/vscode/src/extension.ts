@@ -1,0 +1,373 @@
+import { promises as fs } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import * as vscode from "vscode";
+import {
+  defaultGlobalRulesPath,
+  exportKeys,
+  GENERATE_RULES_PROMPT,
+  getPreset,
+  GLOBAL_RULES_TEMPLATE,
+  importKeys,
+  loadRules,
+  maskKey,
+  PRESETS,
+  PROJECT_RULES_DIR,
+  PROJECT_RULES_TEMPLATE,
+} from "@dimosi/core";
+import { PROPOSED_SCHEME, ProposedContentProvider, WebviewApproval } from "./approval";
+import { selectionAttachment } from "./attachments";
+import { ChatViewProvider } from "./chatView";
+import { SecretKeyStore } from "./keyStore";
+import { buildProvider, readSettings, updateSetting } from "./settings";
+import { Updater } from "./updater";
+
+const EDITOR_PROMPTS = {
+  explain: "Объясни этот код простыми словами: что он делает и зачем. Ничего не меняй.",
+  fix: "Найди ошибки и проблемы в этом коде и исправь их. Коротко объясни, что было не так.",
+  improve: "Улучши этот код: читаемость, надёжность, понятные имена. Поведение не меняй. Коротко объясни изменения.",
+};
+
+export function activate(context: vscode.ExtensionContext): void {
+  const keys = new SecretKeyStore(context);
+  const proposed = new ProposedContentProvider();
+  const chat = new ChatViewProvider(context, keys, (ui) => new WebviewApproval(ui, proposed));
+
+  const command = (id: string, fn: (...args: any[]) => unknown) =>
+    vscode.commands.registerCommand(id, async (...args: unknown[]) => {
+      try {
+        await fn(...args);
+      } catch (e) {
+        void vscode.window.showErrorMessage(`dimosi: ${(e as Error).message}`);
+      }
+    });
+
+  const root = () => {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    return folder?.uri.scheme === "file" ? folder.uri.fsPath : undefined;
+  };
+
+  const editorTask = (prompt: string) => async () => {
+    const editor = vscode.window.activeTextEditor;
+    const att = editor && selectionAttachment(editor, root());
+    if (!att) return void vscode.window.showInformationMessage("Сначала выделите код в редакторе.");
+    await chat.sendTask(prompt, [att]);
+  };
+
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(PROPOSED_SCHEME, proposed),
+    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewId, chat, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("dimosi")) void chat.postStatus();
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => void chat.postStatus()),
+    keys.onDidChange(() => void chat.postStatus()),
+    vscode.languages.registerCodeActionsProvider({ scheme: "file" }, new FixWithDimosiProvider(), {
+      providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
+    }),
+
+    command("dimosi.newChat", () => chat.newChat()),
+    command("dimosi.setApiKey", async () => {
+      const presetId = await pickProvider(keys, "Для какого сервиса ввести ключ?", (p) => p.requiresKey || p.id === "custom");
+      if (presetId) await askAndStoreKey(keys, presetId);
+    }),
+    command("dimosi.deleteApiKey", async () => {
+      const names = await keys.list();
+      if (!names.length) return vscode.window.showInformationMessage("Сохранённых ключей нет.");
+      const name = await vscode.window.showQuickPick(names, { placeHolder: "Какой ключ удалить?" });
+      if (!name) return;
+      await keys.delete(name);
+      void vscode.window.showInformationMessage(`Ключ ${name} удалён.`);
+    }),
+    command("dimosi.selectModel", () => selectModel(keys)),
+    command("dimosi.exportKeys", () => exportKeysCommand(keys)),
+    command("dimosi.importKeys", () => importKeysCommand(keys)),
+    command("dimosi.toggleApproval", async () => {
+      if (readSettings().approvalMode === "ask") {
+        const ok = await vscode.window.showWarningMessage(
+          "Отключить подтверждения? Агент будет сам менять файлы и запускать команды без вопросов.",
+          { modal: true },
+          "Отключить",
+        );
+        if (ok) await updateSetting("approvalMode", "auto");
+      } else {
+        await updateSetting("approvalMode", "ask");
+      }
+    }),
+
+    // Rules
+    command("dimosi.showRules", () => showRules(root())),
+    command("dimosi.openGlobalRules", () => openOrCreate(defaultGlobalRulesPath(), GLOBAL_RULES_TEMPLATE)),
+    command("dimosi.createProjectRules", async () => {
+      const r = root();
+      if (!r) return void vscode.window.showWarningMessage("Сначала откройте папку проекта.");
+      await openOrCreate(path.join(r, PROJECT_RULES_DIR, "rules.md"), PROJECT_RULES_TEMPLATE);
+    }),
+    command("dimosi.generateRules", async () => {
+      if (!root()) return void vscode.window.showWarningMessage("Сначала откройте папку проекта.");
+      await chat.sendTask(GENERATE_RULES_PROMPT);
+    }),
+
+    // Editor actions
+    command("dimosi.explainSelection", editorTask(EDITOR_PROMPTS.explain)),
+    command("dimosi.fixSelection", editorTask(EDITOR_PROMPTS.fix)),
+    command("dimosi.improveSelection", editorTask(EDITOR_PROMPTS.improve)),
+    command("dimosi.addSelection", async () => {
+      const editor = vscode.window.activeTextEditor;
+      const att = editor && selectionAttachment(editor, root());
+      if (!att) return void vscode.window.showInformationMessage("Сначала выделите код в редакторе.");
+      await chat.show();
+      chat.addAttachment(att);
+      chat.post({ type: "focus_input" });
+    }),
+    command("dimosi.fixDiagnostic", async (uri: vscode.Uri, range: vscode.Range, message: string) => {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(doc, { preserveFocus: true, preview: false });
+      // Give the model a few lines around the problem.
+      const start = Math.max(0, range.start.line - 5);
+      const end = Math.min(doc.lineCount - 1, range.end.line + 5);
+      editor.selection = new vscode.Selection(start, 0, end, doc.lineAt(end).text.length);
+      const att = selectionAttachment(editor, root());
+      await chat.sendTask(`Исправь ошибку в строке ${range.start.line + 1}: «${message}».`, att ? [att] : []);
+    }),
+  );
+
+  const updater = new Updater(context, () => chat.busy);
+  context.subscriptions.push(updater, command("dimosi.checkForUpdates", () => updater.check(true)));
+  updater.start();
+
+  void welcomeOnFirstRun(context, keys);
+}
+
+export function deactivate(): void {}
+
+/** Lightbulb on errors and warnings: "Fix with dimosi". */
+class FixWithDimosiProvider implements vscode.CodeActionProvider {
+  provideCodeActions(document: vscode.TextDocument, _range: vscode.Range, ctx: vscode.CodeActionContext): vscode.CodeAction[] {
+    const diag = ctx.diagnostics.find(
+      (d) => d.severity === vscode.DiagnosticSeverity.Error || d.severity === vscode.DiagnosticSeverity.Warning,
+    );
+    if (!diag) return [];
+    const action = new vscode.CodeAction("Исправить с помощью dimosi", vscode.CodeActionKind.QuickFix);
+    action.command = {
+      command: "dimosi.fixDiagnostic",
+      title: "Исправить с помощью dimosi",
+      arguments: [document.uri, diag.range, diag.message],
+    };
+    action.diagnostics = [diag];
+    return [action];
+  }
+}
+
+async function welcomeOnFirstRun(context: vscode.ExtensionContext, keys: SecretKeyStore): Promise<void> {
+  if (context.globalState.get("dimosi.welcomed")) return;
+  await context.globalState.update("dimosi.welcomed", true);
+  if ((await keys.list()).length) return;
+  const choice = await vscode.window.showInformationMessage(
+    "dimosi установлен. Подключите нейросеть: выберите сервис и введите API-ключ, или импортируйте ключи из файла.",
+    "Подключить",
+    "Импортировать ключи",
+  );
+  if (choice === "Подключить") await vscode.commands.executeCommand("dimosi.selectModel");
+  if (choice === "Импортировать ключи") await vscode.commands.executeCommand("dimosi.importKeys");
+}
+
+async function openOrCreate(filePath: string, template: string): Promise<void> {
+  try {
+    await fs.access(filePath);
+  } catch {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, template, "utf8");
+  }
+  await vscode.window.showTextDocument(vscode.Uri.file(filePath));
+}
+
+async function showRules(root: string | undefined): Promise<void> {
+  const rules = root ? await loadRules(root) : { sources: [] };
+  type Item = vscode.QuickPickItem & { run: () => unknown };
+  const items: Item[] = [];
+  if (rules.sources.length) {
+    items.push({ label: "Действуют сейчас", kind: vscode.QuickPickItemKind.Separator, run: () => {} });
+    for (const r of rules.sources) {
+      items.push({
+        label: `${r.scope === "global" ? "$(globe)" : "$(folder)"} ${r.label}`,
+        description: r.truncated ? "обрезано — файл слишком большой" : `${r.chars} символов`,
+        detail: r.path,
+        run: () => vscode.window.showTextDocument(vscode.Uri.file(r.path)),
+      });
+    }
+  }
+  items.push(
+    { label: "Действия", kind: vscode.QuickPickItemKind.Separator, run: () => {} },
+    { label: "$(globe) Открыть глобальные правила", description: "для всех проектов", run: () => vscode.commands.executeCommand("dimosi.openGlobalRules") },
+  );
+  if (root) {
+    items.push(
+      { label: "$(new-file) Создать правила проекта", description: `${PROJECT_RULES_DIR}/rules.md по шаблону`, run: () => vscode.commands.executeCommand("dimosi.createProjectRules") },
+      { label: "$(sparkle) Сгенерировать правила по проекту", description: "агент изучит проект и напишет правила", run: () => vscode.commands.executeCommand("dimosi.generateRules") },
+    );
+  }
+  const pick = await vscode.window.showQuickPick(items, {
+    placeHolder: rules.sources.length ? "Правила, которые агент читает перед каждым ответом" : "Правил пока нет — создайте их",
+  });
+  await pick?.run();
+}
+
+async function pickProvider(
+  keys: SecretKeyStore,
+  placeHolder: string,
+  filter: (p: (typeof PRESETS)[number]) => boolean = () => true,
+): Promise<string | undefined> {
+  const saved = new Set(await keys.list());
+  const current = readSettings().provider;
+  const items = PRESETS.filter(filter).map((p) => ({
+    label: p.label,
+    description: p.id === current ? "сейчас выбран" : "",
+    detail: !p.requiresKey ? "ключ не обязателен" : saved.has(p.id) ? "ключ сохранён ✓" : "нужен API-ключ",
+    id: p.id,
+  }));
+  const choice = await vscode.window.showQuickPick(items, { placeHolder });
+  return choice?.id;
+}
+
+async function askAndStoreKey(keys: SecretKeyStore, presetId: string): Promise<boolean> {
+  const preset = getPreset(presetId);
+  const value = await vscode.window.showInputBox({
+    title: `API-ключ для ${preset.label}`,
+    prompt: "Вставьте ключ (Cmd+V / Ctrl+V) и нажмите Enter. Ключ хранится в защищённом хранилище системы.",
+    password: true,
+    ignoreFocusOut: true,
+    validateInput: (v) => (v.trim() ? undefined : "Ключ не может быть пустым"),
+  });
+  if (!value) return false;
+  await keys.set(presetId, value.trim());
+  void vscode.window.showInformationMessage(`Ключ для ${preset.label} сохранён (${maskKey(value.trim())}).`);
+  return true;
+}
+
+async function selectModel(keys: SecretKeyStore): Promise<void> {
+  const presetId = await pickProvider(keys, "Через какой сервис работать?");
+  if (!presetId) return;
+  const preset = getPreset(presetId);
+
+  if (presetId === "custom") {
+    const url = await vscode.window.showInputBox({
+      title: "Адрес OpenAI-совместимого API",
+      prompt: "Например: http://localhost:1234/v1",
+      value: readSettings().customBaseUrl,
+      ignoreFocusOut: true,
+      validateInput: (v) => (/^https?:\/\//.test(v.trim()) ? undefined : "Адрес должен начинаться с http:// или https://"),
+    });
+    if (!url) return;
+    await updateSetting("customBaseUrl", url.trim());
+  }
+
+  if (preset.requiresKey && !(await keys.get(presetId))) {
+    if (!(await askAndStoreKey(keys, presetId))) return;
+  }
+
+  let models: string[] = [];
+  try {
+    const provider = await buildProvider({ ...readSettings(), provider: presetId }, keys, presetId);
+    models = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Загружаю список моделей ${preset.label}…` },
+      () => provider.listModels(),
+    );
+  } catch (e) {
+    void vscode.window.showWarningMessage(`Не удалось получить список моделей: ${(e as Error).message}`);
+  }
+
+  const MANUAL = "$(edit) Ввести имя модели вручную";
+  const current = readSettings();
+  const currentModel = current.provider === presetId ? current.model : "";
+  const ordered = [...new Set([preset.defaultModel, ...models].filter(Boolean))];
+  let model: string | undefined;
+  if (ordered.length) {
+    const pick = await vscode.window.showQuickPick(
+      [
+        { label: MANUAL },
+        ...ordered.map((m) => ({
+          label: m,
+          description: [m === preset.defaultModel ? "рекомендуется" : "", m === currentModel ? "текущая" : ""].filter(Boolean).join(", "),
+        })),
+      ],
+      { placeHolder: "Выберите модель (можно начать печатать для поиска)", matchOnDescription: true },
+    );
+    if (!pick) return;
+    model = pick.label === MANUAL ? undefined : pick.label;
+  }
+  model ??= await vscode.window.showInputBox({
+    title: "Имя модели",
+    value: currentModel || preset.defaultModel,
+    ignoreFocusOut: true,
+    validateInput: (v) => (v.trim() ? undefined : "Введите имя модели"),
+  });
+  if (!model) return;
+
+  await updateSetting("provider", presetId);
+  await updateSetting("model", model.trim() === preset.defaultModel ? "" : model.trim());
+  void vscode.window.showInformationMessage(`Агент работает через ${preset.label}, модель ${model.trim()}.`);
+}
+
+async function askNewPassword(): Promise<string | undefined> {
+  const password = await vscode.window.showInputBox({
+    title: "Пароль для файла с ключами",
+    prompt: "Придумайте пароль. Он понадобится при импорте на другом компьютере.",
+    password: true,
+    ignoreFocusOut: true,
+    validateInput: (v) => (v.length >= 6 ? undefined : "Минимум 6 символов"),
+  });
+  if (!password) return;
+  const again = await vscode.window.showInputBox({ title: "Повторите пароль", password: true, ignoreFocusOut: true });
+  if (again !== password) {
+    void vscode.window.showErrorMessage("Пароли не совпадают.");
+    return;
+  }
+  return password;
+}
+
+async function exportKeysCommand(keys: SecretKeyStore): Promise<void> {
+  if (!(await keys.list()).length) {
+    void vscode.window.showInformationMessage("Сохранённых ключей нет — экспортировать нечего.");
+    return;
+  }
+  const password = await askNewPassword();
+  if (!password) return;
+  const target = await vscode.window.showSaveDialog({
+    title: "Куда сохранить файл с ключами",
+    defaultUri: vscode.Uri.file(path.join(os.homedir(), "Desktop", "dimosi-keys.aienc")),
+    filters: { "Ключи dimosi": ["aienc"] },
+  });
+  if (!target) return;
+  const text = await exportKeys(keys, password);
+  await vscode.workspace.fs.writeFile(target, Buffer.from(text, "utf8"));
+  void vscode.window.showInformationMessage(
+    `Ключи сохранены в ${target.fsPath}. Перенесите файл на другой компьютер и выполните там «dimosi: Импортировать ключи из файла…».`,
+  );
+}
+
+async function importKeysCommand(keys: SecretKeyStore): Promise<void> {
+  const files = await vscode.window.showOpenDialog({
+    title: "Выберите файл с ключами (.aienc)",
+    canSelectMany: false,
+    filters: { "Ключи dimosi": ["aienc"], "Все файлы": ["*"] },
+  });
+  if (!files?.length) return;
+  const password = await vscode.window.showInputBox({
+    title: "Пароль от файла с ключами",
+    password: true,
+    ignoreFocusOut: true,
+  });
+  if (password === undefined) return;
+  const text = Buffer.from(await vscode.workspace.fs.readFile(files[0])).toString("utf8");
+  let names: string[];
+  try {
+    names = await importKeys(keys, text, password);
+  } catch (e) {
+    const msg = (e as Error).message;
+    throw new Error(msg.startsWith("Wrong password") ? "Неверный пароль или файл повреждён." : msg === "This is not a key file." ? "Это не файл с ключами." : msg);
+  }
+  void vscode.window.showInformationMessage(`Импортировано ключей: ${names.length} (${names.join(", ")}).`);
+}

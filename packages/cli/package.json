@@ -1,0 +1,22 @@
+{
+  "name": "@dimosi/cli",
+  "version": "0.3.0",
+  "description": "Terminal coding agent that works with Claude, OpenAI, Polza AI and any OpenAI-compatible API",
+  "license": "MIT",
+  "bin": {
+    "dimosi": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@dimosi/core": "*",
+    "diff": "^9.0.0"
+  }
+}

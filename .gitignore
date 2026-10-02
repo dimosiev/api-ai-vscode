@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.vsix
+*.tgz
+*.aienc
+.env
+packages/vscode/media/chat.js
+release.config.json
+.DS_Store

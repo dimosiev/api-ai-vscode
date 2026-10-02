@@ -1,0 +1,5 @@
+{
+  "updateUrl": "https://example.com/dimosi-SECRET/",
+  "ssh": "user@server",
+  "remoteDir": "/var/www/dimosi-updates"
+}

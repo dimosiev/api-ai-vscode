@@ -1,0 +1,286 @@
+{
+  "name": "dimosi",
+  "displayName": "dimosi",
+  "description": "AI-агент для программирования: Claude, OpenAI, Polza AI и любые OpenAI-совместимые API по вашим ключам",
+  "version": "0.3.0",
+  "publisher": "dimosi",
+  "license": "MIT",
+  "private": true,
+  "icon": "media/brand/icon.png",
+  "galleryBanner": {
+    "color": "#0000ff",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.140.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Programming Languages"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dimosi",
+          "title": "dimosi",
+          "icon": "media/brand/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "dimosi": [
+        {
+          "type": "webview",
+          "id": "dimosi.chat",
+          "name": "Чат"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "dimosi.newChat",
+        "title": "Новый чат",
+        "category": "dimosi",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dimosi.selectModel",
+        "title": "Выбрать сервис и модель",
+        "category": "dimosi",
+        "icon": "$(server-environment)"
+      },
+      {
+        "command": "dimosi.setApiKey",
+        "title": "Ввести API-ключ",
+        "category": "dimosi",
+        "icon": "$(key)"
+      },
+      {
+        "command": "dimosi.deleteApiKey",
+        "title": "Удалить API-ключ",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.importKeys",
+        "title": "Импортировать ключи из файла…",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.exportKeys",
+        "title": "Экспортировать ключи в файл…",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.toggleApproval",
+        "title": "Переключить подтверждения действий",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.showRules",
+        "title": "Правила для агента",
+        "category": "dimosi",
+        "icon": "$(book)"
+      },
+      {
+        "command": "dimosi.openGlobalRules",
+        "title": "Открыть глобальные правила",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.createProjectRules",
+        "title": "Создать правила проекта",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.generateRules",
+        "title": "Сгенерировать правила по проекту",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.explainSelection",
+        "title": "Объяснить",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.fixSelection",
+        "title": "Исправить",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.improveSelection",
+        "title": "Улучшить",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.addSelection",
+        "title": "Добавить в чат",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.fixDiagnostic",
+        "title": "Исправить с помощью dimosi",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.checkForUpdates",
+        "title": "Проверить обновления",
+        "category": "dimosi"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "dimosi.editor",
+        "label": "dimosi"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "dimosi.newChat",
+          "when": "view == dimosi.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dimosi.showRules",
+          "when": "view == dimosi.chat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dimosi.selectModel",
+          "when": "view == dimosi.chat",
+          "group": "navigation@3"
+        },
+        {
+          "command": "dimosi.setApiKey",
+          "when": "view == dimosi.chat",
+          "group": "navigation@4"
+        }
+      ],
+      "editor/context": [
+        {
+          "submenu": "dimosi.editor",
+          "when": "editorHasSelection",
+          "group": "1_dimosi@1"
+        }
+      ],
+      "dimosi.editor": [
+        {
+          "command": "dimosi.explainSelection",
+          "group": "1@1"
+        },
+        {
+          "command": "dimosi.fixSelection",
+          "group": "1@2"
+        },
+        {
+          "command": "dimosi.improveSelection",
+          "group": "1@3"
+        },
+        {
+          "command": "dimosi.addSelection",
+          "group": "2@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dimosi.explainSelection",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "dimosi.fixSelection",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "dimosi.improveSelection",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "dimosi.addSelection",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "dimosi.fixDiagnostic",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "dimosi",
+      "properties": {
+        "dimosi.provider": {
+          "type": "string",
+          "default": "anthropic",
+          "enum": [
+            "anthropic",
+            "openai",
+            "polza",
+            "openrouter",
+            "deepseek",
+            "ollama",
+            "custom"
+          ],
+          "enumDescriptions": [
+            "Anthropic (Claude)",
+            "OpenAI",
+            "Polza AI (polza.ai)",
+            "OpenRouter",
+            "DeepSeek",
+            "Ollama на этом компьютере",
+            "Любой OpenAI-совместимый сервер (укажите адрес ниже)"
+          ],
+          "description": "Через какой сервис работает агент."
+        },
+        "dimosi.model": {
+          "type": "string",
+          "default": "",
+          "description": "Имя модели. Пусто — модель сервиса по умолчанию."
+        },
+        "dimosi.customBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Адрес API для сервиса custom, например http://localhost:1234/v1"
+        },
+        "dimosi.approvalMode": {
+          "type": "string",
+          "default": "ask",
+          "enum": [
+            "ask",
+            "auto"
+          ],
+          "enumDescriptions": [
+            "Спрашивать перед изменением файлов и запуском команд",
+            "Ничего не спрашивать (агент действует сам)"
+          ],
+          "description": "Нужно ли подтверждать действия агента."
+        },
+        "dimosi.maxSteps": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "description": "Сколько шагов (вызовов модели) агент может сделать на одну задачу."
+        },
+        "dimosi.autoUpdate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Автоматически устанавливать новые версии dimosi с сервера обновлений."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@dimosi/core": "*",
+    "@types/vscode": "^1.140.0",
+    "@vscode/vsce": "^4.0.0",
+    "diff": "^9.0.0",
+    "marked": "^18.0.14"
+  }
+}
