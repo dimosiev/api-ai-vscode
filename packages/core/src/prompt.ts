@@ -2,11 +2,14 @@ import * as os from "node:os";
 import type { LoadedRules } from "./rules";
 import { IgnoreMatcher, walk } from "./tools/workspace";
 
+/** Line breaks and other control characters: a file name with them could pose as instructions. */
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
 /** Top two levels of the project, captured once per chat so the prompt prefix stays cacheable. */
 export async function snapshotLayout(root: string): Promise<string> {
   const ignore = await IgnoreMatcher.load(root);
   const { paths, truncated } = await walk(root, root, ignore, { limit: 200, maxDepth: 2, includeDirs: true });
-  return (paths.join("\n") || "(empty project)") + (truncated ? "\n..." : "");
+  return (paths.filter((p) => !CONTROL.test(p)).join("\n") || "(empty project)") + (truncated ? "\n..." : "");
 }
 
 export interface PromptInput {
