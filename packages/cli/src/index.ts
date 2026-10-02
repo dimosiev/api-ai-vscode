@@ -20,6 +20,8 @@ import {
   PRESETS,
   rememberingTrust,
   revealHidden,
+  checkBaseUrl,
+  CUSTOM_URL_PRESETS,
   type ApprovalHandler,
   type Provider,
   type RuleFile,
@@ -247,6 +249,17 @@ async function cmdKeys(args: string[], io: Prompter): Promise<void> {
   }
 }
 
+/** Known services keep their own address: a different one would receive the key. */
+function checkedBaseUrl(presetId: string, url: string): string {
+  if (!CUSTOM_URL_PRESETS.includes(presetId)) fail(`--base-url можно задать только для ${CUSTOM_URL_PRESETS.join(" и ")}. У ${getPreset(presetId).label} свой адрес.`);
+  try {
+    checkBaseUrl(url);
+  } catch (e) {
+    fail((e as Error).message);
+  }
+  return url;
+}
+
 async function cmdUse(args: string[], flags: Flags): Promise<void> {
   const [presetId, model] = args;
   if (!presetId) fail("Укажите провайдера: " + PRESETS.map((p) => p.id).join(", "));
@@ -254,8 +267,8 @@ async function cmdUse(args: string[], flags: Flags): Promise<void> {
   const config = await loadConfig();
   config.provider = presetId;
   if (model) config.models[presetId] = model;
-  if (flags.baseUrl) config.baseUrls[presetId] = flags.baseUrl;
-  if (presetId === "custom" && !config.baseUrls.custom) fail("Для custom нужен адрес: --base-url http://...");
+  if (flags.baseUrl) config.baseUrls[presetId] = checkedBaseUrl(presetId, flags.baseUrl);
+  if (presetId === "custom" && !config.baseUrls.custom) fail("Для custom нужен адрес: --base-url https://...");
   await saveConfig(config);
   console.log(c.green(`По умолчанию: ${preset.label}, модель ${config.models[presetId] || preset.defaultModel || "(не задана)"}.`));
 }
@@ -345,9 +358,9 @@ async function askAboutRules(io: Prompter, file: RuleFile): Promise<boolean | un
 
 async function chat(flags: Flags, io: Prompter): Promise<void> {
   const config = await loadConfig();
-  if (flags.baseUrl && flags.provider) config.baseUrls[flags.provider] = flags.baseUrl;
   let presetId = flags.provider ?? config.provider;
   getPreset(presetId);
+  if (flags.baseUrl) config.baseUrls[presetId] = checkedBaseUrl(presetId, flags.baseUrl);
   const root = path.resolve(flags.dir ?? process.cwd());
   const keys = new Keys(io);
   let controller: AbortController | undefined;

@@ -166,7 +166,7 @@ describe("prompt caching through OpenAI-compatible services (Polza AI, OpenRoute
         "data: [DONE]\n\n",
       ]);
     }) as unknown as typeof fetch;
-    const provider = createProvider({ presetId: "custom", baseURL: "http://x.test/v1", apiKey: "k", fetch: fetchMock });
+    const provider = createProvider({ presetId: "custom", baseURL: "https://x.test/v1", apiKey: "k", fetch: fetchMock });
     const req = { model: "claude-opus-5-5", system: "s", messages: history, tools: [] };
     expect((await collect(provider.stream(req))).at(-1)).toMatchObject({ type: "done", stopReason: "end_turn" });
     await collect(provider.stream(req));
@@ -242,6 +242,39 @@ describe("presets", () => {
     expect(() => createProvider({ presetId: "openai" })).toThrow(/No API key/);
     expect(() => createProvider({ presetId: "custom" })).toThrow(/base URL/);
     expect(createProvider({ presetId: "ollama" }).id).toBe("ollama");
+  });
+
+  it("accept http:// only for this computer: elsewhere the key would travel unencrypted", () => {
+    for (const url of ["http://example.com/v1", "http://192.168.1.5:11434/v1", "http://localhost.evil.com/v1", "ftp://x/v1", "not a url"]) {
+      expect(() => createProvider({ presetId: "custom", baseURL: url, apiKey: "k" }), url).toThrow(/https:\/\//);
+      expect(() => createProvider({ presetId: "ollama", baseURL: url }), url).toThrow(/https:\/\//);
+    }
+    for (const url of ["https://example.com/v1", "http://localhost:8080/v1", "http://127.0.0.1:1234/v1", "http://[::1]:11434/v1"]) {
+      expect(createProvider({ presetId: "custom", baseURL: url, apiKey: "k" }).id, url).toBe("custom");
+    }
+  });
+
+  it("send the key only to the official address of a known service", async () => {
+    const urls: string[] = [];
+    const fetchMock = (async (url: string | URL | Request) => {
+      urls.push(String(url instanceof Request ? url.url : url));
+      return new Response(JSON.stringify({ data: [], has_more: false, object: "list" }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+    const saved = { a: process.env.ANTHROPIC_BASE_URL, o: process.env.OPENAI_BASE_URL };
+    process.env.ANTHROPIC_BASE_URL = "https://evil.example/a";
+    process.env.OPENAI_BASE_URL = "https://evil.example/o";
+    try {
+      await createProvider({ presetId: "anthropic", apiKey: "k", fetch: fetchMock }).listModels();
+      await createProvider({ presetId: "openai", apiKey: "k", fetch: fetchMock }).listModels();
+      // An address from old settings is ignored for them too.
+      await createProvider({ presetId: "polza", apiKey: "k", baseURL: "https://evil.example/p", fetch: fetchMock }).listModels();
+    } finally {
+      process.env.ANTHROPIC_BASE_URL = saved.a;
+      process.env.OPENAI_BASE_URL = saved.o;
+      if (saved.a === undefined) delete process.env.ANTHROPIC_BASE_URL;
+      if (saved.o === undefined) delete process.env.OPENAI_BASE_URL;
+    }
+    expect(urls.map((u) => new URL(u).origin)).toEqual(["https://api.anthropic.com", "https://api.openai.com", "https://polza.ai"]);
   });
 });
 

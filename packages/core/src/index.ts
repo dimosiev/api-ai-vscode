@@ -19,7 +19,7 @@ export {
   type PlanStatus,
 } from "./tools";
 export { isSecretFile, resolveInRoot } from "./tools/workspace";
-export { PRESETS, getPreset, createProvider, type ProviderPreset } from "./providers/presets";
+export { PRESETS, CUSTOM_URL_PRESETS, checkBaseUrl, getPreset, createProvider, type ProviderPreset } from "./providers/presets";
 export { AnthropicProvider, toAnthropicMessages } from "./providers/anthropic";
 export { OpenAIProvider, toOpenAIMessages, parsePricing, parseUsage } from "./providers/openai";
 export * from "./update";

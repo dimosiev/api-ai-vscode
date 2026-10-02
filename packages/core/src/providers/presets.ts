@@ -21,6 +21,8 @@ export const PRESETS: ProviderPreset[] = [
     id: "anthropic",
     label: "Anthropic (Claude)",
     kind: "anthropic",
+    // Given explicitly: otherwise the SDK takes ANTHROPIC_BASE_URL from the environment and sends the key there.
+    baseURL: "https://api.anthropic.com",
     envVar: "ANTHROPIC_API_KEY",
     requiresKey: true,
     defaultModel: "claude-opus-5-5",
@@ -29,6 +31,7 @@ export const PRESETS: ProviderPreset[] = [
     id: "openai",
     label: "OpenAI",
     kind: "openai",
+    baseURL: "https://api.openai.com/v1",
     envVar: "OPENAI_API_KEY",
     requiresKey: true,
     defaultModel: "gpt-6.1-sol",
@@ -90,23 +93,47 @@ export function getPreset(id: string): ProviderPreset {
   return preset;
 }
 
+/** Services whose address the user may set; the others always use their own. */
+export const CUSTOM_URL_PRESETS = ["custom", "ollama"];
+
+/**
+ * The key and the conversation must not travel unencrypted: https://, or
+ * plain http:// only to this computer (a local model, a test server).
+ */
+export function checkBaseUrl(url: string): void {
+  let u: URL | undefined;
+  try {
+    u = new URL(url);
+  } catch {
+    // reported below
+  }
+  const local = u?.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+  if (!u || (u.protocol !== "https:" && !local)) {
+    throw new Error(
+      `Адрес сервиса «${url}» не подходит: нужен адрес, который начинается с https://. ` +
+        "http:// можно только для этого компьютера (localhost, 127.0.0.1): иначе ключ и переписка пойдут по сети незашифрованными.",
+    );
+  }
+}
+
 export interface CreateProviderOptions {
   presetId: string;
   apiKey?: string;
-  /** Overrides the preset URL; required for "custom". */
+  /** Overrides the preset URL for "custom" (required) and "ollama"; ignored for the others. */
   baseURL?: string;
   fetch?: typeof fetch;
 }
 
 export function createProvider(opts: CreateProviderOptions): Provider {
   const preset = getPreset(opts.presetId);
-  const baseURL = opts.baseURL || preset.baseURL;
+  const baseURL = (CUSTOM_URL_PRESETS.includes(preset.id) && opts.baseURL) || preset.baseURL;
   if (preset.requiresKey && !opts.apiKey) {
     throw new Error(`No API key for ${preset.label}. Set one first.`);
   }
   if (preset.id === "custom" && !baseURL) {
     throw new Error("The custom provider needs a base URL.");
   }
+  if (baseURL) checkBaseUrl(baseURL);
   if (preset.kind === "anthropic") {
     return new AnthropicProvider({ id: preset.id, apiKey: opts.apiKey!, baseURL, fetch: opts.fetch });
   }

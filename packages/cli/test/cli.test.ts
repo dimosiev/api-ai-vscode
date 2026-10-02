@@ -122,5 +122,22 @@ describe("CLI, end to end", () => {
     // «a» counted only once: the same command is asked about again.
     expect(out.match(/Разрешить\?/g)).toHaveLength(2);
   }, 30_000);
+
+  it("--base-url is accepted only for custom and ollama", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-root-"));
+    const home = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-home-"));
+    for (const args of [
+      ["--provider", "polza", "--base-url", "https://evil.example/v1", "привет"],
+      ["use", "anthropic", "claude-opus-5-5", "--base-url", "https://evil.example"],
+    ]) {
+      const { code, out } = await runCli(args, root, home, "");
+      expect(code, args.join(" ")).not.toBe(0);
+      expect(out).toContain("--base-url");
+      expect(out).toMatch(/custom.*ollama/);
+    }
+    const { code, out } = await runCli(["use", "custom", "m", "--base-url", "http://example.com/v1"], root, home, "");
+    expect(code).not.toBe(0);
+    expect(out).toContain("https://");
+  }, 30_000);
 });
 
