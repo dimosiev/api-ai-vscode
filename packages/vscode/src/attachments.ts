@@ -1,6 +1,7 @@
+import { realpathSync } from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import type { ImagePart, TextPart } from "@dimosi/core";
+import { isSecretFile, type ImagePart, type TextPart } from "@dimosi/core";
 import type { ChipView } from "./protocol";
 
 export const MAX_TEXT_CHARS = 100_000;
@@ -27,10 +28,33 @@ export function imageMediaType(name: string): string | undefined {
   return IMAGE_TYPES[path.extname(name).toLowerCase()];
 }
 
+const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 function fileBlock(label: string, text: string, extra = ""): TextPart {
   const truncated = text.length > MAX_TEXT_CHARS;
-  const body = truncated ? text.slice(0, MAX_TEXT_CHARS) + "\n[... файл обрезан, он слишком большой]" : text;
-  return { type: "text", text: `<file path="${label}"${extra}>\n${body}\n</file>` };
+  // The file must not end its own block early: text after a fake </file> would look like the user's words.
+  const body = (truncated ? text.slice(0, MAX_TEXT_CHARS) + "\n[... файл обрезан, он слишком большой]" : text).replace(/<\/file\s*>/gi, "<\\/file>");
+  return { type: "text", text: `<file path="${escapeAttr(label)}"${extra}>\n${body}\n</file>` };
+}
+
+/** Whatever is attached goes to the AI service, so files with keys and passwords are refused (links too). */
+export function isSecretPath(fsPath: string): boolean {
+  let real = fsPath;
+  try {
+    real = realpathSync(fsPath);
+  } catch {
+    // not on disk: only the name counts
+  }
+  return isSecretFile(fsPath) || isSecretFile(real);
+}
+
+function assertNotSecret(fsPath: string, label: string): void {
+  if (isSecretPath(fsPath)) {
+    throw new Error(
+      `${label} не прикреплён: в таких файлах обычно хранятся пароли и ключи, а прикреплённый текст уходит сервису ИИ. ` +
+        "Если нужно, напишите в сообщении только то, что можно показать (например, названия настроек без значений).",
+    );
+  }
 }
 
 export function imageAttachment(name: string, mediaType: string, base64: string): Attachment {
@@ -49,6 +73,7 @@ export function imageAttachment(name: string, mediaType: string, base64: string)
 /** Reads a file from disk (inside or outside the project) as an attachment. */
 export async function fileAttachment(uri: vscode.Uri, root: string | undefined): Promise<Attachment> {
   const label = root && uri.fsPath.startsWith(root + path.sep) ? path.relative(root, uri.fsPath).split(path.sep).join("/") : path.basename(uri.fsPath);
+  assertNotSecret(uri.fsPath, label);
   const stat = await vscode.workspace.fs.stat(uri);
   if (stat.type & vscode.FileType.Directory) throw new Error(`${label} — это папка. Прикрепляйте файлы.`);
   const bytes = await vscode.workspace.fs.readFile(uri);
@@ -68,6 +93,7 @@ export function selectionAttachment(editor: vscode.TextEditor, root: string | un
   const doc = editor.document;
   const fsPath = doc.uri.fsPath;
   const name = root && fsPath.startsWith(root + path.sep) ? path.relative(root, fsPath).split(path.sep).join("/") : path.basename(fsPath);
+  assertNotSecret(fsPath, name);
   const from = sel.start.line + 1;
   const to = sel.end.line + 1;
   const label = from === to ? `${name}:${from}` : `${name}:${from}-${to}`;

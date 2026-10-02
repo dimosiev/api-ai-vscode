@@ -9,6 +9,7 @@ import {
   formatCost,
   formatTokens,
   getPreset,
+  isSecretFile,
   UsageTotals,
   type ImagePart,
   type Message,
@@ -17,7 +18,7 @@ import {
 } from "@dimosi/core";
 import { errorText } from "./errorText";
 import { WebviewApproval } from "./approval";
-import { fileAttachment, imageAttachment, type Attachment } from "./attachments";
+import { fileAttachment, imageAttachment, isSecretPath, type Attachment } from "./attachments";
 import { ChangeTracker } from "./changes";
 import { editorFiles } from "./editorFiles";
 import { log } from "./log";
@@ -277,7 +278,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private postActiveFile(): void {
     const editor = vscode.window.activeTextEditor;
     const root = this.root();
-    if (!editor || editor.document.uri.scheme !== "file") {
+    // Files with keys are not offered: attaching them is refused anyway.
+    if (!editor || editor.document.uri.scheme !== "file" || isSecretPath(editor.document.uri.fsPath)) {
       this.post({ type: "active_file", label: null });
       return;
     }
@@ -293,7 +295,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const uris = await vscode.workspace.findFiles("**/*", EXCLUDE_GLOB, 5000);
       this.fileCache = {
         at: Date.now(),
-        files: uris.map((u) => path.relative(root, u.fsPath).split(path.sep).join("/")).sort(),
+        files: uris.filter((u) => !isSecretFile(u.fsPath)).map((u) => path.relative(root, u.fsPath).split(path.sep).join("/")).sort(),
       };
     }
     const q = query.toLowerCase();

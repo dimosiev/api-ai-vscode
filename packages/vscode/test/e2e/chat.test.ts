@@ -10,7 +10,7 @@ import { SecretKeyStore } from "../../src/keyStore";
 import { log } from "../../src/log";
 import type { FromWebview, ToWebview } from "../../src/protocol";
 import { sentText, startFakeServer, type FakeServer } from "./fakeServer";
-import { stub, Uri, workspace } from "./vscode";
+import { stub, Uri, window, workspace } from "./vscode";
 
 const KEY = "sk-e2e-0123456789abcdefghij";
 
@@ -279,6 +279,27 @@ describe("VS Code chat, end to end", () => {
     // "New chat" forgets the saved chat.
     reloaded.provider.newChat();
     expect(await eventually(() => !existsSync(path.join(storage, "chat.json")))).toBe(true);
+  });
+});
+
+describe("files with secrets in the panel", () => {
+  it("are not offered by the «+ файл» chip or in the @ list, and are not attached", async () => {
+    const findFiles = workspace.findFiles;
+    try {
+      await fs.writeFile(path.join(root, ".env"), "API_KEY=sk-very-secret\n");
+      await fs.writeFile(path.join(root, "app.ts"), "x");
+      workspace.findFiles = async () => [Uri.file(path.join(root, ".env")), Uri.file(path.join(root, "app.ts")), Uri.file(path.join(root, "certs/env.pem"))];
+      window.activeTextEditor = { document: { uri: Uri.file(path.join(root, ".env")) } };
+      const panel = await setup([]);
+      expect(panel.posted.filter(isType("active_file")).at(-1)?.label).toBeNull();
+      panel.send({ type: "mention_query", query: "" });
+      expect((await panel.waitFor(isType("mentions"))).items).toEqual(["app.ts"]);
+      panel.send({ type: "attach_path", relPath: ".env" });
+      expect((await panel.waitFor(isType("error"))).message).toMatch(/\.env не прикреплён/);
+    } finally {
+      workspace.findFiles = findFiles;
+      window.activeTextEditor = undefined;
+    }
   });
 });
 
