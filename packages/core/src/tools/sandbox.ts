@@ -5,19 +5,21 @@ import * as path from "node:path";
 import { defaultGlobalRulesPath } from "../rules";
 import { secretPathPatterns } from "./workspace";
 
-/** Variables a command needs that only look like secrets. */
-const KEEP = new Set(["SSH_AUTH_SOCK", "XAUTHORITY"]);
-const SECRET_NAME = /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH/i;
+/** Variables a command needs that only look like secrets. PWD is the current folder. */
+const KEEP = new Set(["SSH_AUTH_SOCK", "XAUTHORITY", "PWD", "OLDPWD"]);
+const SECRET_NAME = /KEY|TOKEN|SECRET|PASS|PWD|CREDENTIAL|AUTH|DSN|COOKIE|SESSION|_PAT$/i;
+/** An address with a password in it: postgres://user:password@host. */
+const PASSWORD_IN_URL = /:\/\/[^\s/@]*:[^\s/@]+@/;
 
 /**
  * Environment for the agent's commands: the user's, minus anything that
- * looks like a key, token or password. A command (or a package script it
+ * looks like a key, token or password (by name or, for addresses, by value). A command (or a package script it
  * starts) then can't print or send the API keys the editor was started with.
  */
 export function commandEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(env)) {
-    if (KEEP.has(name) || !SECRET_NAME.test(name)) out[name] = value;
+    if (KEEP.has(name) || (!SECRET_NAME.test(name) && !PASSWORD_IN_URL.test(value ?? ""))) out[name] = value;
   }
   // Nobody can answer a prompt: commands must not wait for input.
   out.CI = "1";

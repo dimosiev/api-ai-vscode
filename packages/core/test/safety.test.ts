@@ -53,6 +53,25 @@ describe("command environment", () => {
     expect(Object.keys(env).sort()).toEqual(["CI", "GIT_TERMINAL_PROMPT", "HOME", "PATH", "SSH_AUTH_SOCK"]);
   });
 
+  it("also drops passwords, personal access tokens, DSNs, cookies, sessions and addresses with a password", () => {
+    const env = commandEnv({
+      PATH: "/usr/bin",
+      PWD: "/Users/me/project",
+      OLDPWD: "/Users/me",
+      MYSQL_PWD: "pw",
+      SMTP_PASS: "pw",
+      GITLAB_PAT: "glpat",
+      SENTRY_DSN: "https://k@sentry.io/1",
+      SITE_COOKIE: "c",
+      SESSION_ID: "s",
+      DATABASE_URL: "postgres://user:hunter2@db.example.com/app",
+      REDIS_URL: "redis://:hunter2@localhost:6379",
+      PUBLIC_URL: "https://example.com/app",
+      PATHS: "a",
+    });
+    expect(Object.keys(env).sort()).toEqual(["CI", "GIT_TERMINAL_PROMPT", "OLDPWD", "PATH", "PATHS", "PUBLIC_URL", "PWD"]);
+  });
+
   it("a command does not see the key", async () => {
     process.env.DIMOSI_TEST_API_KEY = "sk-very-secret";
     process.env.DIMOSI_TEST_PLAIN = "visible-value";
