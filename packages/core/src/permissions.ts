@@ -32,7 +32,7 @@ export type ApprovalMode = "ask" | "auto";
 
 /**
  * Files whose content runs later without another question: VS Code tasks and
- * settings, CI workflows, npm scripts. Writing them always needs the user's
+ * settings, CI workflows, npm scripts, the agent's own rules. Writing them always needs the user's
  * explicit yes, even in "no approvals" mode or after "Always".
  */
 export function protectedPathWarning(relPath: string): string | undefined {
@@ -43,6 +43,9 @@ export function protectedPathWarning(relPath: string): string | undefined {
   const github = parts.indexOf(".github");
   if (github >= 0 && parts[github + 1] === "workflows") {
     return "Это сценарий GitHub Actions. Он выполняется на серверах GitHub при каждой отправке кода и имеет доступ к секретам репозитория.";
+  }
+  if (parts[0] === ".dimosi" || parts.at(-1) === "agents.md" || parts.at(-1) === "claude.md") {
+    return "Это файл правил: его текст становится указаниями для агента в каждой следующей задаче.";
   }
   if (parts.at(-1) === "package.json") {
     return "Это package.json. Скрипты в нём (например, postinstall) запускаются сами при npm install.";

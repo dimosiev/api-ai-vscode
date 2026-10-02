@@ -106,6 +106,8 @@ export function sandboxProfile(paths: SandboxPaths): string {
     within.length ? `(deny file-read* file-write* ${sub(within)})` : "",
     // Files that run code later, outside the sandbox: VS Code tasks and git hooks.
     `(deny file-write* (subpath ${q(path.join(root, ".vscode"))}))`,
+    // The agent's own rules: a command must not give it new instructions.
+    `(deny file-write* (subpath ${q(path.join(root, ".dimosi"))}))`,
   ];
   // Before `git init` there is nothing to protect, and init must be able to create them.
   if (existsSync(path.join(root, ".git"))) {
