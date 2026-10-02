@@ -5,6 +5,7 @@ import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
 import type { PermissionGate } from "../permissions";
 import type { ToolCallPart, ToolDefinition } from "../types";
+import { commandEnv } from "./sandbox";
 import { IgnoreMatcher, resolveInRoot, toRel, walk } from "./workspace";
 
 export interface FileChange {
@@ -392,9 +393,8 @@ function runShell(command: string, cwd: string, timeoutMs: number, signal?: Abor
       // Own process group, so the whole tree can be stopped (POSIX).
       detached: !isWindows,
       windowsHide: true,
-      // Nobody can answer a prompt: commands must not wait for input.
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CI: "1", GIT_TERMINAL_PROMPT: "0" },
+      env: commandEnv(),
     });
     const output = new OutputBuffer(MAX_OUTPUT_CHARS);
     const decoders = [new StringDecoder("utf8"), new StringDecoder("utf8")];
