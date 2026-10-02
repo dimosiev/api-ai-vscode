@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { ToolIdMapper } from "./toolIds";
 import type { ChatRequest, Message, Part, Pricing, Provider, StopReason, StreamEvent } from "../types";
 
 /** USD per 1M tokens for current models; others show tokens only. */
@@ -114,6 +115,7 @@ export function toAnthropicMessages(
   providerId: string,
   model: string,
 ): Anthropic.MessageParam[] {
+  const ids = new ToolIdMapper();
   return messages.map((m): Anthropic.MessageParam => {
     if (
       m.role === "assistant" &&
@@ -132,11 +134,11 @@ export function toAnthropicMessages(
           source: { type: "base64", media_type: p.mediaType as ImageMediaType, data: p.data },
         });
       } else if (p.type === "tool_call") {
-        content.push({ type: "tool_use", id: p.id, name: p.name, input: p.input });
+        content.push({ type: "tool_use", id: ids.call(p.id), name: p.name, input: p.input });
       } else {
         content.push({
           type: "tool_result",
-          tool_use_id: p.toolCallId,
+          tool_use_id: ids.result(p.toolCallId),
           content: p.content,
           is_error: p.isError,
         });

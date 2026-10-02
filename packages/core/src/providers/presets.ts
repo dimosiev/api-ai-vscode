@@ -12,6 +12,8 @@ export interface ProviderPreset {
   requiresKey: boolean;
   defaultModel: string;
   includeUsage?: boolean;
+  /** Context window in tokens when it differs from the agent default. */
+  contextWindow?: number;
 }
 
 export const PRESETS: ProviderPreset[] = [
@@ -70,6 +72,7 @@ export const PRESETS: ProviderPreset[] = [
     requiresKey: false,
     defaultModel: "qwen3-coder",
     includeUsage: true,
+    contextWindow: 32_000,
   },
   {
     id: "custom",

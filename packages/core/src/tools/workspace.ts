@@ -1,4 +1,4 @@
-import { promises as fs, realpathSync } from "node:fs";
+import { lstatSync, promises as fs, realpathSync } from "node:fs";
 import * as path from "node:path";
 
 const ALWAYS_IGNORED = new Set([".git", "node_modules", ".DS_Store", "dist", "out", ".next", "__pycache__", ".venv", "venv"]);
@@ -7,13 +7,30 @@ const ALWAYS_IGNORED = new Set([".git", "node_modules", ".DS_Store", "dist", "ou
 export function resolveInRoot(root: string, p: string): string {
   const abs = path.resolve(root, p || ".");
   assertInside(root, abs, p);
-  // Follow symlinks for paths that already exist so a link can't point outside.
-  try {
-    assertInside(realpathSync(root), realpathSync(abs), p);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  // Follow symlinks so a link can't point outside. For a path that does not
+  // exist yet, check the nearest existing parent: new folders are created there.
+  let existing = abs;
+  for (;;) {
+    try {
+      assertInside(realpathSync(root), realpathSync(existing), p);
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      if (isSymlink(existing)) throw new Error(`Path "${p}" goes through a broken symlink.`);
+      const parent = path.dirname(existing);
+      if (parent === existing) break;
+      existing = parent;
+    }
   }
   return abs;
+}
+
+function isSymlink(p: string): boolean {
+  try {
+    return lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 function assertInside(root: string, abs: string, original: string): void {

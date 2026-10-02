@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as vscode from "vscode";
-import { downloadVerified, fetchManifest, isNewerVersion, type UpdateManifest } from "@dimosi/core";
+import { downloadVerified, fetchManifest, isNewerVersion, UPDATE_PUBLIC_KEYS, type UpdateManifest } from "@dimosi/core";
 
 const UPDATE_URL = __DIMOSI_UPDATE_URL__;
 const FIRST_CHECK_DELAY_MS = 30_000;
@@ -53,7 +53,7 @@ export class Updater implements vscode.Disposable {
     if (this.running) return;
     this.running = true;
     try {
-      const manifest = await fetchManifest(UPDATE_URL);
+      const manifest = await fetchManifest(UPDATE_URL, UPDATE_PUBLIC_KEYS);
       const installed = this.context.globalState.get<string>(INSTALLED_KEY);
       if (!isNewerVersion(manifest.version, this.currentVersion)) {
         if (manual) void vscode.window.showInformationMessage(`У вас последняя версия dimosi (${this.currentVersion}).`);

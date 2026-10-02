@@ -1,6 +1,7 @@
 import { PermissionGate, type ApprovalHandler, type ApprovalMode } from "./permissions";
 import { buildSystemPrompt, snapshotLayout } from "./prompt";
 import { loadRules, type RuleSource } from "./rules";
+import { IncompleteResponseError } from "./providers/openai";
 import { executeTool, TOOL_DEFINITIONS, type FileChange, type PlanItem } from "./tools";
 import type {
   ImagePart,
@@ -23,6 +24,8 @@ export interface AgentOptions {
   mode?: ApprovalMode;
   maxSteps?: number;
   maxTokens?: number;
+  /** Model context window in tokens; old tool output is trimmed to stay inside it. */
+  contextWindow?: number;
   /** Override for tests; defaults to ~/.config/dimosi/rules.md. */
   globalRulesPath?: string;
 }
@@ -41,22 +44,32 @@ export type AgentEvent =
 /** What the user sends: plain text, or text plus attachments. */
 export type UserInput = string | Array<TextPart | ImagePart>;
 
+type DoneEvent = Extract<StreamEvent, { type: "done" }>;
+
+export const DEFAULT_CONTEXT_WINDOW = 200_000;
+/** Pauses before retrying a failed request (network drop, overload, 5xx). */
+const RETRY_DELAYS_MS = [2000, 5000];
+const TRIMMED_RESULT = "[Output removed to free context space. Run the tool again if you still need it.]";
+
 export class Agent {
   provider: Provider;
   model: string;
   maxSteps: number;
+  contextWindow: number;
   readonly root: string;
   readonly gate: PermissionGate;
   messages: Message[] = [];
   private maxTokens?: number;
   private globalRulesPath?: string;
   private layout?: string;
+  private running = false;
 
   constructor(opts: AgentOptions) {
     this.provider = opts.provider;
     this.model = opts.model;
     this.root = opts.root;
     this.maxSteps = opts.maxSteps ?? 50;
+    this.contextWindow = opts.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     this.maxTokens = opts.maxTokens;
     this.globalRulesPath = opts.globalRulesPath;
     this.gate = new PermissionGate(opts.approval, opts.mode ?? "ask");
@@ -70,6 +83,20 @@ export class Agent {
 
   /** Runs one user turn: model calls and tool executions until the model stops. */
   async *run(input: UserInput, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
+    // Two runs on one history would interleave messages and break the chat for good.
+    if (this.running) {
+      yield { type: "error", message: "Агент ещё выполняет предыдущую задачу. Дождитесь окончания или нажмите «Стоп»." };
+      return;
+    }
+    this.running = true;
+    try {
+      yield* this.runTurn(input, signal);
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private async *runTurn(input: UserInput, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
     const parts: Part[] = typeof input === "string" ? [{ type: "text", text: input }] : input;
     this.appendUserParts(parts);
 
@@ -81,19 +108,11 @@ export class Agent {
       const system = buildSystemPrompt({ root: this.root, layout: this.layout, rules });
 
       for (let step = 0; step < this.maxSteps; step++) {
-        let done: Extract<StreamEvent, { type: "done" }> | undefined;
-        for await (const ev of this.provider.stream({
-          model: this.model,
-          system,
-          messages: this.messages,
-          tools: TOOL_DEFINITIONS,
-          maxTokens: this.maxTokens,
-          signal,
-        })) {
-          if (ev.type === "text_delta") yield { type: "text", text: ev.text };
-          else done = ev;
+        // Trim rarely and in one go: every trim invalidates the prompt cache once.
+        if (estimateTokens(this.messages) > this.contextWindow * 0.7) {
+          trimToolResults(this.messages, this.contextWindow * 0.4);
         }
-        if (!done) throw new Error("Сервис оборвал ответ. Попробуйте ещё раз.");
+        const done = yield* this.request(system, signal);
         if (done.usage) yield { type: "usage", usage: done.usage };
 
         const calls = done.message.parts.filter((p): p is ToolCallPart => p.type === "tool_call");
@@ -149,6 +168,44 @@ export class Agent {
     }
   }
 
+  /** One model call, retried when it failed before anything reached the user. */
+  private async *request(system: string, signal?: AbortSignal): AsyncGenerator<AgentEvent, DoneEvent> {
+    let trimmedForOverflow = false;
+    for (let attempt = 0; ; attempt++) {
+      let started = false;
+      try {
+        let done: DoneEvent | undefined;
+        for await (const ev of this.provider.stream({
+          model: this.model,
+          system,
+          messages: this.messages,
+          tools: TOOL_DEFINITIONS,
+          maxTokens: this.maxTokens,
+          signal,
+        })) {
+          if (ev.type === "text_delta") {
+            started = true;
+            yield { type: "text", text: ev.text };
+          } else done = ev;
+        }
+        if (!done) throw new IncompleteResponseError();
+        return done;
+      } catch (e) {
+        if (signal?.aborted || started) throw e;
+        // The history no longer fits: drop old tool output and try again once.
+        if (isContextOverflow(e) && !trimmedForOverflow) {
+          trimmedForOverflow = true;
+          if (trimToolResults(this.messages, estimateTokens(this.messages) / 2)) continue;
+        }
+        if (attempt < RETRY_DELAYS_MS.length && isRetryable(e)) {
+          await sleep(RETRY_DELAYS_MS[attempt], signal);
+          continue;
+        }
+        throw e;
+      }
+    }
+  }
+
   private appendUserParts(parts: Part[]): void {
     const last = this.messages[this.messages.length - 1];
     // After a cancelled or failed turn the last message may already be from the user.
@@ -181,10 +238,77 @@ export class Agent {
   }
 }
 
+/** Rough token count of the history (≈3 characters per token, on the safe side). */
+export function estimateTokens(messages: Message[]): number {
+  let chars = 0;
+  for (const m of messages) {
+    for (const p of m.parts) {
+      if (p.type === "text") chars += p.text.length;
+      else if (p.type === "tool_result") chars += p.content.length;
+      else if (p.type === "tool_call") chars += JSON.stringify(p.input).length;
+      else chars += 4500; // an image is ~1500 tokens
+    }
+  }
+  return Math.ceil(chars / 3);
+}
+
+/**
+ * Replaces the oldest tool output with a short note until the history fits
+ * `targetTokens`. Only tool results change: assistant messages (Claude's
+ * original content) must be resent exactly as received. Returns true if
+ * anything was trimmed.
+ */
+export function trimToolResults(messages: Message[], targetTokens: number): boolean {
+  let trimmed = false;
+  for (const m of messages) {
+    if (m.role !== "user") continue;
+    for (const p of m.parts) {
+      if (estimateTokens(messages) <= targetTokens) return trimmed;
+      if (p.type === "tool_result" && p.content.length > TRIMMED_RESULT.length * 2) {
+        p.content = TRIMMED_RESULT;
+        trimmed = true;
+      }
+    }
+  }
+  return trimmed;
+}
+
+function statusOf(e: unknown): number | undefined {
+  return e && typeof e === "object" && "status" in e ? (e as { status?: number }).status : undefined;
+}
+
+function isContextOverflow(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  const status = statusOf(e);
+  return /context|too long|maximum.*tokens|token limit|prompt is too long/i.test(msg) && (status === 400 || status === 413);
+}
+
+function isRetryable(e: unknown): boolean {
+  if (e instanceof IncompleteResponseError) return true;
+  const status = statusOf(e);
+  if (status !== undefined) return status === 408 || status === 409 || status === 429 || status >= 500;
+  const msg = e instanceof Error ? e.message : String(e);
+  return /overloaded|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up|terminated|network|Connection error/i.test(msg);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new Error("aborted"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export function describeError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
-  const status = e && typeof e === "object" && "status" in e ? (e as { status?: number }).status : undefined;
-  if (/context|too long|maximum.*tokens|token limit|prompt is too long/i.test(msg) && (status === 400 || status === 413)) {
+  const status = statusOf(e);
+  if (isContextOverflow(e)) {
     return `Разговор стал слишком длинным для этой модели. Начните новый чат (кнопка «+»). (${msg})`;
   }
   if (/image|vision|multimodal/i.test(msg) && status === 400) {

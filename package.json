@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/cli && tsc --noEmit -p packages/vscode && tsc --noEmit -p packages/vscode/webview",
     "test": "vitest run",
     "package": "node scripts/package.mjs",
-    "release": "node scripts/release.mjs"
+    "release": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/release.mjs",
+    "signing-key": "node scripts/signing-key.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.19.1",

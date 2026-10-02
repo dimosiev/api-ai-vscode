@@ -17,3 +17,4 @@ export { PRESETS, getPreset, createProvider, type ProviderPreset } from "./provi
 export { AnthropicProvider, toAnthropicMessages } from "./providers/anthropic";
 export { OpenAIProvider, toOpenAIMessages, parsePricing, parseUsage } from "./providers/openai";
 export * from "./update";
+export { UPDATE_PUBLIC_KEYS } from "./update-key";

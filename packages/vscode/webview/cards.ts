@@ -154,7 +154,7 @@ export function approvalWriteCard(id: string, relPath: string, created: boolean,
       h("span", { class: "stat" }, h("span", { class: "plus" }, `+${diff.added}`), " ", h("span", { class: "minus" }, `−${diff.removed}`)),
     ),
     diffTable(diff),
-    approvalButtons(id, post, "Применить", h("button", { class: "btn link", onclick: () => post({ type: "open_diff", id }) }, svg(ICONS.diff, "inline-icon"), "Открыть сравнение")),
+    approvalButtons(id, post, "Применить", "Больше не спрашивать про запись файлов до конца чата", h("button", { class: "btn link", onclick: () => post({ type: "open_diff", id }) }, svg(ICONS.diff, "inline-icon"), "Открыть сравнение")),
   );
 }
 
@@ -164,18 +164,18 @@ export function approvalCommandCard(id: string, command: string, post: Post): HT
     { class: "approval", "data-id": id },
     h("div", { class: "approval-head" }, svg(ICONS.terminal, "approval-icon"), h("span", { class: "approval-title" }, "Выполнить команду")),
     h("pre", { class: "command" }, `$ ${command}`),
-    approvalButtons(id, post, "Выполнить"),
+    approvalButtons(id, post, "Выполнить", "Больше не спрашивать про эту же команду до конца чата"),
   );
 }
 
-function approvalButtons(id: string, post: Post, allowLabel: string, extra?: HTMLElement): HTMLElement {
+function approvalButtons(id: string, post: Post, allowLabel: string, alwaysTitle: string, extra?: HTMLElement): HTMLElement {
   const send = (decision: "allow" | "deny" | "allow_always") => post({ type: "approval_response", id, decision });
   return h(
     "div",
     { class: "approval-actions" },
     h("button", { class: "btn primary", onclick: () => send("allow") }, allowLabel),
     h("button", { class: "btn", onclick: () => send("deny") }, "Отклонить"),
-    h("button", { class: "btn subtle", title: "Не спрашивать до конца сессии", onclick: () => send("allow_always") }, "Всегда"),
+    h("button", { class: "btn subtle", title: alwaysTitle, onclick: () => send("allow_always") }, "Всегда"),
     extra && h("span", { class: "spacer" }),
     extra,
   );

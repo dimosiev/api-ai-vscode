@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import {
   Agent,
   createProvider,
+  DEFAULT_CONTEXT_WINDOW,
   loadRules,
   decryptKeys,
   describeToolCall,
@@ -204,7 +205,7 @@ async function cmdKeys(args: string[], io: Prompter): Promise<void> {
       await keys.open(false); // verifies the password before copying
       await fs.copyFile(keyFilePath(), path.resolve(arg));
       console.log(c.green(`Ключи сохранены в ${path.resolve(arg)}.`));
-      console.log("Файл зашифрован тем же паролем, что и хранилище. Его можно загрузить и в расширение VS Code: команда «API AI: Импортировать ключи из файла…».");
+      console.log("Файл зашифрован тем же паролем, что и хранилище. Его можно загрузить и в расширение VS Code: команда «dimosi: Импортировать ключи из файла…».");
       return;
     }
     case "import": {
@@ -324,7 +325,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         console.log(`  $ ${req.command}`);
       }
       const answer = (
-        (await io.ask(c.yellow("Разрешить? [y] да / [n] нет / [a] да, и больше не спрашивать: "), {
+        (await io.ask(c.yellow(req.kind === "write" ? "Разрешить? [y] да / [n] нет / [a] да, и не спрашивать про файлы до конца сессии: " : "Разрешить? [y] да / [n] нет / [a] да, и не спрашивать про эту же команду: "), {
           signal: controller?.signal,
         })) ?? ""
       ).toLowerCase();
@@ -340,6 +341,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
     root,
     approval,
     mode: flags.auto ? "auto" : config.mode,
+    contextWindow: getPreset(presetId).contextWindow,
   });
 
   console.log(`${c.bold(c.blue("dimosi"))} ${c.dim(VERSION)}  ${getPreset(presetId).label} · ${c.cyan(agent.model)}`);
@@ -482,6 +484,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
           getPreset(arg);
           agent.provider = await makeProvider(arg, config, keys, true);
           presetId = arg;
+          agent.contextWindow = getPreset(arg).contextWindow ?? DEFAULT_CONTEXT_WINDOW;
           agent.model = modelFor(arg, config);
           config.provider = arg;
           await saveConfig(config);

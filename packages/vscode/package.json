@@ -20,6 +20,12 @@
     "Programming Languages"
   ],
   "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Агент меняет файлы и запускает команды, поэтому работает только в папках, которым вы доверяете."
+    }
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -214,6 +220,7 @@
       "title": "dimosi",
       "properties": {
         "dimosi.provider": {
+          "scope": "application",
           "type": "string",
           "default": "anthropic",
           "enum": [
@@ -237,16 +244,19 @@
           "description": "Через какой сервис работает агент."
         },
         "dimosi.model": {
+          "scope": "application",
           "type": "string",
           "default": "",
           "description": "Имя модели. Пусто — модель сервиса по умолчанию."
         },
         "dimosi.customBaseUrl": {
+          "scope": "application",
           "type": "string",
           "default": "",
           "description": "Адрес API для сервиса custom, например http://localhost:1234/v1"
         },
         "dimosi.approvalMode": {
+          "scope": "application",
           "type": "string",
           "default": "ask",
           "enum": [
@@ -260,12 +270,14 @@
           "description": "Нужно ли подтверждать действия агента."
         },
         "dimosi.maxSteps": {
+          "scope": "application",
           "type": "number",
           "default": 50,
           "minimum": 1,
           "description": "Сколько шагов (вызовов модели) агент может сделать на одну задачу."
         },
         "dimosi.autoUpdate": {
+          "scope": "application",
           "type": "boolean",
           "default": true,
           "description": "Автоматически устанавливать новые версии dimosi с сервера обновлений."

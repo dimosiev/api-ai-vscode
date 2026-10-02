@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { ToolIdMapper } from "./toolIds";
 import type { ChatRequest, Message, Part, Pricing, Provider, StopReason, StreamEvent, Usage } from "../types";
 
 export interface OpenAIProviderOptions {
@@ -82,6 +83,8 @@ export class OpenAIProvider implements Provider {
       }
       if (choice.finish_reason) finishReason = choice.finish_reason;
     }
+    // A proxy or the service cut the connection: the reply is incomplete.
+    if (!finishReason) throw new IncompleteResponseError();
 
     const parts: Part[] = [];
     if (text) parts.push({ type: "text", text });
@@ -112,7 +115,7 @@ export class OpenAIProvider implements Provider {
   async getPricing(model: string): Promise<Pricing | undefined> {
     this.pricing ??= (async () => {
       const map = new Map<string, Pricing>();
-      for await (const m of this.client.models.list()) {
+      for await (const m of this.client.models.list({ timeout: 15_000, maxRetries: 0 })) {
         const price = parsePricing(m as unknown as Record<string, unknown>);
         if (price) map.set(m.id, price);
       }
@@ -180,10 +183,18 @@ function mapFinishReason(reason: string | null, hasToolCalls: boolean): StopReas
   return "other";
 }
 
+/** The stream ended without a finish reason: the connection was cut mid-reply. */
+export class IncompleteResponseError extends Error {
+  constructor() {
+    super("Ответ сервиса оборвался на середине. Напишите «продолжай».");
+  }
+}
+
 export function toOpenAIMessages(
   system: string,
   messages: Message[],
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
+  const ids = new ToolIdMapper();
   const out: OpenAI.Chat.ChatCompletionMessageParam[] = [{ role: "system", content: system }];
   for (const m of messages) {
     if (m.role === "assistant") {
@@ -194,7 +205,7 @@ export function toOpenAIMessages(
       const toolCalls = m.parts
         .filter((p) => p.type === "tool_call")
         .map((p) => ({
-          id: p.id,
+          id: ids.call(p.id),
           type: "function" as const,
           function: { name: p.name, arguments: JSON.stringify(p.input) },
         }));
@@ -210,7 +221,7 @@ export function toOpenAIMessages(
       if (p.type === "tool_result") {
         out.push({
           role: "tool",
-          tool_call_id: p.toolCallId,
+          tool_call_id: ids.result(p.toolCallId),
           content: p.isError ? `ERROR: ${p.content}` : p.content,
         });
       }

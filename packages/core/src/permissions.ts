@@ -20,8 +20,16 @@ export interface ApprovalHandler {
 
 export type ApprovalMode = "ask" | "auto";
 
+/**
+ * "Always" covers all file writes, but only the exact command that was
+ * approved: allowing `npm test` must not allow `rm -rf` later.
+ */
+function approvalKey(req: ApprovalRequest): string {
+  return req.kind === "write" ? "write" : `command:${req.command.trim()}`;
+}
+
 export class PermissionGate {
-  private alwaysAllowed = new Set<ApprovalRequest["kind"]>();
+  private alwaysAllowed = new Set<string>();
 
   constructor(
     private handler: ApprovalHandler,
@@ -29,9 +37,9 @@ export class PermissionGate {
   ) {}
 
   async check(req: ApprovalRequest): Promise<boolean> {
-    if (this.mode === "auto" || this.alwaysAllowed.has(req.kind)) return true;
+    if (this.mode === "auto" || this.alwaysAllowed.has(approvalKey(req))) return true;
     const decision = await this.handler.approve(req);
-    if (decision === "allow_always") this.alwaysAllowed.add(req.kind);
+    if (decision === "allow_always") this.alwaysAllowed.add(approvalKey(req));
     return decision !== "deny";
   }
 

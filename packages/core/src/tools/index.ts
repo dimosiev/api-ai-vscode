@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import { Worker } from "node:worker_threads";
 import type { PermissionGate } from "../permissions";
 import type { ToolCallPart, ToolDefinition } from "../types";
 import { IgnoreMatcher, resolveInRoot, toRel, walk } from "./workspace";
@@ -27,6 +29,8 @@ export interface ToolContext {
   signal?: AbortSignal;
   onFileChange?: (change: FileChange) => void;
   onPlan?: (items: PlanItem[]) => void;
+  /** Override for tests; defaults to SEARCH_TIMEOUT_MS. */
+  searchTimeoutMs?: number;
 }
 
 export interface ToolResult {
@@ -35,7 +39,12 @@ export interface ToolResult {
 }
 
 const MAX_READ_LINES = 2000;
+/** One reply must not flood the model's context (minified files, huge JSON). */
+const MAX_READ_CHARS = 50_000;
+const MAX_LINE_CHARS = 2000;
+const MAX_READ_BYTES = 10 * 1024 * 1024;
 const MAX_OUTPUT_CHARS = 30_000;
+const SEARCH_TIMEOUT_MS = 15_000;
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -178,13 +187,29 @@ function num(input: Input, key: string, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.floor(v) : fallback;
 }
 
-async function readTextOrNull(abs: string): Promise<string | null> {
+/** Reads a file the agent is about to change. Refuses anything that is not valid UTF-8. */
+async function readTextOrNull(abs: string, relPath: string): Promise<string | null> {
+  let bytes: Buffer;
   try {
-    return await fs.readFile(abs, "utf8");
+    bytes = await fs.readFile(abs);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw e;
   }
+  try {
+    // Writing a non-UTF-8 file back as UTF-8 would silently destroy its text.
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new Error(
+      `${relPath} is not a UTF-8 text file (it may be binary or use an old encoding such as windows-1251). ` +
+        "It is not changed to avoid corrupting it. Tell the user it has to be converted to UTF-8 first.",
+    );
+  }
+}
+
+/** Git internals (hooks run code on commit) are never written by the agent. */
+function assertWritable(root: string, abs: string): void {
+  if (toRel(root, abs).split("/")[0] === ".git") throw new Error("Writing inside .git is not allowed.");
 }
 
 const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<string>> = {
@@ -202,6 +227,10 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
 
   async read_file(input, { root }) {
     const abs = resolveInRoot(root, str(input, "path"));
+    const { size } = await fs.stat(abs);
+    if (size > MAX_READ_BYTES) {
+      throw new Error(`File is too large to read (${Math.round(size / 1024 / 1024)} MB). Use search to find the relevant part.`);
+    }
     const text = await fs.readFile(abs, "utf8");
     if (text.includes("\u0000")) throw new Error("File looks binary; not reading it.");
     const lines = text.split("\n");
@@ -209,37 +238,31 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     const limit = Math.min(MAX_READ_LINES, Math.max(1, num(input, "limit", MAX_READ_LINES)));
     const slice = lines.slice(offset - 1, offset - 1 + limit);
     const width = String(offset + slice.length).length;
-    const body = slice.map((l, i) => `${String(offset + i).padStart(width)}\t${l}`).join("\n");
-    const end = offset - 1 + slice.length;
+    const out: string[] = [];
+    let chars = 0;
+    for (const [i, raw] of slice.entries()) {
+      const line = raw.length > MAX_LINE_CHARS ? `${raw.slice(0, MAX_LINE_CHARS)} ... (line cut, ${raw.length} characters)` : raw;
+      const numbered = `${String(offset + i).padStart(width)}\t${line}`;
+      if (out.length && chars + numbered.length > MAX_READ_CHARS) break;
+      out.push(numbered);
+      chars += numbered.length + 1;
+    }
+    const end = offset - 1 + out.length;
     const more = end < lines.length ? `\n... (${lines.length - end} more lines; use offset=${end + 1})` : "";
-    return (body || "(empty file)") + more;
+    return (out.join("\n") || "(empty file)") + more;
   },
 
-  async search(input, { root }) {
+  async search(input, { root, signal, searchTimeoutMs }) {
     const pattern = str(input, "pattern");
-    const flags = input.case_sensitive === true ? "g" : "gi";
-    const re = input.regex === true
-      ? new RegExp(pattern, flags)
-      : new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags);
+    const flags = input.case_sensitive === true ? "" : "i";
+    const source = input.regex === true ? pattern : pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    new RegExp(source, flags); // reports a broken pattern as a normal tool error
     const dir = resolveInRoot(root, str(input, "path", false));
     const ignore = await IgnoreMatcher.load(root);
     const { paths } = await walk(root, dir, ignore, { limit: 20_000 });
-    const matches: string[] = [];
-    for (const rel of paths) {
-      const abs = path.join(root, rel);
-      const stat = await fs.stat(abs);
-      if (stat.size > 1_000_000) continue;
-      const text = await fs.readFile(abs, "utf8");
-      if (text.includes("\u0000")) continue;
-      const lines = text.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        re.lastIndex = 0;
-        if (re.test(lines[i])) {
-          matches.push(`${rel}:${i + 1}: ${lines[i].trim().slice(0, 300)}`);
-          if (matches.length >= 200) return matches.join("\n") + "\n... (stopped at 200 matches)";
-        }
-      }
-    }
+    signal?.throwIfAborted();
+    const { matches, stopped } = await searchInWorker(root, paths, source, flags, signal, searchTimeoutMs ?? SEARCH_TIMEOUT_MS);
+    if (stopped) return matches.join("\n") + "\n... (stopped at 200 matches)";
     return matches.length ? matches.join("\n") : "No matches.";
   },
 
@@ -259,8 +282,9 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
 
   async write_file(input, { root, gate, onFileChange }) {
     const abs = resolveInRoot(root, str(input, "path"));
+    assertWritable(root, abs);
     const content = str(input, "content");
-    const oldContent = await readTextOrNull(abs);
+    const oldContent = await readTextOrNull(abs, toRel(root, abs));
     if (oldContent === content) return "File already has this content; nothing changed.";
     const ok = await gate.check({ kind: "write", path: abs, relPath: toRel(root, abs), oldContent, newContent: content });
     if (!ok) throw new Error("The user rejected this change.");
@@ -272,12 +296,23 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
 
   async edit_file(input, { root, gate, onFileChange }) {
     const abs = resolveInRoot(root, str(input, "path"));
-    const oldString = str(input, "old_string");
-    const newString = str(input, "new_string");
+    assertWritable(root, abs);
+    let oldString = str(input, "old_string");
+    let newString = str(input, "new_string");
     if (!oldString) throw new Error("old_string must not be empty. Use write_file to create files.");
-    const oldContent = await readTextOrNull(abs);
+    const oldContent = await readTextOrNull(abs, toRel(root, abs));
     if (oldContent === null) throw new Error(`File ${toRel(root, abs)} does not exist.`);
-    const count = oldContent.split(oldString).length - 1;
+    let count = oldContent.split(oldString).length - 1;
+    if (count === 0 && oldContent.includes("\r\n")) {
+      // read_file hides \r, so the model sends LF text for a Windows (CRLF) file.
+      const crlf = (t: string) => t.replace(/\r?\n/g, "\r\n");
+      const n = oldContent.split(crlf(oldString)).length - 1;
+      if (n > 0) {
+        oldString = crlf(oldString);
+        newString = crlf(newString);
+        count = n;
+      }
+    }
     if (count === 0) throw new Error("old_string was not found in the file. Re-read the file and copy the text exactly.");
     if (count > 1 && input.replace_all !== true) {
       throw new Error(`old_string occurs ${count} times. Add surrounding context to make it unique, or set replace_all.`);
@@ -302,44 +337,158 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
 };
 
 function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  if (signal?.aborted) return Promise.resolve("Cancelled by the user.");
+  const isWindows = process.platform === "win32";
   return new Promise((resolve) => {
-    const child = spawn(command, { cwd, shell: true, env: process.env });
-    let output = "";
-    let timedOut = false;
-    const append = (chunk: Buffer) => {
-      if (output.length < MAX_OUTPUT_CHARS * 2) output += chunk.toString("utf8");
-    };
-    child.stdout.on("data", append);
-    child.stderr.on("data", append);
-    const kill = () => child.kill("SIGTERM");
-    const timer = setTimeout(() => {
-      timedOut = true;
-      kill();
-    }, timeoutMs);
-    signal?.addEventListener("abort", kill, { once: true });
-    const finish = (header: string) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", kill);
-      resolve(`${header}\n${truncateMiddle(output.trim(), MAX_OUTPUT_CHARS) || "(no output)"}`);
-    };
-    child.on("error", (e) => finish(`Failed to start: ${e.message}`));
-    child.on("close", (code, sig) => {
-      if (timedOut) finish(`Timed out after ${timeoutMs / 1000}s.`);
-      else if (signal?.aborted) finish("Cancelled by the user.");
-      else finish(`Exit code: ${code ?? sig}`);
+    const child = spawn(command, {
+      cwd,
+      shell: true,
+      // Own process group, so the whole tree can be stopped (POSIX).
+      detached: !isWindows,
+      windowsHide: true,
+      // Nobody can answer a prompt: commands must not wait for input.
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, CI: "1", GIT_TERMINAL_PROMPT: "0" },
     });
+    const output = new OutputBuffer(MAX_OUTPUT_CHARS);
+    const decoders = [new StringDecoder("utf8"), new StringDecoder("utf8")];
+    child.stdout.on("data", (chunk: Buffer) => output.append(decoders[0].write(chunk)));
+    child.stderr.on("data", (chunk: Buffer) => output.append(decoders[1].write(chunk)));
+
+    let stopReason: string | undefined;
+    let settled = false;
+    const timers: NodeJS.Timeout[] = [];
+    const finish = (header: string) => {
+      if (settled) return;
+      settled = true;
+      timers.forEach(clearTimeout);
+      signal?.removeEventListener("abort", onAbort);
+      // Background processes may still hold the pipes open; stop listening to them.
+      child.stdout.destroy();
+      child.stderr.destroy();
+      output.append(decoders[0].end() + decoders[1].end());
+      resolve(`${header}\n${output.text().trim() || "(no output)"}`);
+    };
+    const stop = (reason: string) => {
+      if (stopReason) return;
+      stopReason = reason;
+      killTree(child.pid, "SIGTERM");
+      timers.push(setTimeout(() => killTree(child.pid, "SIGKILL"), 2000));
+      // Never hang, even if something survives the kill.
+      timers.push(setTimeout(() => finish(reason), 5000));
+    };
+    const onAbort = () => stop("Cancelled by the user.");
+    signal?.addEventListener("abort", onAbort, { once: true });
+    timers.push(setTimeout(() => stop(`Timed out after ${timeoutMs / 1000}s.`), timeoutMs));
+
+    child.on("error", (e) => finish(`Failed to start: ${e.message}`));
+    child.on("close", (code, sig) => finish(stopReason ?? `Exit code: ${code ?? sig}`));
+    // "close" waits for every process holding the output; give them a moment, then return.
+    child.on("exit", (code, sig) => {
+      timers.push(setTimeout(() => finish(stopReason ?? `Exit code: ${code ?? sig}`), 1000));
+    });
+  });
+}
+
+function killTree(pid: number | undefined, sig: NodeJS.Signals): void {
+  if (!pid) return;
+  try {
+    if (process.platform === "win32") {
+      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    } else {
+      process.kill(-pid, sig);
+    }
+  } catch {
+    // already gone
+  }
+}
+
+/** Keeps the beginning and the end of long output: errors are usually at the end. */
+class OutputBuffer {
+  private head = "";
+  private tail = "";
+  private total = 0;
+  constructor(private max: number) {}
+
+  append(s: string): void {
+    if (!s) return;
+    this.total += s.length;
+    const half = Math.floor(this.max / 2);
+    if (this.head.length < half) {
+      const take = half - this.head.length;
+      this.head += s.slice(0, take);
+      s = s.slice(take);
+    }
+    this.tail = (this.tail + s).slice(-half);
+  }
+
+  text(): string {
+    const omitted = this.total - this.head.length - this.tail.length;
+    return omitted > 0 ? `${this.head}\n... (${omitted} characters omitted) ...\n${this.tail}` : this.head + this.tail;
+  }
+}
+
+// Runs in a worker thread: a catastrophic regular expression must not freeze
+// the host (in VS Code that is every extension). Plain JS, so it survives bundling.
+const SEARCH_WORKER = `
+const { parentPort, workerData } = require("node:worker_threads");
+const fs = require("node:fs");
+const path = require("node:path");
+const { root, paths, source, flags } = workerData;
+const re = new RegExp(source, flags);
+const matches = [];
+let stopped = false;
+outer: for (const rel of paths) {
+  const abs = path.join(root, rel);
+  let text;
+  try {
+    if (fs.statSync(abs).size > 1000000) continue;
+    text = fs.readFileSync(abs, "utf8");
+  } catch {
+    continue;
+  }
+  if (text.includes("\\u0000")) continue;
+  const lines = text.split("\\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (re.test(lines[i])) {
+      matches.push(rel + ":" + (i + 1) + ": " + lines[i].trim().slice(0, 300));
+      if (matches.length >= 200) { stopped = true; break outer; }
+    }
+  }
+}
+parentPort.postMessage({ matches, stopped });
+`;
+
+function searchInWorker(
+  root: string,
+  paths: string[],
+  source: string,
+  flags: string,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<{ matches: string[]; stopped: boolean }> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(SEARCH_WORKER, { eval: true, workerData: { root, paths, source, flags } });
+    const done = (fn: () => void) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      void worker.terminate();
+      fn();
+    };
+    const timer = setTimeout(
+      () => done(() => reject(new Error(`Search took longer than ${timeoutMs / 1000}s and was stopped. The regular expression may be too complex; use a simpler pattern or a narrower path.`))),
+      timeoutMs,
+    );
+    const onAbort = () => done(() => reject(new Error("Cancelled by the user.")));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    worker.once("message", (result: { matches: string[]; stopped: boolean }) => done(() => resolve(result)));
+    worker.once("error", (e) => done(() => reject(e)));
   });
 }
 
 function countLines(text: string): number {
   if (!text) return 0;
   return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
-}
-
-function truncateMiddle(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const half = Math.floor(max / 2);
-  return `${text.slice(0, half)}\n... (${text.length - max} characters omitted) ...\n${text.slice(-half)}`;
 }
 
 /** One-line human summary of a tool call, for UIs. */

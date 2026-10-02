@@ -3,48 +3,74 @@
 //   npm run release                       # 0.3.0 -> 0.3.1
 //   npm run release -- 0.4.0 --notes "Что нового"
 //
-// Needs release.config.json (see release.config.example.json).
+// Needs release.config.json (see release.config.example.json) and the signing
+// key from the password manager: pasted when asked, or in DIMOSI_SIGNING_KEY.
 import { execFileSync, execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readReleaseConfig, root } from "./release-config.mjs";
 
+const { MAX_NOTES_CHARS, parseManifest, signManifest, verifyManifest } = await import("../packages/core/src/update.ts");
+const { UPDATE_PUBLIC_KEYS } = await import("../packages/core/src/update-key.ts");
+
 const args = process.argv.slice(2);
 const notesIndex = args.indexOf("--notes");
 const notes = notesIndex >= 0 ? args[notesIndex + 1] ?? "" : "";
 const versionArg = args.find((a, i) => !a.startsWith("--") && i !== notesIndex + 1);
 
-const cfg = readReleaseConfig();
-if (!cfg.updateUrl || !cfg.ssh || !cfg.remoteDir) {
-  console.error("Заполните release.config.json (образец — release.config.example.json).");
+const fail = (message) => {
+  console.error(`\n✖ ${message}`);
   process.exit(1);
-}
+};
+
+const cfg = readReleaseConfig();
+if (!cfg.updateUrl || !cfg.ssh || !cfg.remoteDir) fail("Заполните release.config.json (образец — release.config.example.json).");
+if (!UPDATE_PUBLIC_KEYS.length) fail("Нет ключа подписи. Создайте его один раз: npm run signing-key");
+if (notes.length > MAX_NOTES_CHARS) fail(`Описание длиннее ${MAX_NOTES_CHARS} символов.`);
 
 const run = (cmd) => execSync(cmd, { cwd: root, stdio: "inherit" });
+const git = (...a) => execFileSync("git", a, { cwd: root, encoding: "utf8" }).trim();
 const PACKAGES = ["package.json", "packages/core/package.json", "packages/cli/package.json", "packages/vscode/package.json"];
 
-// 1. Version
+// 0. The release must match a commit, so it can be found and rebuilt later.
+if (git("status", "--porcelain")) fail("Есть незакоммиченные изменения. Сначала закоммитьте их (git commit), потом выпускайте.");
+
+// 1. Signing key: checked first, so a wrong paste fails before any work.
+const privateKey = (process.env.DIMOSI_SIGNING_KEY ?? (await askHidden("Вставьте ключ подписи из Bitwarden и нажмите Enter: "))).replace(/[^A-Za-z0-9+/=]/g, "");
+try {
+  const probe = { version: "0.0.0", vsix: { file: "probe.vsix", sha256: "0".repeat(64) } };
+  verifyManifest({ ...probe, signature: signManifest(probe, privateKey) }, UPDATE_PUBLIC_KEYS);
+} catch {
+  fail("Этот ключ не подходит к открытому ключу в packages/core/src/update-key.ts. Проверьте, что скопировали ключ целиком.");
+}
+
+// 2. Version
 const current = JSON.parse(readFileSync(join(root, "packages/vscode/package.json"), "utf8")).version;
 const next = versionArg ?? current.replace(/\d+$/, (n) => String(Number(n) + 1));
-if (!/^\d+\.\d+\.\d+$/.test(next)) throw new Error(`Неверная версия: ${next}`);
+if (!/^\d+\.\d+\.\d+$/.test(next)) fail(`Неверная версия: ${next}`);
 const [a, b] = [next.split(".").map(Number), current.split(".").map(Number)];
 const newer = a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
-if (newer <= 0) throw new Error(`Новая версия ${next} должна быть больше текущей ${current}.`);
+if (newer <= 0) fail(`Новая версия ${next} должна быть больше текущей ${current}.`);
 for (const p of PACKAGES) {
   const file = join(root, p);
   const text = readFileSync(file, "utf8");
   writeFileSync(file, text.replace(/"version": "[^"]+"/, `"version": "${next}"`));
 }
-run("npm install --package-lock-only --ignore-scripts --silent");
 console.log(`\n▶ Версия ${current} → ${next}\n`);
 
-// 2. Checks and build (the update URL is baked in from release.config.json)
-run("npm test");
-run("npm run typecheck");
-run("npm run package");
+// 3. Checks and build (the update URL is baked in from release.config.json)
+try {
+  run("npm install --package-lock-only --ignore-scripts --silent");
+  run("npm test");
+  run("npm run typecheck");
+  run("npm run package");
+} catch {
+  execFileSync("git", ["checkout", "--", ...PACKAGES, "package-lock.json"], { cwd: root });
+  fail("Проверки или сборка не прошли — ничего не опубликовано, версия возвращена.");
+}
 
-// 3. Manifest
+// 4. Signed manifest
 const dist = join(root, "dist");
 const files = { vsix: `dimosi-${next}.vsix`, cli: `dimosi-cli-${next}.tgz` };
 const hash = (f) => createHash("sha256").update(readFileSync(join(dist, f))).digest("hex");
@@ -55,21 +81,62 @@ const manifest = {
   vsix: { file: files.vsix, sha256: hash(files.vsix) },
   cli: { file: files.cli, sha256: hash(files.cli) },
 };
+manifest.signature = signManifest(manifest, privateKey);
+verifyManifest(parseManifest(JSON.parse(JSON.stringify(manifest))), UPDATE_PUBLIC_KEYS);
 writeFileSync(join(dist, "latest.json"), JSON.stringify(manifest, null, 2) + "\n");
 
-// 4. Upload: release files first, latest.json last (renamed into place), so
+// 5. Upload: release files first, latest.json last (renamed into place), so
 //    clients never see a manifest that points at a missing file.
 const remote = cfg.remoteDir.replace(/\/$/, "");
 execFileSync("rsync", ["-az", join(dist, files.vsix), join(dist, files.cli), `${cfg.ssh}:${remote}/`], { stdio: "inherit" });
 execFileSync("rsync", ["-az", join(dist, "latest.json"), `${cfg.ssh}:${remote}/latest.json.tmp`], { stdio: "inherit" });
 execFileSync("ssh", [cfg.ssh, `mv ${remote}/latest.json.tmp ${remote}/latest.json && cd ${remote} && ls -t dimosi-*.vsix | tail -n +6 | xargs -r rm -- && ls -t dimosi-cli-*.tgz | tail -n +6 | xargs -r rm --`], { stdio: "inherit" });
 
-// 5. Verify through the public address, as an installed extension would.
-const live = await (await fetch(cfg.updateUrl + "latest.json", { headers: { "cache-control": "no-cache" } })).json();
-if (live.version !== next) throw new Error(`Сервер отдаёт версию ${live.version}, ожидалась ${next}.`);
+// 6. Verify through the public address, as an installed extension would.
+const live = parseManifest(await (await fetch(cfg.updateUrl + "latest.json", { headers: { "cache-control": "no-cache" } })).json());
+if (live.version !== next) fail(`Сервер отдаёт версию ${live.version}, ожидалась ${next}.`);
+verifyManifest(live, UPDATE_PUBLIC_KEYS);
 const vsix = new Uint8Array(await (await fetch(cfg.updateUrl + files.vsix)).arrayBuffer());
-if (createHash("sha256").update(vsix).digest("hex") !== manifest.vsix.sha256) throw new Error("Скачанный с сервера .vsix не совпал по контрольной сумме.");
+if (createHash("sha256").update(vsix).digest("hex") !== manifest.vsix.sha256) fail("Скачанный с сервера .vsix не совпал по контрольной сумме.");
 
-console.log(`\n✔ dimosi ${next} опубликован. Установленные расширения обновятся сами в течение 6 часов`);
+// 7. Remember which commit this release is.
+execFileSync("git", ["add", ...PACKAGES, "package-lock.json"], { cwd: root });
+execFileSync("git", ["commit", "-m", `Release ${next}`], { cwd: root, stdio: "inherit" });
+execFileSync("git", ["tag", `v${next}`], { cwd: root });
+
+console.log(`\n✔ dimosi ${next} опубликован и подписан. Установленные расширения обновятся сами в течение 6 часов`);
 console.log(`  (сразу — командой «dimosi: Проверить обновления»). CLI: dimosi update.`);
-console.log(`  Не забудьте закоммитить смену версии: git commit -am "Release ${next}"`);
+console.log(`  Создан коммит «Release ${next}» и метка v${next}. Отправьте их на GitHub: git push && git push --tags`);
+
+/** Reads a line without showing it on screen. */
+function askHidden(question) {
+  if (!process.stdin.isTTY) fail("Нет терминала для ввода ключа. Передайте его в переменной DIMOSI_SIGNING_KEY.");
+  process.stdout.write(question);
+  process.stdin.setRawMode(true);
+  process.stdin.setEncoding("utf8");
+  process.stdin.resume();
+  return new Promise((resolve) => {
+    let value = "";
+    const onData = (chunk) => {
+      for (const ch of chunk) {
+        if (ch === "\r" || ch === "\n") {
+          cleanup();
+          return resolve(value);
+        }
+        if (ch === "\u0003") {
+          cleanup();
+          fail("Отменено.");
+        }
+        if (ch === "\u007f" || ch === "\b") value = value.slice(0, -1);
+        else value += ch;
+      }
+    };
+    const cleanup = () => {
+      process.stdin.off("data", onData);
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdout.write("\n");
+    };
+    process.stdin.on("data", onData);
+  });
+}

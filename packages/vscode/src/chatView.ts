@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import {
   Agent,
+  DEFAULT_CONTEXT_WINDOW,
   describeToolCall,
   formatCost,
   formatTokens,
@@ -36,6 +37,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private turn = 0;
   private chatUsage = new UsageTotals();
   private fileCache?: { at: number; files: string[] };
+  private starting = false;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -87,7 +89,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   get busy(): boolean {
-    return this.controller !== undefined;
+    return this.controller !== undefined || this.starting;
   }
 
   private root(): string | undefined {
@@ -275,6 +277,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private async send(text: string): Promise<void> {
     text = text.trim();
     if (this.busy || (!text && !this.attachments.length)) return;
+    // Set before the first await, so a second click can't start a parallel run.
+    this.starting = true;
+    try {
+      await this.start(text);
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  private async start(text: string): Promise<void> {
     const root = this.root();
     if (!root) {
       this.post({
@@ -309,6 +321,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     agent.provider = provider;
     agent.model = settings.model;
     agent.maxSteps = settings.maxSteps;
+    agent.contextWindow = getPreset(settings.provider).contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     agent.gate.mode = settings.approvalMode;
 
     const attachments = this.attachments;
@@ -323,8 +336,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const tracker = new ChangeTracker();
     this.trackers.set(turn, tracker);
     const usage = new UsageTotals();
-    const pricing: Promise<Pricing | undefined> = (provider.getPricing?.(settings.model) ?? Promise.resolve(undefined))
-      .catch(() => undefined);
+    // The price list may load slowly; never make the agent wait for it.
+    let price: Pricing | undefined;
+    const postUsage = () => {
+      if (!usage.totalInput && !usage.output) return;
+      this.post({
+        type: "usage",
+        tokens: `${formatTokens(usage.totalInput)} → ${formatTokens(usage.output)}`,
+        cost: formatCost(usage.cost(price)),
+        chatCost: formatCost(this.chatUsage.cost(price)),
+        context: formatTokens(usage.lastContext),
+        contextWarning: usage.lastContext > CONTEXT_WARNING_TOKENS,
+      });
+    };
+    void (provider.getPricing?.(settings.model) ?? Promise.resolve(undefined)).then(
+      (p) => {
+        price = p;
+        if (p) postUsage();
+      },
+      () => undefined,
+    );
 
     this.post({ type: "user", text, chips: attachments.map(({ id, label, kind }) => ({ id, label, kind })) });
     this.post({ type: "busy", busy: true });
@@ -361,20 +392,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           case "file_changed":
             tracker.record(ev.change);
             break;
-          case "usage": {
+          case "usage":
             usage.add(ev.usage);
             this.chatUsage.add(ev.usage);
-            const p = await pricing;
-            this.post({
-              type: "usage",
-              tokens: `${formatTokens(usage.totalInput)} → ${formatTokens(usage.output)}`,
-              cost: formatCost(usage.cost(p)),
-              chatCost: formatCost(this.chatUsage.cost(p)),
-              context: formatTokens(usage.lastContext),
-              contextWarning: usage.lastContext > CONTEXT_WARNING_TOKENS,
-            });
+            postUsage();
             break;
-          }
           case "error":
             this.post({ type: "error", message: ev.message });
             break;
