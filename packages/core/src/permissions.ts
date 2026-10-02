@@ -1,3 +1,5 @@
+import { isSecretFile } from "./tools/workspace";
+
 export type ApprovalRequest =
   | {
       kind: "write";
@@ -61,6 +63,12 @@ const DANGEROUS_COMMANDS: Array<[RegExp, string]> = [
     "Команда git, которая стирает несохранённые в git изменения или ветки. Откат dimosi их не вернёт.",
   ],
   [/\b(curl|wget)\b[^;&|\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b/, "Скачать из интернета и сразу выполнить: неизвестно, что за код запустится."],
+  [
+    new RegExp(String.raw`\b(curl|wget)\b${ARGS}\s(-d|-F|-T|--data[a-z-]*|--form[a-z-]*|--upload-file|--post-(file|data))(\s|=|$)`),
+    "Отправка данных в интернет: так файлы и пароли могут уйти на чужой сервер.",
+  ],
+  [/\b(scp|sftp|nc|ncat|netcat)\b/, "Передача файлов или данных на другой компьютер."],
+  [new RegExp(String.raw`\brsync\b${ARGS}\s\S+:`), "Передача файлов на другой компьютер (rsync)."],
   [/\b(npm|pnpm|yarn)\s+(publish|unpublish)\b/, "Публикация пакета в интернет: отменить нельзя."],
   [/\bsecurity\s+(find|dump|export|delete)/, "Доступ к Связке ключей macOS: там хранятся пароли и ключи."],
   [/\bosascript\b/, "Управление другими программами Mac через AppleScript."],
@@ -76,6 +84,10 @@ const DANGEROUS_COMMANDS: Array<[RegExp, string]> = [
  * a command that slips through.
  */
 export function dangerousCommandWarning(command: string): string | undefined {
+  const secret = command.split(/[\s'"`=<>()|;&]+/).find((word) => word && isSecretFile(word));
+  if (secret) {
+    return `Команда обращается к файлу ${secret}, где могут быть пароли и ключи. Его содержимое может уйти сервису ИИ или в интернет.`;
+  }
   return DANGEROUS_COMMANDS.find(([re]) => re.test(command))?.[1];
 }
 
