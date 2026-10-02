@@ -128,6 +128,10 @@ export function sandboxProfile(paths: SandboxPaths): string {
     `(deny file-write* (subpath ${q(path.join(root, ".vscode"))}))`,
     // The agent's own rules: a command must not give it new instructions.
     `(deny file-write* (subpath ${q(path.join(root, ".dimosi"))}))`,
+    // Also run later without the sandbox: Husky git hooks, direnv, dev
+    // containers, GitHub Actions. package.json is not here: `npm install <pkg>`
+    // must write it; writes by the agent itself are always asked about.
+    `(deny file-write* ${sub([".husky", ".devcontainer", ".github/workflows"].map((p) => path.join(root, p)))} (regex #"^${regexQuote(root)}/(.*/)?\\.envrc$"))`,
     // Programs started through macOS itself run outside the sandbox: `open`
     // (Launch Services) and Apple Events to other apps (Terminal, Finder...).
     `(deny mach-lookup (global-name-prefix "com.apple.coreservices."))`,

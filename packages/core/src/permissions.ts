@@ -32,7 +32,8 @@ export type ApprovalMode = "ask" | "auto";
 
 /**
  * Files whose content runs later without another question: VS Code tasks and
- * settings, CI workflows, npm scripts, the agent's own rules. Writing them always needs the user's
+ * settings, CI workflows, npm scripts, git hooks, direnv, dev containers,
+ * the agent's own rules. Writing them always needs the user's
  * explicit yes, even in "no approvals" mode or after "Always".
  */
 export function protectedPathWarning(relPath: string): string | undefined {
@@ -43,6 +44,18 @@ export function protectedPathWarning(relPath: string): string | undefined {
   const github = parts.indexOf(".github");
   if (github >= 0 && parts[github + 1] === "workflows") {
     return "Это сценарий GitHub Actions. Он выполняется на серверах GitHub при каждой отправке кода и имеет доступ к секретам репозитория.";
+  }
+  if (parts.includes(".husky")) {
+    return "Это git-хук Husky: он запускается сам при каждом git commit, уже без песочницы.";
+  }
+  if (parts.at(-1) === ".envrc") {
+    return "Это .envrc: программа direnv выполняет его сама, когда вы заходите в папку в терминале.";
+  }
+  if (parts.includes(".devcontainer")) {
+    return "Это настройки Dev Container: команды из них VS Code выполняет сам при открытии проекта в контейнере.";
+  }
+  if (parts.at(-1)!.endsWith(".code-workspace")) {
+    return "Это файл рабочей области VS Code: задачи и настройки из него могут сами запускать команды.";
   }
   if (parts[0] === ".dimosi" || parts.at(-1) === "agents.md" || parts.at(-1) === "claude.md") {
     return "Это файл правил: его текст становится указаниями для агента в каждой следующей задаче.";

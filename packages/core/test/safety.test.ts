@@ -216,6 +216,24 @@ describe("git internals", () => {
   });
 });
 
+describe("other files that run code outside the sandbox later", () => {
+  it.each([".husky/pre-commit", ".envrc", "sub/.envrc", ".devcontainer/devcontainer.json", "app.code-workspace", "my.CODE-WORKSPACE"])(
+    "writing %s is always asked about with a warning",
+    async (p) => {
+      decision = "allow_always";
+      const g = gate("auto");
+      expect(await call("write_file", { path: p, content: "x" }, g)).toMatchObject({ isError: false });
+      expect(requests).toHaveLength(1);
+      expect(requests[0].kind === "write" && requests[0].warning).toBeTruthy();
+    },
+  );
+
+  it("a project .npmrc is not written at all: it is treated as a file with secrets", async () => {
+    const r = await call("write_file", { path: ".npmrc", content: "script-shell=./evil.sh" });
+    expect(r).toMatchObject({ isError: true, content: expect.stringMatching(/secrets/) });
+  });
+});
+
 describe("the agent's own rules", () => {
   it.each([".dimosi/rules.md", ".DIMOSI/rules/a.md", ".dimosi/rules", "AGENTS.md", "CLAUDE.md", "docs/claude.md"])(
     "writing %s is always asked about with a warning",
@@ -367,6 +385,15 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
     // The program would start a moment later; give it time.
     for (let i = 0; i < 30 && !existsSync(probe); i++) await new Promise((r) => setTimeout(r, 100));
     expect(existsSync(probe), open.out).toBe(false);
+  });
+
+  it("blocks .husky, .envrc, .devcontainer and .github/workflows, but not package.json (npm install needs it)", () => {
+    for (const f of [".husky/pre-commit", ".envrc", "sub/.envrc", ".devcontainer/devcontainer.json", ".github/workflows/ci.yml"]) {
+      const r = run(`mkdir -p "$(dirname ${f})" 2>/dev/null; echo x >> ${f}`);
+      expect(r.code, f).not.toBe(0);
+      expect(existsSync(path.join(project, f)), f).toBe(false);
+    }
+    expect(run(`echo '{}' > package.json && mkdir -p .github && echo x > .github/README.md`).code).toBe(0);
   });
 
   it("blocks writing the agent's own rules in .dimosi", () => {
