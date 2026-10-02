@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
-import type { FileChange } from "@dimosi/core";
+import { diskFiles, type FileAccess, type FileChange } from "@dimosi/core";
 import { countChanges } from "./diff";
 import type { ChangedFileView } from "./protocol";
 
@@ -29,6 +29,9 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 /** Remembers what the agent changed during one task so it can be undone. */
 export class ChangeTracker {
   private files = new Map<string, TrackedFile>();
+
+  /** `io` reads and writes like the agent did (in VS Code: through open editors). */
+  constructor(private io: FileAccess = diskFiles) {}
 
   record(change: FileChange): void {
     const existing = this.files.get(change.relPath);
@@ -84,19 +87,19 @@ export class ChangeTracker {
       return { ok: false, reason: "error", message: "откат недоступен: исходная версия файла не сохранилась (чат был слишком большим)." };
     }
     try {
-      let onDisk: string | null;
+      let current: string | null;
       try {
-        onDisk = await fs.readFile(f.path, "utf8");
+        current = await this.io.readText(f.path);
       } catch {
-        onDisk = null;
+        current = null;
       }
-      if (!force && (onDisk === null || hash(onDisk) !== f.currentHash)) {
+      if (!force && (current === null || hash(current) !== f.currentHash)) {
         return { ok: false, reason: "modified_since", message: `${relPath} изменён после агента.` };
       }
       if (f.original === null) {
-        if (onDisk !== null) await fs.unlink(f.path);
+        await fs.rm(f.path, { force: true });
       } else {
-        await fs.writeFile(f.path, f.original, "utf8");
+        await this.io.writeText(f.path, f.original);
       }
       f.reverted = true;
       return { ok: true };
@@ -109,8 +112,8 @@ export class ChangeTracker {
     return { files: [...this.files.entries()].map(([relPath, f]) => ({ relPath, ...f })) };
   }
 
-  static fromJSON(data: SavedTracker): ChangeTracker {
-    const t = new ChangeTracker();
+  static fromJSON(data: SavedTracker, io?: FileAccess): ChangeTracker {
+    const t = new ChangeTracker(io);
     for (const { relPath, ...f } of data.files) t.files.set(relPath, { ...f });
     return t;
   }

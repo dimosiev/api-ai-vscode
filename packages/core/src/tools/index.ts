@@ -23,9 +23,52 @@ export interface PlanItem {
   status: PlanStatus;
 }
 
+/**
+ * How tools read and write the files they change. The CLI works with the
+ * disk; VS Code goes through open editors, so unsaved edits are seen and
+ * the agent's change can be undone with Ctrl+Z.
+ */
+export interface FileAccess {
+  /** Current text; null if the file does not exist. Throws NotUtf8Error for anything that is not UTF-8. */
+  readText(abs: string): Promise<string | null>;
+  /** Creates or replaces the file (parent folders included). Returns the text that actually landed. */
+  writeText(abs: string, text: string): Promise<string>;
+}
+
+/** The file is binary or uses an old encoding; changing it would corrupt it. */
+export class NotUtf8Error extends Error {
+  constructor() {
+    super("not UTF-8");
+  }
+}
+
+export const diskFiles: FileAccess = {
+  async readText(abs) {
+    let bytes: Buffer;
+    try {
+      bytes = await fs.readFile(abs);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw e;
+    }
+    try {
+      return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    } catch {
+      throw new NotUtf8Error();
+    }
+  },
+  async writeText(abs, text) {
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    await fs.writeFile(abs, text, "utf8");
+    return text;
+  },
+};
+
 export interface ToolContext {
   root: string;
   gate: PermissionGate;
+  /** Defaults to diskFiles. */
+  files?: FileAccess;
   signal?: AbortSignal;
   onFileChange?: (change: FileChange) => void;
   onPlan?: (items: PlanItem[]) => void;
@@ -188,18 +231,12 @@ function num(input: Input, key: string, fallback: number): number {
 }
 
 /** Reads a file the agent is about to change. Refuses anything that is not valid UTF-8. */
-async function readTextOrNull(abs: string, relPath: string): Promise<string | null> {
-  let bytes: Buffer;
+async function readTextOrNull(files: FileAccess, abs: string, relPath: string): Promise<string | null> {
   try {
-    bytes = await fs.readFile(abs);
+    return await files.readText(abs);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw e;
-  }
-  try {
+    if (!(e instanceof NotUtf8Error)) throw e;
     // Writing a non-UTF-8 file back as UTF-8 would silently destroy its text.
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-  } catch {
     throw new Error(
       `${relPath} is not a UTF-8 text file (it may be binary or use an old encoding such as windows-1251). ` +
         "It is not changed to avoid corrupting it. Tell the user it has to be converted to UTF-8 first.",
@@ -225,13 +262,20 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     return paths.join("\n") + (truncated ? "\n... (truncated at 500 entries)" : "");
   },
 
-  async read_file(input, { root }) {
+  async read_file(input, { root, files = diskFiles }) {
     const abs = resolveInRoot(root, str(input, "path"));
     const { size } = await fs.stat(abs);
     if (size > MAX_READ_BYTES) {
       throw new Error(`File is too large to read (${Math.round(size / 1024 / 1024)} MB). Use search to find the relevant part.`);
     }
-    const text = await fs.readFile(abs, "utf8");
+    // The model must see what the user sees (in VS Code: unsaved edits), or its next edit won't match.
+    let text: string;
+    try {
+      text = (await files.readText(abs)) ?? "";
+    } catch (e) {
+      if (!(e instanceof NotUtf8Error)) throw e;
+      text = await fs.readFile(abs, "utf8");
+    }
     if (text.includes("\u0000")) throw new Error("File looks binary; not reading it.");
     const lines = text.split("\n");
     const offset = Math.max(1, num(input, "offset", 1));
@@ -280,27 +324,28 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     return `Plan updated (${done}/${items.length} done).`;
   },
 
-  async write_file(input, { root, gate, onFileChange }) {
+  async write_file(input, { root, gate, files = diskFiles, onFileChange }) {
     const abs = resolveInRoot(root, str(input, "path"));
     assertWritable(root, abs);
     const content = str(input, "content");
-    const oldContent = await readTextOrNull(abs, toRel(root, abs));
+    const oldContent = await readTextOrNull(files, abs, toRel(root, abs));
     if (oldContent === content) return "File already has this content; nothing changed.";
     const ok = await gate.check({ kind: "write", path: abs, relPath: toRel(root, abs), oldContent, newContent: content });
     if (!ok) throw new Error("The user rejected this change.");
-    await fs.mkdir(path.dirname(abs), { recursive: true });
-    await fs.writeFile(abs, content, "utf8");
-    onFileChange?.({ path: abs, relPath: toRel(root, abs), oldContent, newContent: content });
+    // The path is checked again: a link could have been swapped while the user decided.
+    resolveInRoot(root, str(input, "path"));
+    const written = await files.writeText(abs, content);
+    onFileChange?.({ path: abs, relPath: toRel(root, abs), oldContent, newContent: written });
     return `${oldContent === null ? "Created" : "Updated"} ${toRel(root, abs)} (${countLines(content)} lines).`;
   },
 
-  async edit_file(input, { root, gate, onFileChange }) {
+  async edit_file(input, { root, gate, files = diskFiles, onFileChange }) {
     const abs = resolveInRoot(root, str(input, "path"));
     assertWritable(root, abs);
     let oldString = str(input, "old_string");
     let newString = str(input, "new_string");
     if (!oldString) throw new Error("old_string must not be empty. Use write_file to create files.");
-    const oldContent = await readTextOrNull(abs, toRel(root, abs));
+    const oldContent = await readTextOrNull(files, abs, toRel(root, abs));
     if (oldContent === null) throw new Error(`File ${toRel(root, abs)} does not exist.`);
     let count = oldContent.split(oldString).length - 1;
     if (count === 0 && oldContent.includes("\r\n")) {
@@ -322,8 +367,9 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
       : oldContent.replace(oldString, () => newString);
     const ok = await gate.check({ kind: "write", path: abs, relPath: toRel(root, abs), oldContent, newContent });
     if (!ok) throw new Error("The user rejected this change.");
-    await fs.writeFile(abs, newContent, "utf8");
-    onFileChange?.({ path: abs, relPath: toRel(root, abs), oldContent, newContent });
+    resolveInRoot(root, str(input, "path"));
+    const written = await files.writeText(abs, newContent);
+    onFileChange?.({ path: abs, relPath: toRel(root, abs), oldContent, newContent: written });
     return `Edited ${toRel(root, abs)} (${input.replace_all === true ? count : 1} replacement${count > 1 && input.replace_all === true ? "s" : ""}).`;
   },
 

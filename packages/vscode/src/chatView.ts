@@ -17,6 +17,7 @@ import {
 import { WebviewApproval } from "./approval";
 import { fileAttachment, imageAttachment, type Attachment } from "./attachments";
 import { ChangeTracker } from "./changes";
+import { editorFiles } from "./editorFiles";
 import {
   CHAT_FORMAT,
   deleteChatFile,
@@ -344,7 +345,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     // Keep the conversation unless the folder changed.
     if (!this.agent || this.agent.root !== root) {
-      this.agent = new Agent({ provider, model: settings.model, root, approval: this.approval });
+      this.agent = new Agent({ provider, model: settings.model, root, approval: this.approval, files: editorFiles });
       if (this.restoredMessages) this.agent.restore(this.restoredMessages);
       this.restoredMessages = undefined;
     }
@@ -364,7 +365,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     ];
 
     const turn = ++this.turn;
-    const tracker = new ChangeTracker();
+    const tracker = new ChangeTracker(editorFiles);
     this.trackers.set(turn, tracker);
     const usage = new UsageTotals();
     // The price list may load slowly; never make the agent wait for it.
@@ -469,7 +470,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const saved = await readChatFile(file, root);
     if (!saved) return;
     this.turn = Math.max(this.turn, saved.turn);
-    for (const t of saved.trackers) this.trackers.set(t.turn, ChangeTracker.fromJSON(t));
+    for (const t of saved.trackers) this.trackers.set(t.turn, ChangeTracker.fromJSON(t, editorFiles));
     this.restoredMessages = saved.messages;
     this.transcript.items = restoredTranscript(saved, this.trackers);
   }

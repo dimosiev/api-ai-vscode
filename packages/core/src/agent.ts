@@ -2,7 +2,7 @@ import { PermissionGate, type ApprovalHandler, type ApprovalMode } from "./permi
 import { buildSystemPrompt, snapshotLayout } from "./prompt";
 import { loadRules, type RuleSource } from "./rules";
 import { IncompleteResponseError } from "./providers/openai";
-import { executeTool, TOOL_DEFINITIONS, type FileChange, type PlanItem } from "./tools";
+import { executeTool, TOOL_DEFINITIONS, type FileAccess, type FileChange, type PlanItem } from "./tools";
 import type {
   ImagePart,
   Message,
@@ -28,6 +28,8 @@ export interface AgentOptions {
   contextWindow?: number;
   /** Override for tests; defaults to ~/.config/dimosi/rules.md. */
   globalRulesPath?: string;
+  /** How tools read and write files; defaults to the disk. */
+  files?: FileAccess;
 }
 
 export type AgentEvent =
@@ -61,6 +63,7 @@ export class Agent {
   messages: Message[] = [];
   private maxTokens?: number;
   private globalRulesPath?: string;
+  private files?: FileAccess;
   private layout?: string;
   private running = false;
 
@@ -72,6 +75,7 @@ export class Agent {
     this.contextWindow = opts.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     this.maxTokens = opts.maxTokens;
     this.globalRulesPath = opts.globalRulesPath;
+    this.files = opts.files;
     this.gate = new PermissionGate(opts.approval, opts.mode ?? "ask");
   }
 
@@ -155,6 +159,7 @@ export class Agent {
             : await executeTool(call, {
                 root: this.root,
                 gate: this.gate,
+                files: this.files,
                 signal,
                 onFileChange: (change) => pending.push({ type: "file_changed", change }),
                 onPlan: (items) => pending.push({ type: "plan", items }),
