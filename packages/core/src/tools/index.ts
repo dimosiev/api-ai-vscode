@@ -247,6 +247,28 @@ async function readTextOrNull(files: FileAccess, abs: string, relPath: string): 
   }
 }
 
+/**
+ * Files with keys and passwords are never read or changed: whatever the agent
+ * sees goes to the AI service, and even "not found" or "already has this
+ * content" tells something about the text. Checked through links too.
+ */
+function assertNotSecret(root: string, abs: string, action: string): void {
+  let real = abs;
+  try {
+    real = path.join(realpathSync(root), path.relative(realpathSync(root), realpathSync(abs)));
+  } catch {
+    // does not exist yet
+  }
+  if (isSecretFile(toRel(root, abs)) || isSecretFile(real)) {
+    throw new Error(
+      `${toRel(root, abs)} may contain secrets (keys, passwords), so it is not ${action}: its text would be sent to the AI service. ` +
+        (action === "read"
+          ? "If something from it is needed, ask the user (for example, the names of the settings, not their values)."
+          : "Tell the user what to change there; they can edit it themselves."),
+    );
+  }
+}
+
 const inGit = (rel: string) => rel.toLowerCase().split(/[\\/]/).includes(".git");
 
 /**
@@ -277,12 +299,7 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
 
   async read_file(input, { root, files = diskFiles }) {
     const abs = resolveInRoot(root, str(input, "path"));
-    if (isSecretFile(toRel(root, abs))) {
-      throw new Error(
-        `${toRel(root, abs)} may contain secrets (keys, passwords), so it is not read: its text would be sent to the AI service. ` +
-          "If something from it is needed, ask the user (for example, the names of the settings, not their values).",
-      );
-    }
+    assertNotSecret(root, abs, "read");
     const { size } = await fs.stat(abs);
     if (size > MAX_READ_BYTES) {
       throw new Error(`File is too large to read (${Math.round(size / 1024 / 1024)} MB). Use search to find the relevant part.`);
@@ -346,6 +363,7 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
   async write_file(input, { root, gate, files = diskFiles, onFileChange }) {
     const abs = resolveInRoot(root, str(input, "path"));
     assertWritable(root, abs);
+    assertNotSecret(root, abs, "changed");
     const content = str(input, "content");
     const oldContent = await readTextOrNull(files, abs, toRel(root, abs));
     if (oldContent === content) return "File already has this content; nothing changed.";
@@ -361,6 +379,7 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
   async edit_file(input, { root, gate, files = diskFiles, onFileChange }) {
     const abs = resolveInRoot(root, str(input, "path"));
     assertWritable(root, abs);
+    assertNotSecret(root, abs, "changed");
     let oldString = str(input, "old_string");
     let newString = str(input, "new_string");
     if (!oldString) throw new Error("old_string must not be empty. Use write_file to create files.");

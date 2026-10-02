@@ -149,6 +149,33 @@ describe("files with secrets", () => {
     expect(r.content).toMatch(/secrets/);
   });
 
+  it("a link to a secret file is not read or searched", async () => {
+    await fs.writeFile(path.join(root, ".env"), "API_KEY=sk-very-secret\n");
+    await fs.symlink(path.join(root, ".env"), path.join(root, "notes.txt"));
+    const r = await call("read_file", { path: "notes.txt" });
+    expect(r.isError).toBe(true);
+    expect(r.content).not.toContain("sk-very-secret");
+    expect((await call("search", { pattern: "very-secret" })).content).toBe("No matches.");
+  });
+
+  it.each([
+    ["edit_file", { path: ".env", old_string: "API_KEY=sk-", new_string: "x" }],
+    ["edit_file", { path: ".env", old_string: "nothing like this", new_string: "x" }],
+    ["edit_file", { path: ".env", old_string: "=", new_string: "x" }],
+    ["edit_file", { path: "notes.txt", old_string: "API_KEY", new_string: "x" }],
+    ["write_file", { path: ".env", content: "API_KEY=sk-very-secret\nDB=1\n" }],
+    ["write_file", { path: "notes.txt", content: "x" }],
+  ] as const)("%s %o is refused without hints about the content", async (name, input) => {
+    await fs.writeFile(path.join(root, ".env"), "API_KEY=sk-very-secret\nDB=1\n");
+    await fs.symlink(path.join(root, ".env"), path.join(root, "notes.txt"));
+    const r = await call(name, input);
+    expect(r.isError).toBe(true);
+    expect(r.content).toMatch(/secrets/);
+    expect(r.content).not.toMatch(/not found|occurs|already has/);
+    expect(requests).toHaveLength(0);
+    expect(readFileSync(path.join(root, ".env"), "utf8")).toBe("API_KEY=sk-very-secret\nDB=1\n");
+  });
+
   it("search does not look inside secret files", async () => {
     await fs.writeFile(path.join(root, ".env.local"), "TOKEN=findme\n");
     await fs.writeFile(path.join(root, "a.ts"), "// findme\n");
