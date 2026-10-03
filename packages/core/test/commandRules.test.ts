@@ -229,14 +229,17 @@ describe("plan mode", () => {
     expect(requests).toEqual([]);
   });
 
-  it("commands the user allowed with Always still run, to investigate; their chains and dangerous forms do not", async () => {
+  it("commands the user allowed with Always do not run either: plan mode changes nothing", async () => {
     const g = gate();
     await asksAfterAlways("git status", [], g);
-    await asksAfterAlways("git checkout main", [], g);
+    await asksAfterAlways("npm install", [], g);
     g.planOnly = true;
+    await expect(run(g, "git status --short")).rejects.toThrow(/Plan mode is on/);
+    await expect(run(g, "npm install left-pad")).rejects.toThrow(/Plan mode is on/);
+    expect(requests).toEqual([]);
+    // Switched off, the remembered commands run without a question again.
+    g.planOnly = false;
     expect(await run(g, "git status --short")).toBe(true);
-    await expect(run(g, "git status && rm x")).rejects.toThrow(/Plan mode is on/);
-    await expect(run(g, "git checkout -- .")).rejects.toThrow(/Plan mode is on/);
     expect(requests).toEqual([]);
   });
 

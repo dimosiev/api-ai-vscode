@@ -174,10 +174,10 @@ export class PermissionGate {
   private sessionRules: CommandRule[] = [];
   private sessionSites: string[] = [];
   /**
-   * "Plan first": nothing is changed and the user is not asked. Writes are
-   * refused; so are commands, except the ones the user allowed with "Always"
-   * (`git status`, `npm test`...), which help to investigate. Done here and
-   * not by hiding tools: the tool list must stay the same for the prompt cache.
+   * "Plan first": nothing is changed and the user is not asked. Every write
+   * and every command is refused, also the commands allowed with "Always":
+   * the gate can't tell `git status` from `npm install`. Done here and not
+   * by hiding tools: the tool list must stay the same for the prompt cache.
    */
   planOnly = false;
 
@@ -192,10 +192,7 @@ export class PermissionGate {
     const warning = [req.warning, hiddenCharsWarning(req), own].filter(Boolean).join(" ") || undefined;
     if (req.kind === "fetch") return this.checkSite(req, warning);
     const remembered = () => req.kind === "command" && [...(this.rules?.list() ?? []), ...this.sessionRules].some((rule) => ruleMatches(rule, req.command));
-    if (this.planOnly) {
-      if (warning || !remembered()) throw new Error(PLAN_MODE_REFUSAL);
-      return true;
-    }
+    if (this.planOnly) throw new Error(PLAN_MODE_REFUSAL);
     if (warning) return (await this.handler.approve({ ...req, warning })) !== "deny";
     if (this.mode === "auto") return true;
     if (req.kind === "write") {

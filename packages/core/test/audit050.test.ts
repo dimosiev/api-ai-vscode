@@ -214,8 +214,8 @@ describe("item 9 of the audit: what changes at the start of a request within one
   });
 });
 
-describe("Р-1 (waits for the owner's decision): plan mode and remembered commands", () => {
-  bug("a remembered command that changes files does not run in plan mode", async () => {
+describe("Р-1: plan mode and remembered commands", () => {
+  it("a remembered command that changes files does not run in plan mode", async () => {
     const gate = new PermissionGate({ approve: async () => "allow_always" });
     await gate.check({ kind: "command", command: "npm install", cwd: "/" });
     gate.planOnly = true;
