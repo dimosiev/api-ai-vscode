@@ -130,12 +130,65 @@ export class TextDocument {
     this.undoStack.push(this.text);
     this.text = this.text.slice(0, this.offsetAt(range.start)) + text + this.text.slice(this.offsetAt(range.end));
     this.isDirty = true;
+    recheck(this.uri);
   }
   async save(): Promise<boolean> {
     writeFileSync(this.uri.fsPath, this.text);
     this.isDirty = false;
     return true;
   }
+}
+
+export class TabInputText {
+  constructor(readonly uri: Uri) {}
+}
+
+export interface Tab {
+  input: unknown;
+  isActive: boolean;
+  isPreview: boolean;
+  isDirty: boolean;
+}
+
+const tabOf = (uri: Uri) => window.tabGroups.all[0].tabs.find((t) => t.input instanceof TabInputText && t.input.uri.toString() === uri.toString());
+
+/**
+ * The language service of `stub.check`, behaving as measured in VS Code 1.140
+ * (test/real): it looks at a file only while it is a loaded document that
+ * has a tab, answers a moment after the file changes, and says nothing when
+ * its findings stay the same.
+ */
+function recheck(uri: Uri): void {
+  setTimeout(() => {
+    const doc = workspace.textDocuments.find((d) => !d.isClosed && d.uri.toString() === uri.toString());
+    if (!stub.check || !doc || !tabOf(uri)) return;
+    const found = stub.check(doc);
+    if (JSON.stringify(found) !== JSON.stringify(stub.diagnostics.get(uri.toString()) ?? [])) stub.report(uri, found);
+  }, stub.checkDelayMs);
+}
+
+/** "vscode.open": a preview tab replaces the previous preview tab; in the background it does not come to the front. */
+function openTab(uri: Uri, options: { background?: boolean; preview?: boolean } = {}): void {
+  const tabs = window.tabGroups.all[0].tabs;
+  if (tabOf(uri)) return;
+  const front = !options.background || !tabs.some((t) => t.isActive);
+  if (options.preview) {
+    const old = tabs.findIndex((t) => t.isPreview);
+    if (old >= 0) closeTab(tabs[old]);
+  }
+  if (front) for (const t of tabs) t.isActive = false;
+  tabs.push({ input: new TabInputText(uri), isActive: front || !tabs.some((t) => t.isActive), isPreview: Boolean(options.preview), isDirty: false });
+  recheck(uri);
+}
+
+function closeTab(tab: Tab): void {
+  const tabs = window.tabGroups.all[0].tabs;
+  const at = tabs.indexOf(tab);
+  if (at < 0) return;
+  tabs.splice(at, 1);
+  if (tab.isActive && tabs.length) tabs[tabs.length - 1].isActive = true;
+  // A file without a tab is not checked any more: its errors go away.
+  if (tab.input instanceof TabInputText && stub.diagnostics.get(tab.input.uri.toString())?.length) stub.report(tab.input.uri, []);
 }
 
 export interface Diagnostic {
@@ -164,6 +217,20 @@ export const stub = {
   get diagnosticListeners(): number {
     return diagnosticsChanged.count;
   },
+  /** A language service: what it finds in a document (see `recheck`). */
+  check: undefined as ((doc: TextDocument) => Diagnostic[]) | undefined,
+  /** How long the language service thinks. */
+  checkDelayMs: 5,
+  /** The user opens a file in a normal tab and looks at it. */
+  async showFile(uri: Uri): Promise<TextDocument> {
+    const doc = await workspace.openTextDocument(uri);
+    openTab(uri);
+    return doc;
+  },
+  /** Tabs as "name", "name*" (in front), "name(p)" (preview). */
+  get tabs(): string[] {
+    return window.tabGroups.all[0].tabs.map((t) => `${t.input instanceof TabInputText ? nodePath.basename(t.input.uri.fsPath) : "?"}${t.isActive ? "*" : ""}${t.isPreview ? "(p)" : ""}`);
+  },
   /** What the user picks in a quick pick list. */
   pick: (_items: Array<{ label: string }>): { label: string } | undefined => undefined,
   /** What the user chooses in an "open" dialog. */
@@ -183,6 +250,9 @@ export const stub = {
     this.answer = () => undefined;
     this.pick = () => undefined;
     this.diagnostics.clear();
+    this.check = undefined;
+    this.checkDelayMs = 5;
+    window.tabGroups.all[0].tabs = [];
     diagnosticsChanged.dispose();
     this.openDialog = () => undefined;
     this.messages = [];
@@ -226,6 +296,7 @@ export const workspace = {
     if (open) return open;
     const doc = new TextDocument(uri, await fs.readFile(uri.fsPath, "utf8"));
     this.textDocuments.push(doc);
+    recheck(uri);
     return doc;
   },
   onDidChangeConfiguration: () => disposable(),
@@ -258,12 +329,19 @@ export const window = {
     const write = (level: string) => (message: string) => void stub.output.push(`[${level}] ${message}`);
     return { info: write("info"), warn: write("warn"), error: write("error"), dispose() {} };
   },
-  tabGroups: { all: [] as Array<{ tabs: unknown[] }>, close: async () => true },
+  tabGroups: {
+    all: [{ tabs: [] as Tab[] }],
+    close: async (tab: Tab | Tab[]) => {
+      for (const t of Array.isArray(tab) ? tab : [tab]) closeTab(t);
+      return true;
+    },
+  },
 };
 
 export const commands = {
   async executeCommand(id: string, ...args: unknown[]): Promise<unknown> {
     stub.executed.push({ id, args });
+    if (id === "vscode.open") return openTab(args[0] as Uri, args[1] as { background?: boolean; preview?: boolean });
     return stub.commands.get(id)?.(...args);
   },
   registerCommand(id: string, fn: (...args: unknown[]) => unknown) {

@@ -1,11 +1,11 @@
-import { existsSync, mkdtempSync, promises as fs, readFileSync } from "node:fs";
+import { mkdtempSync, promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { executeTool, PermissionGate } from "@dimosi/core";
 import { editorFiles } from "../src/editorFiles";
-import { EditorProblems } from "../src/problems";
-import { DiagnosticSeverity, Position, Range, stub, Uri, type Diagnostic } from "./e2e/vscode";
+import { EditorProblems, type ProblemTimings } from "../src/problems";
+import { DiagnosticSeverity, Position, Range, stub, Uri, type Diagnostic, type TextDocument } from "./e2e/vscode";
 
 let root: string;
 let problems: EditorProblems;
@@ -14,135 +14,164 @@ const at = (line: number) => new Range(new Position(line - 1, 0), new Position(l
 const error = (line: number, message: string, extra: Partial<Diagnostic> = {}): Diagnostic => ({ range: at(line), message, severity: DiagnosticSeverity.Error, ...extra });
 const uri = (rel: string) => Uri.file(path.join(root, rel));
 
-const run = (name: string, input: Record<string, unknown>, signal?: AbortSignal, decision: "allow" | "deny" = "allow") =>
-  executeTool(
-    { type: "tool_call", id: "1", name, input },
-    { root, gate: new PermissionGate({ approve: async () => decision }), files: editorFiles, problems: problems.watch, signal },
+/** A checker for tests: every line with "BAD" is an error, every line with "hm" a warning. */
+const check = (doc: TextDocument): Diagnostic[] =>
+  doc.getText().split("\n").flatMap((text, i) =>
+    text.includes("BAD")
+      ? [error(i + 1, `Cannot find name '${text.trim()}'.`, { source: "ts", code: 2304 })]
+      : text.includes("hm")
+        ? [{ range: at(i + 1), message: "Unused.", severity: DiagnosticSeverity.Warning }]
+        : [],
   );
 
-/** A language service: answers a little after the file changes on disk, like the real ones. */
-function languageService(rel: string, ...answers: Diagnostic[][]): { stop(): void } {
-  const file = path.join(root, rel);
-  let last = existsSync(file) ? readFileSync(file, "utf8") : undefined;
-  const timer = setInterval(async () => {
-    const text = await fs.readFile(file, "utf8").catch(() => undefined);
-    if (text === undefined || text === last || !answers.length) return;
-    last = text;
-    stub.report(uri(rel), answers.shift()!);
-  }, 5);
-  return { stop: () => clearInterval(timer) };
-}
+const run = (name: string, input: Record<string, unknown>, opts: { signal?: AbortSignal; decision?: "allow" | "deny"; watcher?: EditorProblems } = {}) =>
+  executeTool(
+    { type: "tool_call", id: "1", name, input },
+    { root, gate: new PermissionGate({ approve: async () => opts.decision ?? "allow" }), files: editorFiles, problems: (opts.watcher ?? problems).watch, signal: opts.signal },
+  );
 
-let service: { stop(): void } | undefined;
+/** Waits so long that a test passes because a report arrived, never because time ran out. */
+const PATIENT: ProblemTimings = { knownMs: 10_000, unknownMs: 10_000, quietMs: 40, minMs: 10_000, maxMs: 10_000 };
+/** For files that stay clean: nothing arrives, so the wait must be short. */
+const BRISK: Partial<ProblemTimings> = { knownMs: 60, unknownMs: 60, minMs: 60 };
+const opened = () => stub.executed.filter((e) => e.id === "vscode.open").length;
 
 beforeEach(() => {
   stub.reset();
+  stub.check = check;
   root = mkdtempSync(path.join(os.tmpdir(), "dimosi-problems-"));
-  // Long waits: a test passes because a report arrived, never because time ran out.
-  problems = new EditorProblems({ firstMs: 10_000, unknownMs: 10_000, quietMs: 50, totalMs: 20_000 });
+  problems = new EditorProblems(PATIENT);
 });
 
-afterEach(() => {
-  service?.stop();
-  service = undefined;
-  problems.dispose();
-});
+afterEach(() => problems.dispose());
 
 describe("the editor's errors after the agent changes a file", () => {
   it("are added to the result of write_file: errors only, with line and source", async () => {
-    service = languageService("a.ts", [
-      error(2, "Cannot find name 'x'.", { source: "ts", code: 2304 }),
-      { range: at(1), message: "'y' is declared but never used.", severity: DiagnosticSeverity.Warning },
-      error(3, "Unexpected   token.\nDid you mean `}`?", { source: "eslint", code: { value: "parse" } }),
-    ]);
-    const r = await run("write_file", { path: "a.ts", content: "const y = 1;\nx;\n}\n" });
+    const r = await run("write_file", { path: "a.ts", content: "const y = 1; // hm\nBAD;\n  BAD2\n" });
     expect(r.isError).toBe(false);
     expect(r.content).toBe(
       "Created a.ts (3 lines).\n\n" +
         "The editor now reports 2 errors in this file (some may have been there before your change):\n" +
-        "- line 2: Cannot find name 'x'. (ts 2304)\n" +
-        "- line 3: Unexpected token. Did you mean `}`? (eslint parse)",
+        "- line 2: Cannot find name 'BAD;'. (ts 2304)\n" +
+        "- line 3: Cannot find name 'BAD2'. (ts 2304)",
     );
   });
 
-  it("are added to the result of edit_file", async () => {
+  it("the file is put in a background tab for the check and the tab is closed again; the user's tab stays in front", async () => {
+    await fs.writeFile(path.join(root, "mine.ts"), "ok\n");
+    await stub.showFile(uri("mine.ts"));
+    const r = await run("write_file", { path: "a.ts", content: "BAD\n" });
+    expect(r.content).toContain("- line 1: Cannot find name 'BAD'.");
+    expect(stub.executed.find((e) => e.id === "vscode.open")?.args[1]).toEqual({ background: true, preview: true, preserveFocus: true });
+    expect(stub.tabs).toEqual(["mine.ts*"]);
+  });
+
+  it("a file the user already has in a tab is checked in place: no new tab, nothing closed", async () => {
     await fs.writeFile(path.join(root, "a.ts"), "const a = 1;\n");
-    service = languageService("a.ts", [error(1, "Type 'string' is not assignable to type 'number'.")]);
-    await run("read_file", { path: "a.ts" });
-    const r = await run("edit_file", { path: "a.ts", old_string: "= 1", new_string: "= 'one' as number" });
+    await fs.writeFile(path.join(root, "other.ts"), "ok\n");
+    await stub.showFile(uri("a.ts"));
+    await stub.showFile(uri("other.ts"));
+    const r = await run("edit_file", { path: "a.ts", old_string: "= 1", new_string: "= BAD" });
     expect(r.content).toContain("Edited a.ts (1 replacement).");
     expect(r.content).toContain("The editor now reports 1 error in this file");
-    expect(r.content).toContain("- line 1: Type 'string' is not assignable to type 'number'.");
+    expect(opened()).toBe(0);
+    expect(stub.tabs).toEqual(["a.ts", "other.ts*"]);
   });
 
-  it("a clean file adds nothing", async () => {
-    service = languageService("a.ts", []);
-    expect((await run("write_file", { path: "a.ts", content: "const y = 1;\n" })).content).toBe("Created a.ts (1 lines).");
+  it("with no editor open the checked file ends up in front and is left there", async () => {
+    await run("write_file", { path: "a.ts", content: "BAD\n" });
+    expect(stub.tabs).toEqual(["a.ts*(p)"]);
   });
 
-  it("waits for the reports to settle: syntax first, meaning a moment later", async () => {
-    await fs.writeFile(path.join(root, "a.ts"), "old\n");
-    const file = uri("a.ts");
-    // The second report comes inside the quiet time after the first one.
-    const firstReport = setInterval(async () => {
-      if ((await fs.readFile(file.fsPath, "utf8")) === "old\n") return;
-      clearInterval(firstReport);
-      stub.report(file, []);
-      setTimeout(() => stub.report(file, [error(1, "Cannot find name 'x'.")]), 10);
-    }, 5);
-    const r = await run("write_file", { path: "a.ts", content: "x;\n" });
-    expect(r.content).toContain("- line 1: Cannot find name 'x'.");
+  it("a clean file adds nothing, after a short wait", async () => {
+    const brisk = new EditorProblems({ ...PATIENT, ...BRISK });
+    const started = Date.now();
+    expect((await run("write_file", { path: "a.ts", content: "const y = 1;\n" }, { watcher: brisk })).content).toBe("Created a.ts (1 lines).");
+    expect(Date.now() - started).toBeLessThan(5000);
+    brisk.dispose();
   });
 
   it("errors that were there before the change are replaced by the new report, not repeated", async () => {
-    await fs.writeFile(path.join(root, "a.ts"), "x;\n");
-    stub.report(uri("a.ts"), [error(1, "Cannot find name 'x'.")]);
-    service = languageService("a.ts", []);
+    await fs.writeFile(path.join(root, "a.ts"), "BAD\n");
+    await stub.showFile(uri("a.ts"));
+    expect(await eventually(() => stub.diagnostics.get(uri("a.ts").toString())?.length === 1)).toBe(true);
     const r = await run("write_file", { path: "a.ts", content: "const x = 1;\n" });
     expect(r.content).toBe("Updated a.ts (1 lines).");
+  });
+
+  it("waits for a slow checker, and for a second report that follows the first", async () => {
+    stub.checkDelayMs = 150;
+    const first = await run("write_file", { path: "a.ts", content: "BAD\n" });
+    expect(first.content).toContain("- line 1: Cannot find name 'BAD'.");
+    // Syntax first (nothing), meaning a moment later (an error), inside the quiet time.
+    stub.checkDelayMs = 5;
+    await fs.writeFile(path.join(root, "b.ts"), "x\n");
+    await stub.showFile(uri("b.ts"));
+    stub.check = undefined;
+    const pending = run("write_file", { path: "b.ts", content: "y\n" });
+    await eventually(async () => (await fs.readFile(path.join(root, "b.ts"), "utf8")) === "y\n");
+    stub.report(uri("b.ts"), [{ range: at(1), message: "Unused.", severity: DiagnosticSeverity.Warning }]);
+    setTimeout(() => stub.report(uri("b.ts"), [error(1, "Cannot find name 'y'.")]), 10);
+    expect((await pending).content).toContain("- line 1: Cannot find name 'y'.");
+  });
+
+  it("once a language has answered, a clean change waits about twice its usual delay, not the full time", async () => {
+    const learning = new EditorProblems({ ...PATIENT, minMs: 50 });
+    expect((await run("write_file", { path: "a.ts", content: "BAD\n" }, { watcher: learning })).content).toContain("Cannot find name");
+    const started = Date.now();
+    expect((await run("write_file", { path: "b.ts", content: "fine\n" }, { watcher: learning })).content).toBe("Created b.ts (1 lines).");
+    expect(Date.now() - started).toBeLessThan(5000);
+    learning.dispose();
   });
 
   it("Stop ends the wait at once", async () => {
     const controller = new AbortController();
     const started = Date.now();
-    const pending = run("write_file", { path: "notes.txt", content: "hi\n" }, controller.signal);
-    // No language service answers; the wait would be 10 s.
-    while (!(await fs.readFile(path.join(root, "notes.txt"), "utf8").catch(() => ""))) await new Promise((r) => setTimeout(r, 5));
+    const pending = run("write_file", { path: "a.ts", content: "fine\n" }, { signal: controller.signal });
+    // The file is clean, so nothing arrives; the wait would be 10 s.
+    await eventually(() => opened() === 1);
     controller.abort();
-    expect((await pending).content).toBe("Created notes.txt (1 lines).");
+    expect((await pending).content).toBe("Created a.ts (1 lines).");
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
-  it("a language that never reports is not waited for after a couple of changes, until it reports", async () => {
-    const quick = new EditorProblems({ firstMs: 10_000, unknownMs: 30, quietMs: 30, totalMs: 20_000 });
-    const write = (n: number) =>
-      executeTool(
-        { type: "tool_call", id: "1", name: "write_file", input: { path: "notes.md", content: `v${n}\n` } },
-        { root, gate: new PermissionGate({ approve: async () => "allow" }), files: editorFiles, problems: quick.watch },
-      );
-    await write(1);
-    await write(2);
-    // From here on a wait would take 10 s if the language were thought to report.
-    const started = Date.now();
-    await write(3);
-    await write(4);
-    expect(Date.now() - started).toBeLessThan(5000);
-    // A Markdown checker is installed and reports: now it is waited for again.
-    service = languageService("notes.md", [error(1, "Heading expected.")]);
-    stub.report(uri("notes.md"), []);
-    expect((await write(5)).content).toContain("- line 1: Heading expected.");
-    quick.dispose();
+  it("a language nobody checks is not waited for after a couple of changes, and no tab is opened for it", async () => {
+    const brisk = new EditorProblems({ ...PATIENT, ...BRISK });
+    stub.check = undefined;
+    await fs.writeFile(path.join(root, "mine.ts"), "ok\n");
+    await stub.showFile(uri("mine.ts"));
+    for (let n = 1; n <= 4; n++) await run("write_file", { path: "notes.md", content: `v${n}\n` }, { watcher: brisk });
+    expect(opened()).toBe(2);
+    expect(stub.tabs).toEqual(["mine.ts*"]);
+
+    // A Markdown checker gets installed and reports on a file the user looks at: the language is waited for again.
+    stub.check = check;
+    await fs.writeFile(path.join(root, "user.md"), "BAD\n");
+    await stub.showFile(uri("user.md"));
+    expect(await eventually(() => stub.diagnostics.get(uri("user.md").toString())?.length === 1)).toBe(true);
+    expect((await run("write_file", { path: "notes.md", content: "BAD\n" }, { watcher: brisk })).content).toContain("- line 1: Cannot find name 'BAD'.");
+    brisk.dispose();
   });
 
   it("a rejected or failed write leaves nobody listening", async () => {
-    await run("write_file", { path: "a.ts", content: "x" }, undefined, "deny");
+    await run("write_file", { path: "a.ts", content: "x" }, { decision: "deny" });
     const failing = { ...editorFiles, writeText: async () => Promise.reject(new Error("disk full")) };
     const r = await executeTool(
       { type: "tool_call", id: "1", name: "write_file", input: { path: "b.ts", content: "x" } },
       { root, gate: new PermissionGate({ approve: async () => "allow" }), files: failing, problems: problems.watch },
     );
     expect(r).toMatchObject({ isError: true, content: "disk full" });
-    stub.report(uri("b.ts"), [error(1, "late")]);
     expect((problems as unknown as { watchers: Map<string, unknown> }).watchers.size).toBe(0);
+    expect(opened()).toBe(0);
   });
 });
+
+/** Polls a condition: a busy machine (CI) is slower. */
+async function eventually(check: () => boolean | Promise<boolean>, ms = 5000): Promise<boolean> {
+  const until = Date.now() + ms;
+  while (!(await check())) {
+    if (Date.now() > until) return false;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  return true;
+}

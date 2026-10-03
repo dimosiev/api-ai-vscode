@@ -563,22 +563,16 @@ describe("errors of the editor", () => {
       { toolCalls: [{ name: "write_file", args: { path: "app.ts", content: "x;\n" } }] },
       { text: "Вижу ошибку, исправлю." },
     ]);
-    const file = path.join(root, "app.ts");
-    // The language service reports once the file is there.
-    const service = setInterval(() => {
-      if (!existsSync(file)) return;
-      clearInterval(service);
-      stub.report(Uri.file(file), [{ range: new Range(new Position(0, 0), new Position(0, 1)), message: "Cannot find name 'x'.", severity: DiagnosticSeverity.Error, source: "ts", code: 2304 }]);
-    }, 5);
-    try {
-      const events = await panel.task("создай app.ts");
-      const result = events.find(isType("tool_end"))!.result;
-      expect(result).toContain("The editor now reports 1 error in this file");
-      expect(result).toContain("- line 1: Cannot find name 'x'. (ts 2304)");
-      const toolMessage = server!.requests[1].body.messages.find((m) => m.role === "tool")!;
-      expect(String(toolMessage.content)).toContain("Cannot find name 'x'. (ts 2304)");
-    } finally {
-      clearInterval(service);
-    }
+    // A language service like VS Code's: it checks files that are in a tab.
+    stub.check = (doc) =>
+      doc.getText().startsWith("x;")
+        ? [{ range: new Range(new Position(0, 0), new Position(0, 1)), message: "Cannot find name 'x'.", severity: DiagnosticSeverity.Error, source: "ts", code: 2304 }]
+        : [];
+    const events = await panel.task("создай app.ts");
+    const result = events.find(isType("tool_end"))!.result;
+    expect(result).toContain("The editor now reports 1 error in this file");
+    expect(result).toContain("- line 1: Cannot find name 'x'. (ts 2304)");
+    const toolMessage = server!.requests[1].body.messages.find((m) => m.role === "tool")!;
+    expect(String(toolMessage.content)).toContain("Cannot find name 'x'. (ts 2304)");
   });
 });
