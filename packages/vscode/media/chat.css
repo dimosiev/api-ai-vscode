@@ -4,6 +4,8 @@
   --brand: #0000ff;
   --brand-soft: rgba(0, 0, 255, 0.08);
   --brand-border: rgba(0, 0, 255, 0.35);
+  /* Text on a filled brand background. */
+  --brand-on: #ffffff;
   --add-bg: rgba(46, 160, 67, 0.16);
   --del-bg: rgba(248, 81, 73, 0.16);
   --add-fg: #1a7f37;
@@ -17,6 +19,7 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) {
   --brand: #9c9cff;
   --brand-soft: rgba(156, 156, 255, 0.12);
   --brand-border: rgba(156, 156, 255, 0.4);
+  --brand-on: #10102a;
   --add-bg: rgba(46, 160, 67, 0.22);
   --del-bg: rgba(248, 81, 73, 0.22);
   --add-fg: #56d364;
@@ -148,10 +151,17 @@ button {
   color: var(--vscode-descriptionForeground);
 }
 
-.plan-toggle.on {
-  color: var(--brand);
-  border-color: var(--brand-border);
-  background: var(--brand-soft);
+/* Off: an outlined button. On: filled with the brand colour, so the state is seen at a glance.
+   Three classes on purpose: ".btn.subtle" further down must not win over these. */
+.btn.plan-toggle {
+  border: 1px solid var(--vscode-input-border, var(--brand-border));
+}
+
+.btn.plan-toggle.on {
+  font-weight: 600;
+  color: var(--brand-on);
+  border-color: var(--brand);
+  background: var(--brand);
 }
 
 .plan-ready {

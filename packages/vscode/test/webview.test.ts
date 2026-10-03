@@ -171,11 +171,20 @@ describe("chat webview", () => {
     send({ ...status, planFirst: false });
     const toggle = $(".plan-toggle")!;
     expect(toggle.classList.contains("on")).toBe(false);
+    expect(toggle.textContent).toBe("Сначала план");
+    expect($(".composer-row .btn.primary")?.textContent).toBe("Отправить");
     toggle.click();
     expect(posted.at(-1)).toEqual({ type: "command", command: "dimosi.togglePlanFirst" });
     send({ ...status, planFirst: true });
     expect(toggle.classList.contains("on")).toBe(true);
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    // Seen at a glance: another label, a check mark, and the main button says what it will do.
+    expect(toggle.textContent).toBe("План включён");
+    expect(toggle.querySelector("svg")).not.toBeNull();
+    expect($(".composer-row .btn.primary")?.textContent).toBe("Составить план");
+    // The filled look must win over ".btn.subtle" (it did not: the button looked the same on and off).
+    const css = readFileSync(path.join(__dirname, "../media/chat.css"), "utf8");
+    expect(css).toMatch(/\.btn\.plan-toggle\.on \{[^}]*background: var\(--brand\);/);
 
     send({ type: "user", text: "сделай страницу", chips: [] });
     send({ type: "plan_ready" });

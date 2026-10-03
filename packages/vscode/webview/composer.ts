@@ -38,7 +38,6 @@ export class Composer {
     this.planBtn = h(
       "button",
       { class: "btn subtle plan-toggle", "aria-pressed": "false", onclick: () => this.post({ type: "command", command: "dimosi.togglePlanFirst" }) },
-      "Сначала план",
     );
     this.setPlanFirst(false);
     const attachBtn = h("button", { class: "icon-btn", title: "Прикрепить файлы или картинки", onclick: () => this.post({ type: "pick_files" }) }, svg(ICONS.clip));
@@ -73,6 +72,9 @@ export class Composer {
   setPlanFirst(on: boolean): void {
     this.planBtn.classList.toggle("on", on);
     this.planBtn.setAttribute("aria-pressed", String(on));
+    this.planBtn.replaceChildren(...(on ? [svg(ICONS.check, "inline-icon"), "План включён"] : ["Сначала план"]));
+    // The main button says what a press will do now.
+    this.sendBtn.replaceChildren(svg(ICONS.send, "inline-icon"), on ? "Составить план" : "Отправить");
     this.planBtn.title = on
       ? "Включено: агент изучит задачу и покажет план, ничего не меняя. Нажмите, чтобы выключить."
       : "Сначала план: агент изучит задачу и покажет план, а менять файлы начнёт только после вашего «Выполнить план».";
