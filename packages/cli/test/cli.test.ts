@@ -1,6 +1,6 @@
 // End-to-end: the bundled CLI answers through stdin, against a fake model server.
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, promises as fs } from "node:fs";
+import { existsSync, mkdtempSync, promises as fs, realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { build } from "esbuild";
@@ -74,6 +74,42 @@ describe("CLI, end to end", () => {
     expect(journal).toMatch(/\[info\] tool write_file: ok in/);
     expect(journal).not.toContain(KEY);
     expect(journal).not.toContain("создай hello.txt");
+  }, 30_000);
+
+  it("--read-dir and --write-dir open extra folders; config.json keeps a permanent list", async () => {
+    const tmp = (name: string) => realpathSync(mkdtempSync(path.join(os.tmpdir(), `dimosi-cli-${name}-`)));
+    const [root, home, readOnly, writable, fromConfig] = ["root", "home", "ro", "rw", "cfg"].map(tmp);
+    await fs.writeFile(path.join(readOnly, "notes.md"), "заметка\n");
+    await fs.writeFile(path.join(fromConfig, "list.md"), "список\n");
+    await fs.writeFile(path.join(home, "config.json"), JSON.stringify({ extraFolders: [{ path: fromConfig }] }));
+    server = await startFakeServer([
+      {
+        toolCalls: [
+          { name: "read_file", args: { path: path.join(readOnly, "notes.md") } },
+          { name: "read_file", args: { path: path.join(fromConfig, "list.md") } },
+          { name: "write_file", args: { path: path.join(readOnly, "new.md"), content: "x\n" } },
+          { name: "write_file", args: { path: path.join(writable, "new.md"), content: "x\n" } },
+        ],
+      },
+      { text: "Готово." },
+    ]);
+    const { code, out } = await runCli(
+      ["--provider", "custom", "--base-url", server.url, "--model", "fake-model", "--read-dir", readOnly, "--write-dir", writable, "работай"],
+      root,
+      home,
+      "y\n",
+    );
+    expect(code).toBe(0);
+    expect(out).toContain("Доступ: проект + 3 папки");
+    expect(out).toContain(`${readOnly} — только чтение`);
+    expect(out).toContain(`${writable} — чтение и запись`);
+    expect(out).toContain(`Создать файл ${writable}/new.md`);
+    expect(existsSync(path.join(writable, "new.md"))).toBe(true);
+    expect(existsSync(path.join(readOnly, "new.md"))).toBe(false);
+    const results = server.requests[1].body.messages.filter((m) => m.role === "tool").map((m) => String(m.content));
+    expect(results[0]).toContain("заметка");
+    expect(results[1]).toContain("список");
+    expect(results[2]).toMatch(/reading only/);
   }, 30_000);
 
   it("a denied change is not written, and the model is told", async () => {

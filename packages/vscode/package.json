@@ -88,6 +88,10 @@
         "category": "dimosi"
       },
       {
+        "command": "dimosi.editAccess",
+        "title": "dimosi: Доступ к папкам вне проекта…"
+      },
+      {
         "command": "dimosi.showRules",
         "title": "Правила для агента",
         "category": "dimosi",
@@ -287,6 +291,36 @@
           "type": "boolean",
           "default": true,
           "description": "Запускать команды агента в песочнице macOS: писать можно только в папку проекта, временные папки и кэши пакетов, а личные папки (~/.ssh, Документы, Рабочий стол, Загрузки и др.) недоступны. Выключайте, только если песочница мешает нужной команде. На Windows и Linux не действует."
+        },
+        "dimosi.extraFolders": {
+          "scope": "application",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Полный путь к папке."
+              },
+              "access": {
+                "type": "string",
+                "enum": [
+                  "read",
+                  "write"
+                ],
+                "enumDescriptions": [
+                  "Только чтение",
+                  "Чтение и запись"
+                ],
+                "default": "read"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          },
+          "description": "Папки вне проекта, которые открыты агенту. Удобнее менять кнопкой «Изменить» в строке «Доступ» панели чата. Папки с ключами и паролями и секретные файлы остаются закрытыми всегда."
         },
         "dimosi.autoUpdate": {
           "scope": "application",

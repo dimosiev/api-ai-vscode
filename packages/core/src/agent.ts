@@ -1,3 +1,4 @@
+import { createAccess, type AccessPolicy, type ExtraFolder } from "./access";
 import { PermissionGate, type ApprovalHandler, type ApprovalMode } from "./permissions";
 import type { Log } from "./log";
 import { buildSystemPrompt, snapshotLayout } from "./prompt";
@@ -33,6 +34,8 @@ export interface AgentOptions {
   globalRulesPath?: string;
   /** How tools read and write files; defaults to the disk. */
   files?: FileAccess;
+  /** Folders outside the project that the user opened to the agent. */
+  extraFolders?: ExtraFolder[];
   /** Diagnostic journal: request and tool metadata only, never content. */
   log?: Log;
   /** Decides on the project's rules files (AGENTS.md, CLAUDE.md, .dimosi/); without it they are used as is. */
@@ -67,6 +70,8 @@ export class Agent {
   /** Commands run in the macOS sandbox. */
   sandbox: boolean;
   contextWindow: number;
+  /** As written in the user's settings; checked when a task starts. */
+  extraFolders: ExtraFolder[];
   readonly root: string;
   readonly gate: PermissionGate;
   messages: Message[] = [];
@@ -76,6 +81,7 @@ export class Agent {
   private log?: Log;
   private ruleTrust?: RuleTrust;
   private layout?: string;
+  private access?: { key: string; policy: AccessPolicy };
   private running = false;
 
   constructor(opts: AgentOptions) {
@@ -88,6 +94,7 @@ export class Agent {
     this.maxTokens = opts.maxTokens;
     this.globalRulesPath = opts.globalRulesPath;
     this.files = opts.files;
+    this.extraFolders = opts.extraFolders ?? [];
     this.log = opts.log;
     this.ruleTrust = opts.ruleTrust;
     this.gate = new PermissionGate(opts.approval, opts.mode ?? "ask");
@@ -96,7 +103,23 @@ export class Agent {
   reset(): void {
     this.messages = [];
     this.layout = undefined;
+    this.access = undefined;
     this.gate.resetSessionApprovals();
+  }
+
+  /**
+   * The project plus the extra folders. Checked once per chat and again only
+   * when the user changes the list: the folders are named in the system
+   * prompt, and a prompt that keeps changing is never served from the cache.
+   */
+  private accessPolicy(): AccessPolicy {
+    const key = JSON.stringify(this.extraFolders);
+    if (this.access?.key !== key) {
+      const policy = createAccess(this.root, this.extraFolders);
+      this.access = { key, policy };
+      this.log?.info(`access: project + ${policy.folders.length} extra folders (${policy.folders.filter((f) => f.mode === "write").length} writable, ${policy.rejected.length} not used)`);
+    }
+    return this.access.policy;
   }
 
   /**
@@ -136,7 +159,8 @@ export class Agent {
       const rules = await loadRules(this.root, this.globalRulesPath, this.ruleTrust);
       yield { type: "rules", sources: rules.sources };
       this.layout ??= await snapshotLayout(this.root);
-      const system = buildSystemPrompt({ root: this.root, layout: this.layout, rules });
+      const access = this.accessPolicy();
+      const system = buildSystemPrompt({ root: this.root, layout: this.layout, rules, folders: access.folders });
 
       for (let step = 0; step < this.maxSteps; step++) {
         // Trim rarely and in one go: every trim invalidates the prompt cache once.
@@ -177,6 +201,7 @@ export class Agent {
             ? { content: "The reply hit the output token limit, so this tool call may be incomplete. Retry with smaller steps.", isError: true }
             : await executeTool(call, {
                 root: this.root,
+                access,
                 gate: this.gate,
                 files: this.files,
                 sandbox: this.sandbox,

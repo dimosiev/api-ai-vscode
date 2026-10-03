@@ -1,45 +1,7 @@
-import { lstatSync, promises as fs, realpathSync } from "node:fs";
+import { promises as fs } from "node:fs";
 import * as path from "node:path";
 
 const ALWAYS_IGNORED = new Set([".git", "node_modules", ".DS_Store", "dist", "out", ".next", "__pycache__", ".venv", "venv"]);
-
-/** Resolves a model-supplied path and refuses anything outside the project root. */
-export function resolveInRoot(root: string, p: string): string {
-  const abs = path.resolve(root, p || ".");
-  assertInside(root, abs, p);
-  // Follow symlinks so a link can't point outside. For a path that does not
-  // exist yet, check the nearest existing parent: new folders are created there.
-  let existing = abs;
-  for (;;) {
-    try {
-      assertInside(realpathSync(root), realpathSync(existing), p);
-      break;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-      if (isSymlink(existing)) throw new Error(`Path "${p}" goes through a broken symlink.`);
-      const parent = path.dirname(existing);
-      if (parent === existing) break;
-      existing = parent;
-    }
-  }
-  return abs;
-}
-
-function isSymlink(p: string): boolean {
-  try {
-    return lstatSync(p).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-function assertInside(root: string, abs: string, original: string): void {
-  const rel = path.relative(root, abs);
-  if (rel === "") return;
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw new Error(`Path "${original}" is outside the project root.`);
-  }
-}
 
 export function toRel(root: string, abs: string): string {
   return path.relative(root, abs).split(path.sep).join("/") || ".";
@@ -86,7 +48,7 @@ export async function walk(
   root: string,
   dir: string,
   ignore: IgnoreMatcher,
-  opts: { limit: number; maxDepth?: number; includeDirs?: boolean },
+  opts: { limit: number; maxDepth?: number; includeDirs?: boolean; skipDir?: (abs: string) => boolean },
 ): Promise<{ paths: string[]; truncated: boolean }> {
   const out: string[] = [];
   let truncated = false;
@@ -109,6 +71,7 @@ export async function walk(
         return;
       }
       if (entry.isDirectory()) {
+        if (opts.skipDir?.(abs)) continue;
         if (opts.includeDirs) out.push(rel + "/");
         if (opts.maxDepth === undefined || depth < opts.maxDepth) await visit(abs, depth + 1);
       } else if (entry.isFile()) {

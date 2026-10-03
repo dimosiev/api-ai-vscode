@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { createProvider, getPreset, type Provider } from "@dimosi/core";
+import { createProvider, getPreset, parseExtraFolders, type ExtraFolder, type Provider } from "@dimosi/core";
 import type { SecretKeyStore } from "./keyStore";
 import { log } from "./log";
 
@@ -10,6 +10,8 @@ export interface Settings {
   approvalMode: "ask" | "auto";
   maxSteps: number;
   sandbox: boolean;
+  /** Folders outside the project opened to the agent, as written in the settings. */
+  extraFolders: ExtraFolder[];
 }
 
 export function readSettings(): Settings {
@@ -22,6 +24,7 @@ export function readSettings(): Settings {
     approvalMode: cfg.get<"ask" | "auto">("approvalMode", "ask"),
     maxSteps: cfg.get<number>("maxSteps", 50),
     sandbox: cfg.get<boolean>("sandbox", true),
+    extraFolders: parseExtraFolders(cfg.get<unknown>("extraFolders", [])),
   };
 }
 

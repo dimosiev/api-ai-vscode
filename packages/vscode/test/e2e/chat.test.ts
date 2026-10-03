@@ -1,6 +1,6 @@
 // End-to-end: the real chat panel logic (ChatViewProvider, agent, tools,
 // OpenAI SDK) against a fake VS Code API and a fake model server over HTTP.
-import { existsSync, mkdtempSync, promises as fs, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, promises as fs, readFileSync, realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -371,7 +371,7 @@ describe("extension start and problem report", () => {
     stub.config = { "dimosi.provider": "polza", "dimosi.model": "anthropic/claude-opus-5.5" };
     activate(context as never);
     expect(stub.output[0]).toMatch(/^\[info\] dimosi 0\.0\.0-test started: VS Code 1\.140\.0/);
-    expect(stub.output[1]).toBe("[info] settings: provider polza, model anthropic/claude-opus-5.5, approvals ask, max steps 50");
+    expect(stub.output[1]).toBe("[info] settings: provider polza, model anthropic/claude-opus-5.5, approvals ask, max steps 50, extra folders 0");
 
     log.error(`task failed: Неверный API-ключ (401). (${KEY})`);
     stub.answer = (_msg, items) => items.find((i) => i.startsWith("Скопировать"));
@@ -397,5 +397,111 @@ describe("extension start and problem report", () => {
     const rules = await loadRules(root, path.join(root, "none.md"), rememberingTrust(trustDecisions(context as never)));
     expect(rules.sources.map((s) => [s.label, s.skipped])).toEqual([[".dimosi/rules.md", undefined]]);
     for (const d of context.subscriptions) d.dispose();
+  });
+});
+
+describe("extra folders", () => {
+  let extra: string;
+
+  beforeEach(async () => {
+    extra = realpathSync(mkdtempSync(path.join(os.tmpdir(), "dimosi-e2e-extra-")));
+    await fs.writeFile(path.join(extra, "notes.md"), "old\n");
+  });
+
+  it("the panel shows what is opened; the agent changes a file there and the change can be reverted", async () => {
+    const file = path.join(extra, "notes.md");
+    const panel = await setup([
+      { toolCalls: [{ name: "edit_file", args: { path: file, old_string: "old", new_string: "new" } }] },
+      { text: "Готово." },
+    ]);
+    stub.config["dimosi.extraFolders"] = [{ path: extra, access: "write" }];
+    await panel.provider.postStatus();
+    expect(panel.posted.filter(isType("status")).at(-1)).toMatchObject({ access: "проект + 1 папка", accessDetail: expect.stringContaining(`${extra} — чтение и запись`) });
+
+    const events = await panel.task("поправь заметки");
+    expect(events.find(isType("approval_request"))).toMatchObject({ kind: "write", relPath: file });
+    expect(await fs.readFile(file, "utf8")).toBe("new\n");
+    // The model was told about the folder.
+    expect(JSON.stringify(server!.requests[0].body.messages[0].content)).toContain(`${extra} (read and write)`);
+
+    panel.send({ type: "open_file", relPath: file });
+    expect(await eventually(() => stub.opened.includes(file))).toBe(true);
+
+    const changes = events.find(isType("changes"))!;
+    const from = panel.posted.length;
+    panel.send({ type: "revert", turn: changes.turn, relPath: file });
+    expect((await panel.waitFor(isType("changes"), from)).files[0].reverted).toBe(true);
+    expect(await fs.readFile(file, "utf8")).toBe("old\n");
+  });
+
+  it("a folder opened for reading is not changed, and one that is not opened is not reached", async () => {
+    const closed = realpathSync(mkdtempSync(path.join(os.tmpdir(), "dimosi-e2e-closed-")));
+    await fs.writeFile(path.join(closed, "a.txt"), "closed\n");
+    const panel = await setup([
+      {
+        toolCalls: [
+          { name: "read_file", args: { path: path.join(extra, "notes.md") } },
+          { name: "write_file", args: { path: path.join(extra, "notes.md"), content: "x" } },
+          { name: "read_file", args: { path: path.join(closed, "a.txt") } },
+        ],
+      },
+      { text: "Готово." },
+    ]);
+    stub.config["dimosi.extraFolders"] = [{ path: extra, access: "read" }];
+    const results = (await panel.task("прочитай")).filter(isType("tool_end"));
+    expect(results.map((r) => r.isError)).toEqual([false, true, true]);
+    expect(results[1].result).toMatch(/reading only/);
+    expect(results[2].result).toMatch(/outside the project root/);
+    expect(await fs.readFile(path.join(extra, "notes.md"), "utf8")).toBe("old\n");
+
+    panel.send({ type: "open_file", relPath: path.join(closed, "a.txt") });
+    panel.send({ type: "open_file", relPath: path.join(extra, "notes.md") });
+    expect(await eventually(() => stub.opened.length > 0)).toBe(true);
+    expect(stub.opened).toEqual([path.join(extra, "notes.md")]);
+  });
+
+  it("the Change button adds a folder, changes its access and removes it", async () => {
+    const { editAccess } = await import("../../src/access");
+    const answers = (...labels: Array<string | RegExp>) => {
+      stub.pick = (items) => {
+        const want = labels.shift();
+        return want === undefined ? undefined : items.find((i) => (typeof want === "string" ? i.label === want : want.test(i.label)));
+      };
+    };
+
+    stub.openDialog = () => [Uri.file(extra)];
+    answers(/Открыть агенту ещё одну папку/, "Только чтение");
+    await editAccess(root);
+    expect(stub.config["dimosi.extraFolders"]).toEqual([{ path: extra, access: "read" }]);
+
+    // The same folder is not added twice.
+    answers(/Открыть агенту ещё одну папку/);
+    await editAccess(root);
+    expect(stub.messages.at(-1)).toMatch(/уже есть в списке/);
+
+    answers(new RegExp(path.basename(extra)), "Разрешить запись");
+    await editAccess(root);
+    expect(stub.config["dimosi.extraFolders"]).toEqual([{ path: extra, access: "write" }]);
+
+    answers(new RegExp(path.basename(extra)), "Убрать из списка");
+    await editAccess(root);
+    expect(stub.config["dimosi.extraFolders"]).toEqual([]);
+  });
+
+  it("the Change button refuses the whole home folder and folders with keys", async () => {
+    const { editAccess } = await import("../../src/access");
+    const pickAdd = () => {
+      let asked = false;
+      stub.pick = (items) => (asked ? undefined : ((asked = true), items.find((i) => i.label.includes("ещё одну папку"))));
+    };
+    stub.openDialog = () => [Uri.file(os.homedir())];
+    pickAdd();
+    await editAccess(root);
+    expect(stub.messages.at(-1)).toMatch(/слишком широко/);
+    stub.openDialog = () => [Uri.file(path.join(os.homedir(), ".ssh"))];
+    pickAdd();
+    await editAccess(root);
+    expect(stub.messages.at(-1)).toMatch(/закрытая папка|не найдена/);
+    expect(stub.config["dimosi.extraFolders"]).toBeUndefined();
   });
 });

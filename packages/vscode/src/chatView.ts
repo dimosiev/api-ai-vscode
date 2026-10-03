@@ -4,13 +4,14 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import {
   Agent,
+  createAccess,
   DEFAULT_CONTEXT_WINDOW,
   describeToolCall,
   formatCost,
   formatTokens,
   getPreset,
   isSecretFile,
-  resolveInRoot,
+  resolvePath,
   UsageTotals,
   type ImagePart,
   type Message,
@@ -18,6 +19,7 @@ import {
   type TextPart,
 } from "@dimosi/core";
 import { errorText } from "./errorText";
+import { accessStatus } from "./access";
 import { WebviewApproval } from "./approval";
 import { fileAttachment, imageAttachment, isSecretPath, type Attachment } from "./attachments";
 import { ChangeTracker } from "./changes";
@@ -46,6 +48,7 @@ const PANEL_COMMANDS = new Set([
   "dimosi.importKeys",
   "dimosi.showRules",
   "dimosi.setApiKey",
+  "dimosi.editAccess",
   "workbench.action.files.openFolder",
 ]);
 const DECISIONS = new Set<string>(["allow", "deny", "allow_always"]);
@@ -169,6 +172,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       approval: s.approvalMode,
       needsSetup: !hasKey || !s.model,
       hasFolder: Boolean(this.root()),
+      ...accessStatus(this.root(), s.extraFolders),
     });
   }
 
@@ -271,12 +275,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /** A path the panel sent, if it really is inside the project (links followed). */
+  /** A path the panel sent, if it really is inside the project or an extra folder (links followed). */
   private inProject(relPath: string): string | undefined {
     const root = this.root();
     if (!root) return undefined;
     try {
-      return resolveInRoot(root, relPath);
+      return resolvePath(createAccess(root, readSettings().extraFolders), relPath);
     } catch {
       return undefined;
     }
@@ -391,6 +395,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     agent.model = settings.model;
     agent.maxSteps = settings.maxSteps;
     agent.sandbox = settings.sandbox;
+    agent.extraFolders = settings.extraFolders;
     agent.contextWindow = getPreset(settings.provider).contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     agent.gate.mode = settings.approvalMode;
 

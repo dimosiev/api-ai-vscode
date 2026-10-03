@@ -9,6 +9,8 @@ export interface CliConfig {
   /** Per-provider base URL override (required for "custom"). */
   baseUrls: Record<string, string>;
   mode: "ask" | "auto";
+  /** Folders outside the project opened to the agent: `[{ "path": "...", "access": "read" | "write" }]`. */
+  extraFolders?: unknown;
 }
 
 const DEFAULTS: CliConfig = { provider: "anthropic", models: {}, baseUrls: {}, mode: "ask" };

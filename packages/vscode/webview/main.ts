@@ -25,6 +25,13 @@ const post = (msg: FromWebview) => vscode.postMessage(msg);
 const modelBtn = h("button", { class: "model-btn", title: "Выбрать сервис и модель", onclick: () => post({ type: "command", command: "dimosi.selectModel" }) });
 const approvalBtn = h("button", { class: "pill", title: "Подтверждения действий агента", onclick: () => post({ type: "command", command: "dimosi.toggleApproval" }) });
 const header = h("header", { class: "top" }, svg(LOGO, "brand-logo"), modelBtn, approvalBtn);
+const accessText = h("span", { class: "access-text" });
+const accessRow = h(
+  "div",
+  { class: "access" },
+  accessText,
+  h("button", { class: "link", title: "Открыть агенту папки вне проекта или закрыть их", onclick: () => post({ type: "command", command: "dimosi.editAccess" }) }, "Изменить"),
+);
 
 const log = h("main", { class: "log" });
 
@@ -36,7 +43,7 @@ const statusBar = h("div", { class: "status" }, h("span", { class: "activity" },
 const composer = new Composer(post, (message) => showError(message));
 const footer = h("footer", {}, statusBar, composer.el);
 
-document.getElementById("app")!.append(header, log, footer);
+document.getElementById("app")!.append(header, accessRow, log, footer);
 
 // ---------- state ----------
 
@@ -140,6 +147,8 @@ function handle(msg: ToWebview): void {
       modelBtn.replaceChildren(h("span", { class: "model-provider" }, msg.provider), h("span", { class: "model-name" }, msg.model));
       approvalBtn.textContent = msg.approval === "auto" ? "Без подтверждений" : "С подтверждением";
       approvalBtn.classList.toggle("danger", msg.approval === "auto");
+      accessText.textContent = `Доступ: ${msg.access}`;
+      accessText.title = msg.accessDetail;
       if (!log.querySelector(".turn")) showWelcome();
       break;
     }

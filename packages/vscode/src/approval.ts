@@ -95,9 +95,9 @@ export class WebviewApproval implements ApprovalHandler {
     const p = this.pending.get(id);
     if (!p || p.req.kind !== "write") return;
     const req = p.req;
-    const right = vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: "/" + req.relPath, query: `proposed-${id}` });
+    const right = vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: "/" + req.relPath.replace(/^\/+/, ""), query: `proposed-${id}` });
     const left = req.oldContent === null
-      ? vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: "/" + req.relPath, query: `empty-${id}` })
+      ? vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: "/" + req.relPath.replace(/^\/+/, ""), query: `empty-${id}` })
       : vscode.Uri.file(req.path);
     this.proposed.set(right, req.newContent);
     if (req.oldContent === null) this.proposed.set(left, "");

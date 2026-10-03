@@ -16,6 +16,7 @@ import {
   PROJECT_RULES_TEMPLATE,
   rememberingTrust,
 } from "@dimosi/core";
+import { editAccess } from "./access";
 import { errorText } from "./errorText";
 import { PROPOSED_SCHEME, ProposedContentProvider, WebviewApproval } from "./approval";
 import { selectionAttachment } from "./attachments";
@@ -112,6 +113,8 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
+    command("dimosi.editAccess", () => editAccess(root())),
+
     // Rules
     command("dimosi.showRules", () => showRules(context, root())),
     command("dimosi.openGlobalRules", () => openOrCreate(defaultGlobalRulesPath(), GLOBAL_RULES_TEMPLATE)),
@@ -167,7 +170,7 @@ function describeOs(): string {
 function logSettings(): void {
   const s = readSettings();
   log.info(
-    `settings: provider ${s.provider}, model ${s.model || "(none)"}, approvals ${s.approvalMode}, max steps ${s.maxSteps}` +
+    `settings: provider ${s.provider}, model ${s.model || "(none)"}, approvals ${s.approvalMode}, max steps ${s.maxSteps}, extra folders ${s.extraFolders.length}` +
       (s.provider === "custom" ? `, server ${serverOrigin(s.customBaseUrl)}` : ""),
   );
 }

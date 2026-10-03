@@ -2,7 +2,9 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { createInterface } from "node:readline/promises";
 import {
+  accessSummary,
   Agent,
+  createAccess,
   createProvider,
   DEFAULT_CONTEXT_WINDOW,
   loadRules,
@@ -17,12 +19,15 @@ import {
   type Pricing,
   getPreset,
   maskKey,
+  modeLabel,
+  parseExtraFolders,
   PRESETS,
   rememberingTrust,
   revealHidden,
   checkBaseUrl,
   CUSTOM_URL_PRESETS,
   type ApprovalHandler,
+  type ExtraFolder,
   type Provider,
   type RuleFile,
 } from "@dimosi/core";
@@ -42,6 +47,10 @@ ${c.bold("Запуск чата")} (в папке проекта):
   dimosi --provider polza --model anthropic/claude-opus-5.5
   dimosi --auto                  не спрашивать подтверждений (осторожно!)
   dimosi --no-sandbox            команды без песочницы macOS (осторожно!)
+  dimosi --read-dir ПУТЬ         открыть агенту ещё одну папку только для чтения
+  dimosi --write-dir ПУТЬ        открыть агенту ещё одну папку для чтения и записи
+                                 (оба флага можно повторять; постоянный список —
+                                 "extraFolders" в config.json, см. руководство)
 
 ${c.bold("Ключи")}:
   dimosi keys set ПРОВАЙДЕР      сохранить API-ключ (например: anthropic, openai, polza)
@@ -67,14 +76,14 @@ ${c.bold("Обновление")}:
 ${c.bold("Журнал")} (для разбора проблем, без ключей и текста переписки):
   dimosi log                       показать, где лежит журнал, и его последние строки
 
-${c.bold("Команды внутри чата")}: /help /model /models /provider /key /rules /auto /ask /clear /exit
+${c.bold("Команды внутри чата")}: /help /model /models /provider /key /rules /folders /auto /ask /clear /exit
 `;
 
 const CHAT_HELP = `${c.bold("Команды:")}
   /model ИМЯ        сменить модель          /models [фильтр]   список моделей
   /provider ИМЯ     сменить провайдера      /key               ввести ключ текущего провайдера
   /auto             работать без подтверждений   /ask   снова спрашивать подтверждения
-  /rules            какие правила действуют
+  /rules            какие правила действуют     /folders           какие папки открыты агенту
   /clear            начать новый диалог     /exit              выйти (или Ctrl+D)
   Ctrl+C во время работы агента — остановить его.`;
 
@@ -85,11 +94,13 @@ interface Flags {
   dir?: string;
   auto?: boolean;
   noSandbox?: boolean;
+  /** --read-dir and --write-dir, in the order given. */
+  folders: ExtraFolder[];
   positional: string[];
 }
 
 function parseArgs(argv: string[]): Flags {
-  const flags: Flags = { positional: [] };
+  const flags: Flags = { positional: [], folders: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => {
@@ -101,6 +112,8 @@ function parseArgs(argv: string[]): Flags {
     else if (a === "--model" || a === "-m") flags.model = next();
     else if (a === "--base-url") flags.baseUrl = next();
     else if (a === "--dir" || a === "-d") flags.dir = next();
+    else if (a === "--read-dir") flags.folders.push({ path: path.resolve(next()), mode: "read" });
+    else if (a === "--write-dir") flags.folders.push({ path: path.resolve(next()), mode: "write" });
     else if (a === "--auto") flags.auto = true;
     else if (a === "--no-sandbox") flags.noSandbox = true;
     else if (a === "--help" || a === "-h") flags.positional.unshift("help");
@@ -363,6 +376,16 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
   const root = path.resolve(flags.dir ?? process.cwd());
   const keys = new Keys(io);
   let controller: AbortController | undefined;
+  // This run's flags first: the same folder in config.json does not override them.
+  const extraFolders = [...flags.folders, ...parseExtraFolders(config.extraFolders)];
+  const printAccess = () => {
+    const access = createAccess(root, extraFolders);
+    console.log(c.dim(`Доступ: ${accessSummary(access)}`));
+    for (const f of access.folders) console.log(c.dim(`  ${f.path} — ${modeLabel(f.mode)}`));
+    for (const f of access.rejected) {
+      if (f.reason !== "уже есть в списке") console.log(c.yellow(`  ${f.path} — не подключена: ${f.reason}`));
+    }
+  };
 
   const approval: ApprovalHandler = {
     async approve(req) {
@@ -397,14 +420,16 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
     approval,
     mode: flags.auto ? "auto" : config.mode,
     sandbox: !flags.noSandbox,
+    extraFolders,
     contextWindow: getPreset(presetId).contextWindow,
     log,
     ruleTrust: rememberingTrust(await loadTrustDecisions(), (file) => askAboutRules(io, file)),
   });
-  log.info(`chat: provider ${presetId}, model ${agent.model}, approvals ${agent.gate.mode}, sandbox ${agent.sandbox ? "on" : "off"}`);
+  log.info(`chat: provider ${presetId}, model ${agent.model}, approvals ${agent.gate.mode}, sandbox ${agent.sandbox ? "on" : "off"}, extra folders ${extraFolders.length}`);
 
   console.log(`${c.bold(c.blue("dimosi"))} ${c.dim(VERSION)}  ${getPreset(presetId).label} · ${c.cyan(agent.model)}`);
   console.log(c.dim(`Проект: ${root}`));
+  if (extraFolders.length) printAccess();
   if (agent.gate.mode === "auto") console.log(c.red("Режим без подтверждений: агент сам меняет файлы и запускает команды."));
   if (!agent.sandbox && process.platform === "darwin") console.log(c.red("Песочница выключена: команды агента работают со всеми вашими правами."));
   console.log(c.dim("Напишите задачу. /help — команды, Ctrl+C — остановить агента, /exit — выход.\n"));
@@ -500,6 +525,9 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         break;
       case "rules":
         await printRules(root);
+        break;
+      case "folders":
+        printAccess();
         break;
       case "clear":
         agent.reset();

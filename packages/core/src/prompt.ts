@@ -1,4 +1,5 @@
 import * as os from "node:os";
+import type { ExtraFolder } from "./access";
 import type { LoadedRules } from "./rules";
 import { IgnoreMatcher, walk } from "./tools/workspace";
 
@@ -16,9 +17,17 @@ export interface PromptInput {
   root: string;
   layout: string;
   rules: LoadedRules;
+  /** Folders outside the project that the user opened (already checked). */
+  folders?: ExtraFolder[];
 }
 
-export function buildSystemPrompt({ root, layout, rules }: PromptInput): string {
+export function buildSystemPrompt({ root, layout, rules, folders = [] }: PromptInput): string {
+  const paths = folders.length
+    ? "- Paths are relative to the project root. Outside the project you can reach only the extra folders listed under Environment: use full paths for them. A folder marked \"read only\" must not be changed, by commands either. Everything else is closed."
+    : "- All paths are relative to the project root. You cannot access files outside it.";
+  const foldersBlock = folders.length
+    ? `\n- Extra folders the user opened:\n${folders.map((f) => `  - ${f.path} (${f.mode === "write" ? "read and write" : "read only"})`).join("\n")}`
+    : "";
   const rulesBlock = rules.text
     ? `
 
@@ -34,7 +43,7 @@ ${rules.text}`
 - Inspect before you change: list and read the relevant files, then make focused edits.
 - Prefer edit_file for small changes to existing files; use write_file for new files or full rewrites.
 - For tasks with three or more steps, call update_plan first with the steps, then keep it current (mark the active step in_progress and finished steps done).
-- All paths are relative to the project root. You cannot access files outside it.
+${paths}
 - Writes and commands need the user's approval. If the user rejects one, do not retry it unchanged; ask what they want instead.
 - After changing code, run the project's build or tests when there is an obvious command for it.
 - Match the existing code style. Do not add files or dependencies the task does not need.
@@ -43,7 +52,7 @@ ${rules.text}`
 - Keep replies short and concrete. Answer in the language the user writes in.
 
 # Environment
-- Project root: ${root}
+- Project root: ${root}${foldersBlock}
 - OS: ${os.type()} ${os.release()} (${process.platform})
 - Shell commands run with: ${process.platform === "win32" ? "cmd.exe" : "/bin/sh"}
 - Date: ${new Date().toISOString().slice(0, 10)}

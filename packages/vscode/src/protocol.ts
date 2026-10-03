@@ -52,6 +52,10 @@ export type ToWebview =
       /** Show the setup screen: no key or no model yet. */
       needsSetup: boolean;
       hasFolder: boolean;
+      /** What the agent can reach: "проект + 2 папки". */
+      access: string;
+      /** The folders one per line, for the tooltip. */
+      accessDetail: string;
     }
   | { type: "user"; text: string; chips: ChipView[] }
   | { type: "rules"; rules: RuleView[] }

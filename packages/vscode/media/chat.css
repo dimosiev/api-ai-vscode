@@ -142,6 +142,36 @@ button {
   background: transparent;
 }
 
+.access {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.access-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.access .link {
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: inherit;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+}
+
+.access .link:hover {
+  text-decoration: underline;
+}
+
 /* ---------- log ---------- */
 
 .log {

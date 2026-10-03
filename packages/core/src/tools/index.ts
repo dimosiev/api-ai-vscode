@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
-import { existsSync, promises as fs, realpathSync } from "node:fs";
+import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
+import { createAccess, folderOf, isClosedFolder, relativeInFolder, resolvePath, showPath, type AccessPolicy } from "../access";
 import { revealHidden, type PermissionGate } from "../permissions";
 import type { ToolCallPart, ToolDefinition } from "../types";
 import { commandEnv, defaultSandboxPaths, sandboxAvailable, sandboxedCommand } from "./sandbox";
-import { IgnoreMatcher, isSecretFile, resolveInRoot, toRel, walk } from "./workspace";
+import { IgnoreMatcher, isSecretFile, walk } from "./workspace";
 
 export interface FileChange {
   /** Absolute path. */
@@ -67,6 +68,8 @@ export const diskFiles: FileAccess = {
 
 export interface ToolContext {
   root: string;
+  /** What may be reached besides the project. Default: the project only. */
+  access?: AccessPolicy;
   gate: PermissionGate;
   /** Defaults to diskFiles. */
   files?: FileAccess;
@@ -100,7 +103,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Directory relative to the project root. Default: root." },
+        path: { type: "string", description: "Directory relative to the project root, or a full path inside an extra folder the user opened. Default: root." },
         depth: { type: "integer", description: "How many levels deep to list. Default 2." },
       },
       additionalProperties: false,
@@ -112,7 +115,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "File path relative to the project root." },
+        path: { type: "string", description: "File path relative to the project root, or a full path inside an extra folder the user opened." },
         offset: { type: "integer", description: "1-based line to start from. Default 1." },
         limit: { type: "integer", description: `Number of lines. Default ${MAX_READ_LINES}.` },
       },
@@ -128,7 +131,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: {
         pattern: { type: "string", description: "Text to find (or a regular expression if regex=true)." },
         regex: { type: "boolean", description: "Treat pattern as a JavaScript regular expression." },
-        path: { type: "string", description: "Directory to search in. Default: root." },
+        path: { type: "string", description: "Directory to search in: relative to the project root, or a full path inside an extra folder the user opened. Default: root." },
         case_sensitive: { type: "boolean", description: "Default false." },
       },
       required: ["pattern"],
@@ -142,7 +145,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "File path relative to the project root." },
+        path: { type: "string", description: "File path relative to the project root, or a full path inside an extra folder the user opened." },
         content: { type: "string", description: "Complete file content." },
       },
       required: ["path", "content"],
@@ -156,7 +159,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "File path relative to the project root." },
+        path: { type: "string", description: "File path relative to the project root, or a full path inside an extra folder the user opened." },
         old_string: { type: "string", description: "Exact text to replace, including whitespace." },
         new_string: { type: "string", description: "Replacement text." },
         replace_all: { type: "boolean", description: "Replace every occurrence. Default false." },
@@ -247,21 +250,17 @@ async function readTextOrNull(files: FileAccess, abs: string, relPath: string): 
   }
 }
 
+const accessOf = (ctx: ToolContext): AccessPolicy => ctx.access ?? createAccess(ctx.root);
+
 /**
  * Files with keys and passwords are never read or changed: whatever the agent
  * sees goes to the AI service, and even "not found" or "already has this
  * content" tells something about the text. Checked through links too.
  */
-function assertNotSecret(root: string, abs: string, action: string): void {
-  let real = abs;
-  try {
-    real = path.join(realpathSync(root), path.relative(realpathSync(root), realpathSync(abs)));
-  } catch {
-    // does not exist yet
-  }
-  if (isSecretFile(toRel(root, abs)) || isSecretFile(real)) {
+function assertNotSecret(access: AccessPolicy, abs: string, action: string): void {
+  if (isSecretFile(abs) || isSecretFile(relativeInFolder(access, abs))) {
     throw new Error(
-      `${toRel(root, abs)} may contain secrets (keys, passwords), so it is not ${action}: its text would be sent to the AI service. ` +
+      `${showPath(access, abs)} may contain secrets (keys, passwords), so it is not ${action}: its text would be sent to the AI service. ` +
         (action === "read"
           ? "If something from it is needed, ask the user (for example, the names of the settings, not their values)."
           : "Tell the user what to change there; they can edit it themselves."),
@@ -276,30 +275,32 @@ const inGit = (rel: string) => rel.toLowerCase().split(/[\\/]/).includes(".git")
  * in any letter case (macOS ignores it), at any depth (nested repositories),
  * and not through a link either.
  */
-function assertWritable(root: string, abs: string): void {
-  let existing = abs;
-  while (!existsSync(existing) && path.dirname(existing) !== existing) existing = path.dirname(existing);
-  if (inGit(toRel(root, abs)) || inGit(path.relative(realpathSync(root), realpathSync(existing)))) {
+function assertWritable(access: AccessPolicy, abs: string): void {
+  if (inGit(showPath(access, abs)) || inGit(relativeInFolder(access, abs))) {
     throw new Error("Writing inside .git is not allowed.");
   }
 }
 
 const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<string>> = {
-  async list_files(input, { root }) {
-    const dir = resolveInRoot(root, str(input, "path", false));
-    const ignore = await IgnoreMatcher.load(root);
-    const { paths, truncated } = await walk(root, dir, ignore, {
+  async list_files(input, ctx) {
+    const access = accessOf(ctx);
+    const folder = folderOf(access, resolvePath(access, str(input, "path", false)));
+    const ignore = await IgnoreMatcher.load(folder.dir);
+    const { paths, truncated } = await walk(folder.dir, folder.start, ignore, {
       limit: 500,
       maxDepth: Math.max(1, num(input, "depth", 2)),
       includeDirs: true,
+      skipDir: (abs) => isClosedFolder(access, abs),
     });
     if (!paths.length) return "(empty)";
-    return paths.join("\n") + (truncated ? "\n... (truncated at 500 entries)" : "");
+    return paths.map(folder.show).join("\n") + (truncated ? "\n... (truncated at 500 entries)" : "");
   },
 
-  async read_file(input, { root, files = diskFiles }) {
-    const abs = resolveInRoot(root, str(input, "path"));
-    assertNotSecret(root, abs, "read");
+  async read_file(input, ctx) {
+    const { files = diskFiles } = ctx;
+    const access = accessOf(ctx);
+    const abs = resolvePath(access, str(input, "path"));
+    assertNotSecret(access, abs, "read");
     const { size } = await fs.stat(abs);
     if (size > MAX_READ_BYTES) {
       throw new Error(`File is too large to read (${Math.round(size / 1024 / 1024)} MB). Use search to find the relevant part.`);
@@ -332,16 +333,19 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     return (out.join("\n") || "(empty file)") + more;
   },
 
-  async search(input, { root, signal, searchTimeoutMs }) {
+  async search(input, ctx) {
+    const { signal, searchTimeoutMs } = ctx;
+    const access = accessOf(ctx);
     const pattern = str(input, "pattern");
     const flags = input.case_sensitive === true ? "" : "i";
     const source = input.regex === true ? pattern : pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     new RegExp(source, flags); // reports a broken pattern as a normal tool error
-    const dir = resolveInRoot(root, str(input, "path", false));
-    const ignore = await IgnoreMatcher.load(root);
-    const { paths } = await walk(root, dir, ignore, { limit: 20_000 });
+    const folder = folderOf(access, resolvePath(access, str(input, "path", false)));
+    const ignore = await IgnoreMatcher.load(folder.dir);
+    const { paths } = await walk(folder.dir, folder.start, ignore, { limit: 20_000, skipDir: (abs) => isClosedFolder(access, abs) });
     signal?.throwIfAborted();
-    const { matches, stopped } = await searchInWorker(root, paths.filter((p) => !isSecretFile(p)), source, flags, signal, searchTimeoutMs ?? SEARCH_TIMEOUT_MS);
+    const found = paths.filter((p) => !isSecretFile(p)).map(folder.show);
+    const { matches, stopped } = await searchInWorker(access.root, found, source, flags, signal, searchTimeoutMs ?? SEARCH_TIMEOUT_MS);
     if (stopped) return matches.join("\n") + "\n... (stopped at 200 matches)";
     return matches.length ? matches.join("\n") : "No matches.";
   },
@@ -360,31 +364,37 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     return `Plan updated (${done}/${items.length} done).`;
   },
 
-  async write_file(input, { root, gate, files = diskFiles, onFileChange }) {
-    const abs = resolveInRoot(root, str(input, "path"));
-    assertWritable(root, abs);
-    assertNotSecret(root, abs, "changed");
+  async write_file(input, ctx) {
+    const { gate, files = diskFiles, onFileChange } = ctx;
+    const access = accessOf(ctx);
+    const abs = resolvePath(access, str(input, "path"), "write");
+    const relPath = showPath(access, abs);
+    assertWritable(access, abs);
+    assertNotSecret(access, abs, "changed");
     const content = str(input, "content");
-    const oldContent = await readTextOrNull(files, abs, toRel(root, abs));
+    const oldContent = await readTextOrNull(files, abs, relPath);
     if (oldContent === content) return "File already has this content; nothing changed.";
-    const ok = await gate.check({ kind: "write", path: abs, relPath: toRel(root, abs), oldContent, newContent: content });
+    const ok = await gate.check({ kind: "write", path: abs, relPath, oldContent, newContent: content });
     if (!ok) throw new Error("The user rejected this change.");
     // The path is checked again: a link could have been swapped while the user decided.
-    resolveInRoot(root, str(input, "path"));
+    resolvePath(access, str(input, "path"), "write");
     const written = await files.writeText(abs, content);
-    onFileChange?.({ path: abs, relPath: toRel(root, abs), oldContent, newContent: written });
-    return `${oldContent === null ? "Created" : "Updated"} ${toRel(root, abs)} (${countLines(content)} lines).`;
+    onFileChange?.({ path: abs, relPath, oldContent, newContent: written });
+    return `${oldContent === null ? "Created" : "Updated"} ${relPath} (${countLines(content)} lines).`;
   },
 
-  async edit_file(input, { root, gate, files = diskFiles, onFileChange }) {
-    const abs = resolveInRoot(root, str(input, "path"));
-    assertWritable(root, abs);
-    assertNotSecret(root, abs, "changed");
+  async edit_file(input, ctx) {
+    const { gate, files = diskFiles, onFileChange } = ctx;
+    const access = accessOf(ctx);
+    const abs = resolvePath(access, str(input, "path"), "write");
+    const relPath = showPath(access, abs);
+    assertWritable(access, abs);
+    assertNotSecret(access, abs, "changed");
     let oldString = str(input, "old_string");
     let newString = str(input, "new_string");
     if (!oldString) throw new Error("old_string must not be empty. Use write_file to create files.");
-    const oldContent = await readTextOrNull(files, abs, toRel(root, abs));
-    if (oldContent === null) throw new Error(`File ${toRel(root, abs)} does not exist.`);
+    const oldContent = await readTextOrNull(files, abs, relPath);
+    if (oldContent === null) throw new Error(`File ${relPath} does not exist.`);
     let count = oldContent.split(oldString).length - 1;
     if (count === 0 && oldContent.includes("\r\n")) {
       // read_file hides \r, so the model sends LF text for a Windows (CRLF) file.
@@ -403,15 +413,16 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     const newContent = input.replace_all === true
       ? oldContent.split(oldString).join(newString)
       : oldContent.replace(oldString, () => newString);
-    const ok = await gate.check({ kind: "write", path: abs, relPath: toRel(root, abs), oldContent, newContent });
+    const ok = await gate.check({ kind: "write", path: abs, relPath, oldContent, newContent });
     if (!ok) throw new Error("The user rejected this change.");
-    resolveInRoot(root, str(input, "path"));
+    resolvePath(access, str(input, "path"), "write");
     const written = await files.writeText(abs, newContent);
-    onFileChange?.({ path: abs, relPath: toRel(root, abs), oldContent, newContent: written });
-    return `Edited ${toRel(root, abs)} (${input.replace_all === true ? count : 1} replacement${count > 1 && input.replace_all === true ? "s" : ""}).`;
+    onFileChange?.({ path: abs, relPath, oldContent, newContent: written });
+    return `Edited ${relPath} (${input.replace_all === true ? count : 1} replacement${count > 1 && input.replace_all === true ? "s" : ""}).`;
   },
 
-  async run_command(input, { root, gate, signal, sandbox = true }) {
+  async run_command(input, ctx) {
+    const { root, gate, signal, sandbox = true } = ctx;
     const command = str(input, "command");
     const timeout = Math.min(600, Math.max(1, num(input, "timeout_seconds", 120))) * 1000;
     const sandboxed = sandbox && process.platform === "darwin";
@@ -424,7 +435,7 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     if (unprotected) {
       return "Note: the macOS sandbox could not start, so this command ran without it.\n" + (await runShell(command, root, timeout, signal));
     }
-    const result = await runShell(command, root, timeout, signal, true);
+    const result = await runShell(command, root, timeout, signal, accessOf(ctx));
     return /Operation not permitted/.test(result)
       ? `${result}\n\n${SANDBOX_HINT}`
       : result;
@@ -432,14 +443,15 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
 };
 
 const SANDBOX_HINT =
-  "Note: dimosi runs commands in a sandbox. It blocks writing outside the project (temp folders and package caches are allowed), " +
+  "Note: dimosi runs commands in a sandbox. It blocks writing outside the project and the extra folders the user opened for writing (temp folders and package caches are allowed), " +
   "changing git hooks and settings, .vscode, .dimosi, .husky, .devcontainer, .github/workflows and .envrc, starting apps (open, osascript), reading the project's secret files (.env, keys) and private folders (~/.ssh, ~/Documents, ~/Desktop, ~/Downloads and others). " +
   "Do not try to work around it. If the command really needs this, tell the user: they can run it in their own terminal.";
 
-function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal, sandboxed = false): Promise<string> {
+/** With `sandboxed`, the command runs in the macOS sandbox built from that access rule. */
+function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal, sandboxed?: AccessPolicy): Promise<string> {
   if (signal?.aborted) return Promise.resolve("Cancelled by the user.");
   const isWindows = process.platform === "win32";
-  const sandbox = sandboxed ? sandboxedCommand(command, defaultSandboxPaths(cwd)) : undefined;
+  const sandbox = sandboxed ? sandboxedCommand(command, defaultSandboxPaths(cwd, sandboxed.folders)) : undefined;
   return new Promise((resolve) => {
     const child = spawn(sandbox?.file ?? command, sandbox?.args ?? [], {
       cwd,
@@ -549,7 +561,7 @@ const re = new RegExp(source, flags);
 const matches = [];
 let stopped = false;
 outer: for (const rel of paths) {
-  const abs = path.join(root, rel);
+  const abs = path.resolve(root, rel);
   let text;
   try {
     if (fs.statSync(abs).size > 1000000) continue;

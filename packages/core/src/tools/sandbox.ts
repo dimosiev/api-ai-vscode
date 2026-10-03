@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { defaultGlobalRulesPath } from "../rules";
+import { inside, ownDirs, privateDirs, realPath as real, type ExtraFolder } from "../access";
 import { secretPathPatterns } from "./workspace";
 
 /** Variables a command needs that only look like secrets. PWD is the current folder. */
@@ -29,31 +29,6 @@ export function commandEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Process
 
 const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 
-/** Home folders with keys, passwords and personal files: no reading, no writing. */
-const HOME_PRIVATE = [
-  ".ssh", ".aws", ".gnupg", ".kube", ".docker", ".password-store",
-  // Settings of command-line tools, often with their logins (gh, cloud tools...). git's own folder is opened again below.
-  ".config",
-  // Logins of cloud and build tools.
-  ".azure", ".terraform.d", ".gem/credentials", ".cargo/credentials", ".cargo/credentials.toml",
-  ".gradle/gradle.properties", ".m2/settings.xml", ".claude", ".claude.json",
-  // Tokens in plain text: git's "store" helper, curl/ftp, npm and PyPI logins.
-  ".git-credentials", ".config/git/credentials", ".netrc", ".npmrc", ".pypirc",
-  // Shell settings and history: tokens are often exported there.
-  ".zsh_history", ".bash_history", ".zsh_sessions", ".zshrc", ".zprofile", ".zshenv", ".bashrc", ".bash_profile", ".profile",
-  "Documents", "Desktop", "Downloads", "Pictures", "Movies", "Music",
-  "Library/Keychains", "Library/Mail", "Library/Messages", "Library/Safari", "Library/Cookies",
-  "Library/Mobile Documents",
-  // Data of App Store apps (Telegram, WhatsApp, Notes...) and of messengers.
-  "Library/Containers", "Library/Group Containers",
-  "Library/Application Support/Slack", "Library/Application Support/Telegram Desktop", "Library/Application Support/Bitwarden",
-  "Library/Application Support/Google/Chrome", "Library/Application Support/Firefox",
-  "Library/Application Support/Yandex", "Library/Application Support/BraveSoftware",
-  "Library/Application Support/Arc", "Library/Application Support/Microsoft Edge",
-  "Library/Application Support/Code", "Library/Application Support/Code - Insiders",
-  "Library/Application Support/Cursor", "Library/Application Support/VSCodium",
-];
-
 /** Inside private folders, but needed by everyday tools: git's settings. Read only. */
 const HOME_READABLE = [".config/git"];
 /** ...except what is private inside them again. */
@@ -77,21 +52,15 @@ export interface SandboxPaths {
   tmpDirs: string[];
   /** Extra private folders (dimosi's own settings and keys). */
   private: string[];
+  /** Folders outside the project that the user opened (already checked, see createAccess). */
+  folders?: ExtraFolder[];
 }
 
-function real(p: string): string {
-  try {
-    return realpathSync(p);
-  } catch {
-    return path.resolve(p);
-  }
-}
-
-export function defaultSandboxPaths(root: string): SandboxPaths {
+export function defaultSandboxPaths(root: string, folders: ExtraFolder[] = []): SandboxPaths {
   const tmp = real(os.tmpdir());
   // macOS keeps per-user caches next to the temp folder: .../T and .../C.
   const tmpDirs = [path.basename(tmp) === "T" ? path.dirname(tmp) : tmp, "/private/tmp"];
-  return { root, home: os.homedir(), tmpDirs, private: [path.dirname(defaultGlobalRulesPath())] };
+  return { root, home: os.homedir(), tmpDirs, private: ownDirs(), folders };
 }
 
 /** Seatbelt string literal. */
@@ -111,24 +80,28 @@ function foldersBetween(from: string, to: string): string[] {
   return out;
 }
 
-const inside = (child: string, parent: string) => child === parent || child.startsWith(parent + "/");
-
 /**
  * Rules for macOS's built-in sandbox (the one Claude Code uses there too).
- * A command may read almost everything but write only to the project,
- * temp folders and package caches; private folders can't be read at all.
- * The network stays open: installs need it.
+ * A command may read almost everything but write only to the project, the
+ * extra folders opened for writing, temp folders and package caches; private
+ * folders can't be read at all. The network stays open: installs need it.
  */
 export function sandboxProfile(paths: SandboxPaths): string {
   const root = real(paths.root);
   const home = real(paths.home);
-  const priv = [...HOME_PRIVATE.map((p) => path.join(home, p)), ...paths.private.map(real)];
+  // Shallow folders first: a rule for a deeper folder comes later and wins.
+  const open: ExtraFolder[] = [{ path: root, mode: "write" as const }, ...(paths.folders ?? []).map((f) => ({ ...f, path: real(f.path) }))]
+    .sort((a, b) => a.path.length - b.path.length);
+  const writable = open.filter((f) => f.mode === "write").map((f) => f.path);
+  const priv = privateDirs(home, paths.private);
   const sub = (list: string[]) => list.map((p) => `(subpath ${q(p)})`).join(" ");
-  // A project inside, say, Documents stays usable: its folder is allowed after the ban.
-  const around = priv.filter((p) => inside(root, p));
-  const within = priv.filter((p) => !inside(root, p));
-  const way = around.flatMap((p) => foldersBetween(p, root));
-  const secrets = secretPathPatterns(regexQuote(root));
+  // An open folder inside, say, Documents stays usable: it is allowed after the ban.
+  const opened = (p: string) => open.filter((f) => inside(f.path, p));
+  const around = priv.filter((p) => opened(p).length);
+  const within = priv.filter((p) => !opened(p).length);
+  const way = [...new Set(around.flatMap((p) => opened(p).flatMap((f) => foldersBetween(p, f.path))))];
+  const secrets = open.map((f) => secretPathPatterns(regexQuote(f.path)));
+  const regexes = (list: string[]) => list.map((r) => `(regex #"${r}")`).join(" ");
   const lines = [
     "(version 1)",
     "(allow default)",
@@ -137,35 +110,39 @@ export function sandboxProfile(paths: SandboxPaths): string {
     around.length ? `(deny file-read* file-write* ${sub(around)})` : "",
     // Tools (git init, for one) check every folder on the way to the project; listing them stays closed.
     way.length ? `(allow file-read-metadata ${way.map((p) => `(literal ${q(p)})`).join(" ")})` : "",
-    `(allow file-read* file-write* (subpath ${q(root)}))`,
-    // The project's own secrets (.env, keys...): a command's output goes to the AI service.
+    ...open.map((f) =>
+      f.mode === "write"
+        ? `(allow file-read* file-write* (subpath ${q(f.path)}))`
+        // Read only, also when it lies in a temp folder or a cache.
+        : `(allow file-read* (subpath ${q(f.path)}))\n(deny file-write* (subpath ${q(f.path)}))`,
+    ),
+    // Secrets of the open folders (.env, keys...): a command's output goes to the AI service.
     // Only their contents: tools may still see that they exist.
-    `(deny file-read-data ${secrets.secret.map((r) => `(regex #"${r}")`).join(" ")})`,
-    `(allow file-read-data (regex #"${secrets.template}") (regex #"${secrets.dependencies}"))`,
+    `(deny file-read-data ${regexes(secrets.flatMap((s) => s.secret))})`,
+    `(allow file-read-data ${regexes(secrets.flatMap((s) => [s.template, s.dependencies]))})`,
     within.length ? `(deny file-read* file-write* ${sub(within)})` : "",
     `(allow file-read* ${sub(HOME_READABLE.map((p) => path.join(home, p)))})`,
     `(deny file-read* file-write* ${sub(HOME_PRIVATE_AGAIN.map((p) => path.join(home, p)))})`,
     // Files that run code later, outside the sandbox: VS Code tasks and git hooks.
-    `(deny file-write* (subpath ${q(path.join(root, ".vscode"))}))`,
     // The agent's own rules: a command must not give it new instructions.
-    `(deny file-write* (subpath ${q(path.join(root, ".dimosi"))}))`,
     // Also run later without the sandbox: Husky git hooks, direnv, dev
     // containers, GitHub Actions. package.json is not here: `npm install <pkg>`
     // must write it; writes by the agent itself are always asked about.
-    `(deny file-write* ${sub([".husky", ".devcontainer", ".github/workflows"].map((p) => path.join(root, p)))} (regex #"^${regexQuote(root)}/(.*/)?\\.envrc$"))`,
+    `(deny file-write* ${sub(writable.flatMap((dir) => [".vscode", ".dimosi", ".husky", ".devcontainer", ".github/workflows"].map((p) => path.join(dir, p))))} ${regexes(writable.map((dir) => `^${regexQuote(dir)}/(.*/)?\\.envrc$`))})`,
     // Programs started through macOS itself run outside the sandbox: `open`
     // (Launch Services) and Apple Events to other apps (Terminal, Finder...).
     `(deny mach-lookup (global-name-prefix "com.apple.coreservices."))`,
     "(deny appleevent-send)",
   ];
   // Before `git init` there is nothing to protect, and init must be able to create them.
-  // In a repository: hooks and settings of any repository inside the project
+  // In a repository: hooks and settings of any repository inside the folder
   // (nested ones, submodules, worktrees), and .git folders themselves, so they
   // can't be renamed, changed and put back.
-  if (existsSync(path.join(root, ".git"))) {
+  for (const dir of writable) {
+    if (!existsSync(path.join(dir, ".git"))) continue;
     const git = String.raw`(.*/)?\.git`;
     const inner = String.raw`/((modules/.+/)|(worktrees/[^/]+/))?(hooks(/|$)|config$|config\.worktree$)`;
-    lines.push(`(deny file-write* (regex #"^${regexQuote(root)}/${git}(${inner}|$)"))`);
+    lines.push(`(deny file-write* (regex #"^${regexQuote(dir)}/${git}(${inner}|$)"))`);
   }
   return lines.filter(Boolean).join("\n");
 }

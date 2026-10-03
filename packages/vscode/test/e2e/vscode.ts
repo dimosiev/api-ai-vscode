@@ -136,6 +136,10 @@ export const stub = {
   config: {} as Record<string, unknown>,
   /** Answers modal and non-modal message boxes; undefined = dismissed. */
   answer: (_message: string, _items: string[]): string | undefined => undefined,
+  /** What the user picks in a quick pick list. */
+  pick: (_items: Array<{ label: string }>): { label: string } | undefined => undefined,
+  /** What the user chooses in an "open" dialog. */
+  openDialog: (): Uri[] | undefined => undefined,
   messages: [] as string[],
   /** Options ({ modal, detail }) passed with each message box, in order. */
   messageOptions: [] as Array<Record<string, unknown> | undefined>,
@@ -149,6 +153,8 @@ export const stub = {
     this.output = [];
     this.config = {};
     this.answer = () => undefined;
+    this.pick = () => undefined;
+    this.openDialog = () => undefined;
     this.messages = [];
     this.messageOptions = [];
     this.opened = [];
@@ -205,9 +211,9 @@ export const window = {
     stub.opened.push((doc instanceof Uri ? doc : doc.uri).fsPath);
     return undefined;
   },
-  showOpenDialog: async () => undefined,
+  showOpenDialog: async () => stub.openDialog(),
   showSaveDialog: async () => undefined,
-  showQuickPick: async () => undefined,
+  showQuickPick: async (items: Array<{ label: string }>) => stub.pick(items),
   showInputBox: async () => undefined,
   registerWebviewViewProvider: () => disposable(),
   createOutputChannel: (_name: string, _opts?: { log: true }) => {
