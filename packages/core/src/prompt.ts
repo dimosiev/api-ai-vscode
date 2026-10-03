@@ -23,7 +23,12 @@ export interface PromptInput {
   date?: string;
 }
 
-export const today = (): string => new Date().toISOString().slice(0, 10);
+/** The user's local date: toISOString would give London's, a day behind in the small hours east of it. */
+export function today(): string {
+  const now = new Date();
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`;
+}
 
 export function buildSystemPrompt({ root, layout, rules, folders = [], date = today() }: PromptInput): string {
   const paths = folders.length

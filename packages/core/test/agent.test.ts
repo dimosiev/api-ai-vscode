@@ -258,9 +258,9 @@ describe("a stable start of every request", () => {
     const agent = new Agent({ provider, model: "m", root: tmp(), approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL });
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
-      vi.setSystemTime(new Date("2026-10-03T23:59:00Z"));
+      vi.setSystemTime(new Date(2026, 9, 3, 23, 59)); // local time: the date is the user's
       await collect(agent.run("вечером"));
-      vi.setSystemTime(new Date("2026-10-04T00:01:00Z"));
+      vi.setSystemTime(new Date(2026, 9, 4, 0, 1));
       await collect(agent.run("после полуночи"));
       expect(systems[0]).toContain("Date: 2026-10-03");
       expect(systems[1]).toBe(systems[0]);

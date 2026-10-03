@@ -166,7 +166,7 @@ describe("О-8: the date the model is told", () => {
     else process.env.TZ = tz;
   });
 
-  bug("is the user's local date, not London's", () => {
+  it("is the user's local date, not London's", () => {
     process.env.TZ = "Europe/Moscow";
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-02T22:30:00Z")); // 01:30 on October 3 in Moscow
