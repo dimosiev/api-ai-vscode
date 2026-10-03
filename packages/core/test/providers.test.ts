@@ -278,6 +278,69 @@ describe("presets", () => {
   });
 });
 
+describe("models that do not chat (Polza AI lists image, video and speech models too)", () => {
+  // The shape of https://polza.ai/api/v1/models, 3 October 2026.
+  const catalog = {
+    object: "list",
+    data: [
+      { id: "qwen/qwen3.8-27b", type: "chat", architecture: { output_modalities: ["text"] } },
+      { id: "qwen/image-2", type: "image", architecture: { output_modalities: ["image"] } },
+      { id: "kling/v3", type: "video", architecture: { output_modalities: ["video"] } },
+      { id: "openai/text-embedding-4", type: "embedding", architecture: { output_modalities: ["embeddings"] } },
+      // OpenRouter has no "type": a model that answers with text and pictures still chats.
+      { id: "openai/gpt-5-image", architecture: { output_modalities: ["image", "text"] } },
+      { id: "black-forest/flux-2", architecture: { output_modalities: ["image"] } },
+      { id: "plain-model" },
+    ],
+  };
+  const service = (chat: () => Response) => {
+    const urls: string[] = [];
+    const fetchMock = (async (url: string) => {
+      urls.push(String(url));
+      if (String(url).endsWith("/models")) return new Response(JSON.stringify(catalog), { headers: { "content-type": "application/json" } });
+      return chat();
+    }) as unknown as typeof fetch;
+    return { urls, provider: createProvider({ presetId: "polza", apiKey: "k", fetch: fetchMock }) };
+  };
+  const rejected = () => new Response(JSON.stringify({ error: { message: "Некорректный запрос." } }), { status: 400, headers: { "content-type": "application/json" } });
+
+  it("offers only models that can hold a conversation", async () => {
+    const { provider } = service(rejected);
+    expect(await provider.listModels()).toEqual(["openai/gpt-5-image", "plain-model", "qwen/qwen3.8-27b"]);
+  });
+
+  it("explains that the chosen model draws pictures instead of repeating the service's «Некорректный запрос»", async () => {
+    const { provider } = service(rejected);
+    const run = collect(provider.stream({ model: "qwen/image-2", system: "s", messages: history, tools: [] }));
+    await expect(run).rejects.toThrow(/^Модель qwen\/image-2 создаёт картинки и не умеет вести разговор.*Выберите другую модель.*\(Ответ сервиса: .*Некорректный запрос\.\)$/);
+  });
+
+  it("says the same when the service reports the error inside the stream, without a status", async () => {
+    const { provider } = service(() => sseResponse([`data: ${JSON.stringify({ error: { message: "Некорректный запрос." } })}\n\n`]));
+    const run = collect(provider.stream({ model: "kling/v3", system: "s", messages: history, tools: [] }));
+    await expect(run).rejects.toThrow(/^Модель kling\/v3 создаёт видео и не умеет вести разговор/);
+  });
+
+  it("leaves the error of a chat model as it is", async () => {
+    const { provider } = service(rejected);
+    const run = collect(provider.stream({ model: "qwen/qwen3.8-27b", system: "s", messages: history, tools: [] }));
+    await expect(run).rejects.toThrow(/^400 Некорректный запрос\.$/);
+  });
+
+  it("does not blame the model for a wrong key or a lost connection", async () => {
+    const denied = service(() => new Response(JSON.stringify({ error: { message: "bad key" } }), { status: 401, headers: { "content-type": "application/json" } }));
+    await expect(collect(denied.provider.stream({ model: "qwen/image-2", system: "s", messages: history, tools: [] }))).rejects.toMatchObject({ status: 401 });
+    const offline = createProvider({
+      presetId: "polza",
+      apiKey: "k",
+      fetch: (async () => {
+        throw new TypeError("fetch failed");
+      }) as unknown as typeof fetch,
+    });
+    await expect(collect(offline.stream({ model: "qwen/image-2", system: "s", messages: history, tools: [] }))).rejects.toThrow("Connection error.");
+  });
+});
+
 describe("images", () => {
   const msgs: Message[] = [
     { role: "user", parts: [{ type: "text", text: "что это?" }, { type: "image", mediaType: "image/png", data: "AAAA" }] },

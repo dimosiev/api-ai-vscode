@@ -21,7 +21,7 @@ export class OpenAIProvider implements Provider {
   private includeUsage: boolean;
   /** Mark cache points for Claude models; turned off if the service rejects the marks. */
   private promptCache = true;
-  private pricing?: Promise<Map<string, Pricing>>;
+  private catalog?: Promise<Catalog>;
 
   constructor(opts: OpenAIProviderOptions) {
     this.id = opts.id;
@@ -35,6 +35,19 @@ export class OpenAIProvider implements Provider {
   }
 
   async *stream(req: ChatRequest): AsyncIterable<StreamEvent> {
+    try {
+      yield* this.chat(req);
+    } catch (e) {
+      // The service answers a chat request to a picture model with a bare "bad request".
+      const status = (e as { status?: number }).status;
+      const refused = status === undefined ? !(e instanceof OpenAI.APIConnectionError) && !(e instanceof IncompleteResponseError) : [400, 404, 422].includes(status);
+      const kind = refused && !req.signal?.aborted ? (await this.readCatalog()).kinds.get(req.model) : undefined;
+      if (kind) throw new NotChatModelError(req.model, kind, e);
+      throw e;
+    }
+  }
+
+  private async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
     const create = (withUsage: boolean, withCache: boolean) =>
       this.client.chat.completions.create(
         {
@@ -120,26 +133,75 @@ export class OpenAIProvider implements Provider {
     };
   }
 
+  /** Only models that can hold a conversation: the agent cannot work with the others. */
   async listModels(): Promise<string[]> {
     const ids: string[] = [];
-    for await (const model of this.client.models.list()) ids.push(model.id);
+    for await (const model of this.client.models.list()) {
+      if (!modelKind(model as unknown as Record<string, unknown>)) ids.push(model.id);
+    }
     return ids.sort();
   }
 
   /** Reads prices from /models when the server publishes them (Polza AI, OpenRouter). */
   async getPricing(model: string): Promise<Pricing | undefined> {
-    this.pricing ??= (async () => {
-      const map = new Map<string, Pricing>();
+    return (await this.readCatalog()).prices.get(model);
+  }
+
+  /** One read of /models for the prices and for the models that do not chat. */
+  private readCatalog(): Promise<Catalog> {
+    this.catalog ??= (async () => {
+      const catalog: Catalog = { prices: new Map(), kinds: new Map() };
       for await (const m of this.client.models.list({ timeout: 15_000, maxRetries: 0 })) {
-        const price = parsePricing(m as unknown as Record<string, unknown>);
-        if (price) map.set(m.id, price);
+        const raw = m as unknown as Record<string, unknown>;
+        const price = parsePricing(raw);
+        if (price) catalog.prices.set(m.id, price);
+        const kind = modelKind(raw);
+        if (kind) catalog.kinds.set(m.id, kind);
       }
-      return map;
+      return catalog;
     })().catch(() => {
-      this.pricing = undefined; // retry next time
-      return new Map<string, Pricing>();
+      this.catalog = undefined; // retry next time
+      return { prices: new Map(), kinds: new Map() };
     });
-    return (await this.pricing).get(model);
+    return this.catalog;
+  }
+}
+
+interface Catalog {
+  prices: Map<string, Pricing>;
+  kinds: Map<string, string>;
+}
+
+/**
+ * What a model makes when it is not a chat model ("image", "video"...), by the
+ * Polza AI (`type`) and OpenRouter (`output_modalities`) model lists.
+ * Undefined for a chat model and for a service that does not say.
+ */
+export function modelKind(raw: Record<string, unknown>): string | undefined {
+  if (typeof raw.type === "string") return raw.type === "chat" ? undefined : raw.type;
+  const out = (raw.architecture as { output_modalities?: unknown } | undefined)?.output_modalities;
+  if (!Array.isArray(out) || out.length === 0 || out.includes("text")) return undefined;
+  return String(out[0]);
+}
+
+const KIND_TEXT: Record<string, string> = {
+  image: "создаёт картинки",
+  video: "создаёт видео",
+  music: "создаёт музыку",
+  audio: "создаёт звук",
+  tts: "озвучивает текст",
+  speech: "озвучивает текст",
+  stt: "распознаёт речь",
+  transcription: "распознаёт речь",
+  embedding: "готовит текст для поиска",
+  embeddings: "готовит текст для поиска",
+};
+
+export class NotChatModelError extends Error {
+  constructor(model: string, kind: string, cause: unknown) {
+    const does = KIND_TEXT[kind] ?? `другого вида («${kind}»)`;
+    const answer = cause instanceof Error ? cause.message : String(cause);
+    super(`Модель ${model} ${does} и не умеет вести разговор, а агенту нужна разговорная модель. Выберите другую модель. (Ответ сервиса: ${answer})`, { cause });
   }
 }
 
