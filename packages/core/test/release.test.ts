@@ -41,11 +41,16 @@ const TOKEN = "ghp_notARealTokenNotARealTokenNotAReal00";
 type Run = { name: string; status: string; conclusion: string | null; html_url: string };
 const ciRun = (status: string, conclusion: string | null, name = "CI"): Run => ({ name, status, conclusion, html_url: "https://github.com/example/dimosi/actions/runs/1" });
 
-/** Runs the release script against a fake GitHub on 127.0.0.1 that answers with `runs` ("down": an error). */
-async function release(f: ReturnType<typeof fixture>, args: string[], runs: Run[] | "down") {
+/** Runs the release script against a fake GitHub on 127.0.0.1 that answers with `runs` ("down": an error; "limit": no requests left this hour). */
+async function release(f: ReturnType<typeof fixture>, args: string[], runs: Run[] | "down" | "limit") {
   const asked: string[] = [];
   const github = createServer((req, res) => {
     asked.push(req.url ?? "");
+    if (runs === "limit") {
+      res.writeHead(403, { "content-type": "application/json", "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1791000000" });
+      res.end(JSON.stringify({ message: "API rate limit exceeded" }));
+      return;
+    }
     res.writeHead(runs === "down" ? 503 : 200, { "content-type": "application/json" });
     res.end(JSON.stringify(runs === "down" ? { message: "unavailable" } : { workflow_runs: runs }));
   });
@@ -90,12 +95,14 @@ describe.skipIf(process.platform === "win32")("release script", () => {
     expect(r.log).toMatch(/^npm test /m);
   }, 30_000);
 
-  it.each<[string, Run[] | "down", RegExp]>([
+  it.each<[string, Run[] | "down" | "limit", RegExp]>([
     ["the commit is not on GitHub (no CI run)", [], /нет проверки CI[^]*git push/],
     ["CI is still running", [ciRun("in_progress", null)], /ещё идёт/],
     ["CI failed", [ciRun("completed", "failure")], /не зелёный \(CI: failure\)/],
     ["one of several runs failed", [ciRun("completed", "success"), ciRun("completed", "cancelled", "Other")], /не зелёный \(Other: cancelled\)/],
     ["GitHub can't be asked", "down", /Не удалось узнать статус CI: GitHub ответил 503/],
+    // Audit after 0.5.0, Р-5: 60 requests an hour per address, shared with everyone behind the same VPN.
+    ["GitHub's hourly limit of requests is used up", "limit", /исчерпан лимит запросов[^]*Интернет в порядке[^]*после \d\d:\d\d/],
   ])("stops before anything else when %s", async (_name, runs, message) => {
     const f = fixture();
     const r = await release(f, ["9.9.9"], runs);

@@ -134,11 +134,20 @@ async function requireGreenCi() {
   if (!repo) fail("Не удалось определить репозиторий на GitHub (git remote origin). Выпуск возможен только из репозитория с CI.");
   const api = process.env.DIMOSI_GITHUB_API ?? "https://api.github.com";
   let runs;
+  let limitedUntil;
   try {
     const res = await fetch(`${api}/repos/${repo}/actions/runs?head_sha=${sha}`, { headers: { accept: "application/vnd.github+json", "user-agent": "dimosi-release" } });
+    // Without a login GitHub answers 60 requests an hour per address; behind a VPN the address is shared.
+    if ((res.status === 403 || res.status === 429) && res.headers.get("x-ratelimit-remaining") === "0") {
+      limitedUntil = new Date(Number(res.headers.get("x-ratelimit-reset")) * 1000);
+    }
     if (!res.ok) throw new Error(`GitHub ответил ${res.status}`);
     runs = (await res.json()).workflow_runs ?? [];
   } catch (e) {
+    if (limitedUntil) {
+      const at = Number.isNaN(limitedUntil.getTime()) ? "через час" : `после ${limitedUntil.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`;
+      fail(`Не удалось узнать статус CI: у GitHub исчерпан лимит запросов с вашего адреса (60 в час; с VPN адрес общий с другими людьми). Интернет в порядке. Запустите выпуск снова ${at}.`);
+    }
     fail(`Не удалось узнать статус CI: ${e.message}. Проверьте интернет и повторите. Если GitHub не работает, а выпуск срочный: npm run release -- --skip-ci`);
   }
   const short = sha.slice(0, 7);
