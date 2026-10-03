@@ -141,6 +141,18 @@ describe("CLI, end to end", () => {
     expect(third.out).toContain("Выполнить команду:");
   }, 60_000);
 
+  it("a web page is asked about with its address, even with --auto; a refused site is not contacted", async () => {
+    server = await startFakeServer([{ toolCalls: [{ name: "fetch_page", args: { url: "https://docs.example.com/guide" } }] }, { text: "Не читаю." }]);
+    const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-root-"));
+    const home = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-home-"));
+    const { code, out } = await runCli(["--provider", "custom", "--base-url", server.url, "--model", "fake-model", "--auto", "прочитай документацию"], root, home, "n\n");
+    expect(code).toBe(0);
+    expect(out).toContain("Прочитать страницу в интернете:");
+    expect(out).toContain("https://docs.example.com/guide");
+    expect(out).toContain("больше не спрашивать про сайт docs.example.com");
+    expect(String(server.requests[1].body.messages.find((m) => m.role === "tool")!.content)).toMatch(/did not allow/);
+  }, 30_000);
+
   it("--plan: the agent changes nothing until /go", async () => {
     const write = { toolCalls: [{ name: "write_file", args: { path: "page.html", content: "<h1>hi</h1>\n" } }] };
     server = await startFakeServer([write, { text: "План: создать page.html." }, write, { text: "Готово." }]);

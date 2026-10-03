@@ -97,7 +97,7 @@
       },
       {
         "command": "dimosi.showCommandRules",
-        "title": "dimosi: Запомненные команды («Всегда»)…"
+        "title": "dimosi: Запомненные команды и сайты («Всегда»)…"
       },
       {
         "command": "dimosi.showRules",

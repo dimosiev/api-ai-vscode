@@ -135,6 +135,16 @@ describe("chat webview", () => {
     expect(exact.querySelector(".approval-result")?.textContent).toBe("Разрешено");
   });
 
+  it("a web page card shows the whole address and offers to remember the site", () => {
+    send({ type: "approval_request", id: "f1", kind: "fetch", url: "https://docs.example.com/guide?topic=fetch", host: "docs.example.com" });
+    const card = $$(".approval").at(-1)!;
+    expect(card.querySelector(".approval-title")?.textContent).toBe("Прочитать страницу в интернете");
+    expect(card.querySelector(".command")?.textContent).toBe("https://docs.example.com/guide?topic=fetch");
+    expect([...card.querySelectorAll(".approval-actions .btn")].map((b) => b.textContent)).toEqual(["Прочитать", "Отклонить", "Всегда для docs.example.com"]);
+    send({ type: "approval_resolved", id: "f1", decision: "allow_always" });
+    expect(card.querySelector(".approval-result")?.textContent).toContain("Больше не спрашиваю во всех проектах про страницы сайта docs.example.com");
+  });
+
   it("the plan toggle shows its state; a ready plan offers to run it once", () => {
     const status = { type: "status", provider: "Polza AI", model: "m", approval: "ask", needsSetup: false, hasFolder: true, access: "проект", accessDetail: "" } as const;
     send({ ...status, planFirst: false });

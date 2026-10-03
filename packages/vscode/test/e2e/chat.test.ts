@@ -618,3 +618,24 @@ describe("plan first", () => {
     expect(events.some((m) => m.type === "plan_ready")).toBe(false);
   });
 });
+
+describe("web pages", () => {
+  it("a new site is asked about with its full address, even with approvals off; a refused site is not contacted", async () => {
+    const panel = await setup([{ toolCalls: [{ name: "fetch_page", args: { url: "https://docs.example.com/guide?topic=fetch" } }] }, { text: "Хорошо, не читаю." }], "auto");
+    const events = await panel.task("прочитай документацию", () => "deny");
+    expect(events.find(isType("approval_request"))).toMatchObject({ kind: "fetch", url: "https://docs.example.com/guide?topic=fetch", host: "docs.example.com" });
+    expect(events.find(isType("tool_start"))?.title).toBe("Чтение страницы https://docs.example.com/guide?topic=fetch");
+    expect(events.find(isType("tool_end"))).toMatchObject({ isError: true, result: expect.stringMatching(/did not allow/) });
+  });
+
+  it("allowed sites are in the list of remembered permissions and can be taken back", async () => {
+    const { commandRuleStore, showCommandRules } = await import("../../src/commandRules");
+    await commandRuleStore(context as never, root).addSite("docs.example.com");
+    let picked = false;
+    stub.pick = (items) => (picked ? undefined : ((picked = true), items.find((i) => i.label.includes("docs.example.com"))));
+    stub.answer = (_msg, items) => items.find((i) => i === "Забыть");
+    await showCommandRules(context as never, root);
+    expect(stub.messages.some((m) => m.includes("страницы сайта docs.example.com"))).toBe(true);
+    expect(commandRuleStore(context as never, root).sites()).toEqual([]);
+  });
+});

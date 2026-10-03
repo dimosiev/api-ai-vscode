@@ -405,6 +405,11 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         console.log(c.yellow(c.bold(req.oldContent === null ? `Создать файл ${relPath}` : `Изменить файл ${relPath}`)));
         if (warning) console.log(c.red(c.bold(`⚠ ${warning} Такой файл dimosi всегда показывает отдельно, даже без подтверждений.`)));
         console.log(renderDiff(relPath, req.oldContent === null ? null : revealHidden(req.oldContent), revealHidden(req.newContent)));
+      } else if (req.kind === "fetch") {
+        console.log(c.yellow(c.bold("Прочитать страницу в интернете:")));
+        if (warning) console.log(c.red(c.bold(`⚠ ${warning}`)));
+        console.log(`  ${revealHidden(req.url)}`);
+        console.log(c.dim("  Агент получит текст страницы. Сайт увидит этот адрес целиком."));
       } else {
         console.log(c.yellow(c.bold("Выполнить команду:")));
         if (warning) console.log(c.red(c.bold(`⚠ ${warning} Такую команду dimosi всегда показывает отдельно, даже без подтверждений.`)));
@@ -414,6 +419,8 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         ? "Разрешить? [y] да / [n] нет: "
         : req.kind === "write"
           ? "Разрешить? [y] да / [n] нет / [a] да, и не спрашивать про файлы до конца сессии: "
+          : req.kind === "fetch"
+            ? `Разрешить? [y] да / [n] нет / [a] да, и больше не спрашивать про сайт ${req.host}: `
           : `Разрешить? [y] да / [n] нет / [a] да, и больше не спрашивать в этом проекте про ${req.always?.kind === "prefix" ? `команды «${req.always.text} …»` : "эту же команду"}: `;
       const answer = ((await io.ask(c.yellow(question), { signal: controller?.signal })) ?? "").toLowerCase();
       if (["a", "а", "always", "всегда", "в"].includes(answer)) return warning ? "allow" : "allow_always";
@@ -552,23 +559,30 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         break;
       case "allowed": {
         const rules = commandRules.list();
+        const sites = commandRules.sites();
         const [action, n] = rest;
         if (action === "clear") {
           await commandRules.clear();
           console.log(c.dim("Запомненных команд больше нет: агент снова спросит про каждую."));
         } else if (action === "remove") {
-          const rule = rules[Number(n) - 1];
-          if (!rule) {
+          const index = Number(n) - 1;
+          const rule = rules[index];
+          const site = sites[index - rules.length];
+          if (rule) {
+            await commandRules.remove(rule);
+            console.log(c.dim(`Убрано: ${describeRule(rule)}.`));
+          } else if (site && index >= rules.length) {
+            await commandRules.removeSite(site);
+            console.log(c.dim(`Убрано: сайт ${site}.`));
+          } else {
             console.log(c.red("Укажите номер из списка: /allowed remove 1"));
-            break;
           }
-          await commandRules.remove(rule);
-          console.log(c.dim(`Убрано: ${describeRule(rule)}.`));
-        } else if (!rules.length) {
+        } else if (!rules.length && !sites.length) {
           console.log("Запомненных команд в этом проекте нет. Они появляются после ответа [a] на вопрос о команде.");
         } else {
-          console.log(c.bold("Без вопроса в этом проекте выполняются:"));
+          console.log(c.bold("Без вопроса выполняются (команды — в этом проекте, сайты — везде):"));
           rules.forEach((rule, i) => console.log(`  ${i + 1}. ${describeRule(rule)}`));
+          sites.forEach((site, i) => console.log(`  ${rules.length + i + 1}. страницы сайта ${site}`));
           console.log(c.dim("Убрать одну: /allowed remove НОМЕР. Убрать все: /allowed clear"));
         }
         break;

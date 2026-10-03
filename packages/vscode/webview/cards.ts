@@ -192,6 +192,25 @@ export function approvalCommandCard(id: string, command: string, post: Post, war
   );
 }
 
+export function approvalFetchCard(id: string, url: string, host: string, post: Post, warning?: string): HTMLElement {
+  return h(
+    "div",
+    { class: `approval${warning ? " protected" : ""}`, "data-id": id, "data-remembered": warning ? undefined : `страницы сайта ${host}`, "data-remembered-scope": "во всех проектах" },
+    h("div", { class: "approval-head" }, svg(ICONS.terminal, "approval-icon"), h("span", { class: "approval-title" }, "Прочитать страницу в интернете")),
+    warning && h("div", { class: "approval-warning" }, svg(ICONS.warn, "inline-icon"), h("span", {}, warning)),
+    h("pre", { class: "command" }, url),
+    h("div", { class: "approval-note" }, "Агент получит текст страницы. Сайт увидит этот адрес целиком: проверьте, что в нём нет ничего лишнего."),
+    approvalButtons(
+      id,
+      post,
+      "Прочитать",
+      warning ? undefined : `Больше не спрашивать про страницы сайта ${host}, во всех проектах. Посмотреть и убрать: меню «…» панели → «Запомненные команды».`,
+      undefined,
+      `Всегда для ${short(host)}`,
+    ),
+  );
+}
+
 /** Without `alwaysTitle` there is no "Always" button. */
 function approvalButtons(id: string, post: Post, allowLabel: string, alwaysTitle: string | undefined, extra?: HTMLElement, alwaysLabel = "Всегда"): HTMLElement {
   const send = (decision: "allow" | "deny" | "allow_always") => post({ type: "approval_response", id, decision });
@@ -216,7 +235,7 @@ export function resolveApproval(card: HTMLElement, decision: "allow" | "deny" | 
       : decision !== "allow_always"
         ? "Разрешено"
         : remembered
-          ? `Разрешено. Больше не спрашиваю в этом проекте про ${remembered}.`
+          ? `Разрешено. Больше не спрашиваю ${card.getAttribute("data-remembered-scope") ?? "в этом проекте"} про ${remembered}.`
           : "Разрешено (больше не спрашивать до конца чата)";
   actions?.replaceWith(
     h(

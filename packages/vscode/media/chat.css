@@ -142,6 +142,12 @@ button {
   background: transparent;
 }
 
+.approval-note {
+  padding: 0 10px 8px;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
 .plan-toggle.on {
   color: var(--brand);
   border-color: var(--brand-border);

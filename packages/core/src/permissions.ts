@@ -22,6 +22,14 @@ export type ApprovalRequest =
       warning?: string;
       /** What "Always" would remember, set by the gate. Absent when "Always" is not offered. */
       always?: CommandRule;
+    }
+  | {
+      /** Reading a web page. "Always" remembers the site. */
+      kind: "fetch";
+      url: string;
+      /** The site, e.g. "docs.python.org". */
+      host: string;
+      warning?: string;
     };
 
 export type ApprovalDecision = "allow" | "deny" | "allow_always";
@@ -83,7 +91,9 @@ export function revealHidden(text: string): string {
 const countHidden = (text: string | null) => text?.match(HIDDEN)?.length ?? 0;
 
 function hiddenCharsWarning(req: ApprovalRequest): string | undefined {
-  const found = req.kind === "command"
+  const found = req.kind === "fetch"
+    ? countHidden(req.url) > 0
+    : req.kind === "command"
     ? countHidden(req.command) > 0
     // In a file, only new ones count: a byte order mark at the start is common.
     : countHidden(req.relPath) > 0 || countHidden(req.newContent) > countHidden(req.oldContent);
@@ -148,6 +158,7 @@ export class PermissionGate {
   private writesAllowed = false;
   /** Rules of this chat: all of them without a store, or those the store could not save. */
   private sessionRules: CommandRule[] = [];
+  private sessionSites: string[] = [];
   /**
    * "Plan first": nothing is changed and the user is not asked. Writes are
    * refused; so are commands, except the ones the user allowed with "Always"
@@ -163,8 +174,9 @@ export class PermissionGate {
   ) {}
 
   async check(req: ApprovalRequest): Promise<boolean> {
-    const own = req.kind === "write" ? protectedPathWarning(req.relPath) : dangerousCommandWarning(req.command);
+    const own = req.kind === "write" ? protectedPathWarning(req.relPath) : req.kind === "command" ? dangerousCommandWarning(req.command) : undefined;
     const warning = [req.warning, hiddenCharsWarning(req), own].filter(Boolean).join(" ") || undefined;
+    if (req.kind === "fetch") return this.checkSite(req, warning);
     const remembered = () => req.kind === "command" && [...(this.rules?.list() ?? []), ...this.sessionRules].some((rule) => ruleMatches(rule, req.command));
     if (this.planOnly) {
       if (warning || !remembered()) throw new Error(PLAN_MODE_REFUSAL);
@@ -193,9 +205,30 @@ export class PermissionGate {
     return decision !== "deny";
   }
 
+  /**
+   * Every new site is asked about, in any mode: a page address can carry
+   * data out, and a page can carry instructions in. "Always" remembers the
+   * site; reading changes nothing, so plan mode asks as usual.
+   */
+  private async checkSite(req: Extract<ApprovalRequest, { kind: "fetch" }>, warning: string | undefined): Promise<boolean> {
+    const known = [...(this.rules?.sites?.() ?? []), ...this.sessionSites].includes(req.host);
+    if (known && !warning) return true;
+    const decision = await this.handler.approve({ ...req, warning });
+    if (decision === "allow_always" && !warning) {
+      try {
+        if (!this.rules?.addSite) throw new Error("no store");
+        await this.rules.addSite(req.host);
+      } catch {
+        this.sessionSites.push(req.host);
+      }
+    }
+    return decision !== "deny";
+  }
+
   /** New chat: "Always" for file writes is forgotten; saved command rules stay. */
   resetSessionApprovals(): void {
     this.writesAllowed = false;
     this.sessionRules = [];
+    this.sessionSites = [];
   }
 }

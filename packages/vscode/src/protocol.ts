@@ -86,6 +86,16 @@ export type ToWebview =
       /** What "Always" would remember: commands that begin like this, or only this one. */
       always?: { kind: "prefix" | "exact"; text: string };
     }
+  | {
+      type: "approval_request";
+      id: string;
+      kind: "fetch";
+      url: string;
+      /** The site that "Always" would remember. */
+      host: string;
+      /** Shown as a warning, and "Always" is not offered. */
+      warning?: string;
+    }
   | { type: "approval_resolved"; id: string; decision: "allow" | "deny" | "allow_always" }
   | { type: "changes"; turn: number; files: ChangedFileView[] }
   | {

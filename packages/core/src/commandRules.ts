@@ -14,6 +14,9 @@ export interface CommandRule {
 export interface CommandRuleStore {
   list(): CommandRule[];
   add(rule: CommandRule): Promise<void>;
+  /** Sites whose pages may be read without asking. */
+  sites?(): string[];
+  addSite?(host: string): Promise<void>;
 }
 
 /**
@@ -74,6 +77,8 @@ export interface CommandRulesStorage {
 }
 
 const MAX_RULES = 200;
+/** Where the allowed sites are kept: one list for all projects (no project folder has this name). */
+const SITES_KEY = "sites";
 
 /**
  * One project's remembered commands. They are kept by the host outside the
@@ -128,5 +133,24 @@ export class ProjectCommandRules implements CommandRuleStore {
 
   async clear(): Promise<void> {
     await this.replace([]);
+  }
+
+  sites(): string[] {
+    return (this.all()[SITES_KEY] ?? []).map((r) => r.text);
+  }
+
+  private async replaceSites(hosts: string[]): Promise<void> {
+    const all = this.all();
+    if (hosts.length) all[SITES_KEY] = hosts.slice(-MAX_RULES).map((text) => ({ kind: "exact", text }));
+    else delete all[SITES_KEY];
+    await this.storage.save(all);
+  }
+
+  async addSite(host: string): Promise<void> {
+    if (!this.sites().includes(host)) await this.replaceSites([...this.sites(), host]);
+  }
+
+  async removeSite(host: string): Promise<void> {
+    await this.replaceSites(this.sites().filter((h) => h !== host));
   }
 }

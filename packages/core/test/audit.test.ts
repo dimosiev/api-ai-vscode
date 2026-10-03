@@ -271,7 +271,7 @@ describe("AUDIT-10: \"Always\" covers one command, not all of them", () => {
     const asked: string[] = [];
     const gate = new PermissionGate({
       approve: async (req) => {
-        asked.push(req.kind === "command" ? req.command : req.relPath);
+        asked.push(req.kind === "command" ? req.command : req.kind === "write" ? req.relPath : req.url);
         return "allow_always";
       },
     });
