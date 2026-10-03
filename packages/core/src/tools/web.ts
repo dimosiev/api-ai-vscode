@@ -67,16 +67,74 @@ export function isPublicAddress(ip: string): boolean {
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", mdash: "—", ndash: "–", hellip: "…", laquo: "«", raquo: "»", copy: "©" };
 
+/** Elements whose content is not the page's text. */
+const SKIPPED = ["script", "style", "noscript", "svg", "template", "head"];
+const SKIPPED_END = new Map(SKIPPED.map((name) => [name, new RegExp(String.raw`</${name}\s*>`, "gi")]));
+/** Elements that start on a new line. */
+const BLOCKS = new Set("br hr p div section article header footer main nav aside h1 h2 h3 h4 h5 h6 li ul ol tr table pre blockquote dd dt dl figure form".split(" "));
+const TAG_NAME = /^<(\/?)([a-z][a-z0-9]*)/i;
+const LINK_ADDRESS = /\bhref\s*=\s*["']?(https?:[^"'\s>]+)/i;
+
+/**
+ * The text between the tags, in one pass over the page. Every search goes
+ * forward only, so the time grows with the size of the page and not faster:
+ * a page of unclosed tags must not freeze the editor (regular expressions
+ * over the whole page did).
+ */
+function stripMarkup(html: string): string {
+  const out: string[] = [];
+  /** Addresses of the links that are open now, the innermost last ("" for a link without one). */
+  const links: string[] = [];
+  let at = 0;
+  while (at < html.length) {
+    const lt = html.indexOf("<", at);
+    if (lt < 0) {
+      out.push(html.slice(at));
+      break;
+    }
+    out.push(html.slice(at, lt));
+    if (html.startsWith("<!--", lt)) {
+      const end = html.indexOf("-->", lt + 4);
+      // An unclosed comment hides the rest of the page, as in a browser.
+      if (end < 0) break;
+      at = end + 3;
+      continue;
+    }
+    const gt = html.indexOf(">", lt + 1);
+    if (gt < 0) {
+      // No tag can end after this point: the rest is text.
+      out.push(html.slice(lt));
+      break;
+    }
+    const tag = html.slice(lt, gt + 1);
+    at = gt + 1;
+    const parsed = TAG_NAME.exec(tag);
+    if (!parsed) continue;
+    const closing = parsed[1] === "/";
+    const name = parsed[2].toLowerCase();
+    const skippedEnd = closing ? undefined : SKIPPED_END.get(name);
+    if (skippedEnd) {
+      skippedEnd.lastIndex = at;
+      if (!skippedEnd.exec(html)) break;
+      at = skippedEnd.lastIndex;
+    } else if (name === "a") {
+      if (!closing) links.push(LINK_ADDRESS.exec(tag)?.[1] ?? "");
+      else {
+        const address = links.pop();
+        if (address) out.push(` (${address})`);
+      }
+    } else if (BLOCKS.has(name)) {
+      out.push("\n");
+    } else if (closing && (name === "td" || name === "th")) {
+      out.push(" | ");
+    }
+  }
+  return out.join("");
+}
+
 /** A page as plain text: no scripts, styles or markup; links keep their address. */
 export function htmlToText(html: string): string {
-  return html
-    .replace(/<!--[^]*?-->/g, "")
-    .replace(/<(script|style|noscript|svg|template|head)\b[^]*?<\/\1\s*>/gi, "")
-    .replace(/<a\b[^>]*\bhref\s*=\s*["']?(https?:[^"'\s>]+)["']?[^>]*>([^]*?)<\/a\s*>/gi, (_m, href: string, text: string) => `${text} (${href})`)
-    .replace(/<(br|hr)\b[^>]*>/gi, "\n")
-    .replace(/<\/?(p|div|section|article|header|footer|main|nav|aside|h[1-6]|li|ul|ol|tr|table|pre|blockquote|dd|dt|dl|figure|form)\b[^>]*>/gi, "\n")
-    .replace(/<\/(td|th)\s*>/gi, " | ")
-    .replace(/<[^>]*>/g, "")
+  return stripMarkup(html)
     .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, name: string) => {
       if (name[0] !== "#") return ENTITIES[name.toLowerCase()] ?? m;
       const code = name[1].toLowerCase() === "x" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);

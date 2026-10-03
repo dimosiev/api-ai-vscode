@@ -18,11 +18,33 @@ const bug = process.env.AUDIT_STRICT ? it : it.fails;
 const tmp = (prefix: string) => realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
 
 describe("О-3: a page must not freeze the editor", () => {
-  bug("text with many unclosed tags is converted in linear time", () => {
-    const started = Date.now();
-    htmlToText("<".repeat(120_000));
-    expect(Date.now() - started).toBeLessThan(1000);
-  }, 60_000);
+  // 2 MB is the most that is read from a site. Before the fix 80 thousand characters took over 2 s, and four times more for every doubling.
+  const SIZE = 2 * 1024 * 1024;
+  const pages: Record<string, string> = {
+    "bare <": "<".repeat(SIZE),
+    "unclosed comments": "<!--".repeat(SIZE / 4),
+    "unclosed scripts": "<script ".repeat(SIZE / 8),
+    "unclosed scripts with their tags closed": "<script>".repeat(SIZE / 8),
+    "unclosed links": "<a href=https://example.com/>".repeat(SIZE / 29),
+    "tags that never end": "<p ".repeat(SIZE / 3),
+    "half an entity": "&amp".repeat(SIZE / 4),
+    "spaces and line breaks": " \n".repeat(SIZE / 2),
+  };
+  for (const [name, html] of Object.entries(pages)) {
+    it(`${name}: 2 MB are converted in well under 2 s`, () => {
+      const started = Date.now();
+      htmlToText(html);
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
+  }
+
+  it("broken markup still gives the text around it", () => {
+    expect(htmlToText("before <b>bold</b> 1 < 2 and after")).toBe("before bold 1 < 2 and after");
+    expect(htmlToText("<p>one</p><script>var a = '<p>no</p>'</script><p>two</p>")).toBe("one\n\ntwo");
+    expect(htmlToText("<p>seen</p><!-- never closed <p>hidden</p>")).toBe("seen");
+    expect(htmlToText('<a href="https://a.example/">outer <a href="/local">inner</a> text</a>')).toBe("outer inner text (https://a.example/)");
+    expect(htmlToText("<header>top</header><HEAD><title>t</title></HEAD><body>text</body>")).toBe("top\ntext");
+  });
 });
 
 describe("О-4: pages that are not UTF-8", () => {
