@@ -12,12 +12,14 @@
     "build": "npm run build -w @dimosi/cli -w dimosi",
     "typecheck": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/cli && tsc --noEmit -p packages/vscode && tsc --noEmit -p packages/vscode/webview",
     "test": "vitest run",
+    "test:vscode": "node packages/vscode/test/real/run.mjs",
     "package": "node scripts/package.mjs",
     "release": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/release.mjs",
     "signing-key": "node scripts/signing-key.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.19.1",
+    "@vscode/test-electron": "^3.1.0",
     "esbuild": "^0.28.2",
     "jsdom": "^30.1.1",
     "typescript": "^7.0.2",

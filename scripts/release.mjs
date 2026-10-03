@@ -2,6 +2,9 @@
 //
 //   npm run release                       # 0.3.0 -> 0.3.1
 //   npm run release -- 0.4.0 --notes "Что нового"
+//   npm run release -- --skip-ci          # only if GitHub itself is down
+//
+// The commit being released must be on GitHub with a green CI run.
 //
 // Needs release.config.json (see release.config.example.json) and the signing
 // key from the password manager, pasted when asked after the checks pass.
@@ -22,7 +25,8 @@ delete process.env.DIMOSI_SIGNING_KEY;
 const args = process.argv.slice(2);
 const notesIndex = args.indexOf("--notes");
 const notes = notesIndex >= 0 ? args[notesIndex + 1] ?? "" : "";
-const versionArg = args.find((a, i) => !a.startsWith("--") && i !== notesIndex + 1);
+// The text after --notes is not a version; without --notes there is nothing to skip.
+const versionArg = args.find((a, i) => !a.startsWith("--") && (notesIndex < 0 || i !== notesIndex + 1));
 
 const fail = (message) => {
   console.error(`\n✖ ${message}`);
@@ -40,6 +44,10 @@ const PACKAGES = ["package.json", "packages/core/package.json", "packages/cli/pa
 
 // 0. The release must match a commit, so it can be found and rebuilt later.
 if (git("status", "--porcelain")) fail("Есть незакоммиченные изменения. Сначала закоммитьте их (git commit), потом выпускайте.");
+
+// 0a. ...and that commit must have passed CI: Linux and macOS, including the test in a real VS Code.
+if (args.includes("--skip-ci")) console.log("\n⚠ Проверка CI пропущена (--skip-ci). Этот выпуск не проверен на GitHub.");
+else await requireGreenCi();
 
 const revertVersion = () => execFileSync("git", ["checkout", "--", ...PACKAGES, "package-lock.json"], { cwd: root });
 
@@ -117,6 +125,29 @@ execFileSync("git", ["tag", `v${next}`], { cwd: root });
 console.log(`\n✔ dimosi ${next} опубликован и подписан. Установленные расширения обновятся сами в течение 6 часов`);
 console.log(`  (сразу — командой «dimosi: Проверить обновления»). CLI: dimosi update.`);
 console.log(`  Создан коммит «Release ${next}» и метка v${next}. Отправьте их на GitHub: git push && git push --tags`);
+
+/** Stops unless GitHub Actions has finished for the current commit and every run is green. */
+async function requireGreenCi() {
+  const sha = git("rev-parse", "HEAD");
+  // Only owner/name is taken: the address itself may hold a token and is never printed.
+  const repo = /github\.com[:/]([\w.-]+\/[\w.-]+?)(\.git)?$/.exec(git("remote", "get-url", "origin"))?.[1];
+  if (!repo) fail("Не удалось определить репозиторий на GitHub (git remote origin). Выпуск возможен только из репозитория с CI.");
+  const api = process.env.DIMOSI_GITHUB_API ?? "https://api.github.com";
+  let runs;
+  try {
+    const res = await fetch(`${api}/repos/${repo}/actions/runs?head_sha=${sha}`, { headers: { accept: "application/vnd.github+json", "user-agent": "dimosi-release" } });
+    if (!res.ok) throw new Error(`GitHub ответил ${res.status}`);
+    runs = (await res.json()).workflow_runs ?? [];
+  } catch (e) {
+    fail(`Не удалось узнать статус CI: ${e.message}. Проверьте интернет и повторите. Если GitHub не работает, а выпуск срочный: npm run release -- --skip-ci`);
+  }
+  const short = sha.slice(0, 7);
+  if (!runs.length) fail(`Для коммита ${short} на GitHub нет проверки CI. Сначала отправьте коммиты (git push), дождитесь зелёной галочки и запустите выпуск снова.`);
+  if (runs.some((r) => r.status !== "completed")) fail(`CI для коммита ${short} ещё идёт. Подождите несколько минут и запустите выпуск снова: ${runs[0].html_url}`);
+  const red = runs.filter((r) => r.conclusion !== "success");
+  if (red.length) fail(`CI для коммита ${short} не зелёный (${red.map((r) => `${r.name}: ${r.conclusion}`).join(", ")}). Выпуск остановлен: ${red[0].html_url}`);
+  console.log(`\n✔ CI для коммита ${short} зелёный`);
+}
 
 /** Reads a line without showing it on screen. */
 function askHidden(question) {

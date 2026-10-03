@@ -16,7 +16,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       # Pinned to commits: a moved tag can't swap the code that runs here.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,3 +28,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      # The built extension in a real VS Code (downloaded here), with the fake model server.
+      # Linux runners have no screen: xvfb gives VS Code a virtual one.
+      - name: Real VS Code
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a npm run test:vscode' || 'npm run test:vscode' }}
