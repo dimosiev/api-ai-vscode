@@ -38,7 +38,14 @@ export async function updateSetting(key: string, value: unknown) {
 
 export class MissingKeyError extends Error {}
 
-/** Requests to the services: VS Code's fetch, and the direct way when its remembered proxy is gone. */
+/** The services that are reachable without the VPN and so may be asked directly. */
+export const directFallbackFor = (presetId: string): boolean => presetId === "polza";
+
+/**
+ * Requests to Polza AI: VS Code's fetch, and the direct way when its remembered proxy is gone.
+ * Only Polza AI: the other services are used through the VPN, and a request to them
+ * must not leave from the user's own address when the VPN fails.
+ */
 const serviceFetch = (): typeof fetch =>
   fetchWithDirectFallback({
     primary: (input, init) => fetch(input, init),
@@ -65,6 +72,6 @@ export async function buildProvider(settings: Settings, keys: SecretKeyStore, pr
     presetId,
     apiKey,
     baseURL: presetId === "custom" ? settings.customBaseUrl : undefined,
-    fetch: serviceFetch(),
+    fetch: directFallbackFor(presetId) ? serviceFetch() : undefined,
   });
 }

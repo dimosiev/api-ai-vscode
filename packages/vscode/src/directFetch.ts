@@ -18,6 +18,23 @@ export function vscodeOriginalFetch(): typeof fetch | undefined {
   return typeof original === "function" ? (original as typeof fetch) : undefined;
 }
 
+/** What Node reports when no connection was made: nothing reached the service. */
+const NEVER_CONNECTED = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "EHOSTDOWN", "UND_ERR_CONNECT_TIMEOUT"]);
+
+/**
+ * True only when the request did not leave: the proxy (or the network) refused
+ * the connection. A connection that broke later may have delivered the request,
+ * and repeating it could pay for the same reply or picture twice.
+ */
+export function neverConnected(e: unknown, depth = 0): boolean {
+  if (!e || typeof e !== "object" || depth > 4) return false;
+  const err = e as { code?: unknown; syscall?: unknown; cause?: unknown; errors?: unknown };
+  if (typeof err.code === "string" && (NEVER_CONNECTED.has(err.code) || (err.code === "ETIMEDOUT" && err.syscall === "connect"))) return true;
+  // Node tries several addresses of a host and reports them together.
+  if (Array.isArray(err.errors) && err.errors.length) return err.errors.every((one) => neverConnected(one, depth + 1));
+  return neverConnected(err.cause, depth + 1);
+}
+
 /**
  * A request that could not be sent at all is tried once more without the
  * proxy. If that fails too, the first error is reported: it names the proxy.
@@ -29,7 +46,7 @@ export function fetchWithDirectFallback(opts: DirectFallbackOptions): typeof fet
     } catch (e) {
       const direct = opts.direct();
       const body = init?.body;
-      if (!direct || init?.signal?.aborted || (body != null && typeof body !== "string")) throw e;
+      if (!direct || init?.signal?.aborted || !neverConnected(e) || (body != null && typeof body !== "string")) throw e;
       let res: Response;
       try {
         res = await direct(input, init);
