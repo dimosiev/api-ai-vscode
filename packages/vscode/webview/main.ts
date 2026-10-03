@@ -54,6 +54,9 @@ let turnEl: HTMLElement | null = null;
 let textEl: { el: HTMLElement; raw: string } | null = null;
 let plan: HTMLElement | null = null;
 let renderQueued = false;
+let lastRender = 0;
+/** A long reply is parsed again from the start on every redraw: ten times a second is enough for the eye. */
+const RENDER_EVERY_MS = 100;
 const tools = new Map<number, HTMLElement>();
 const approvals = new Map<string, HTMLElement>();
 let busy = false;
@@ -100,6 +103,7 @@ function showError(message: string, action?: { label: string; command: string })
 function flushText(): void {
   renderQueued = false;
   if (!textEl) return;
+  lastRender = performance.now();
   const stick = atBottom();
   textEl.el.innerHTML = renderMarkdown(textEl.raw);
   if (stick) log.scrollTop = log.scrollHeight;
@@ -184,9 +188,11 @@ function handle(msg: ToWebview): void {
     case "text":
       if (!textEl) textEl = { el: add(h("div", { class: "assistant md" }), currentTurn()), raw: "" };
       textEl.raw += msg.text;
-      if (!renderQueued) {
+      if (performance.now() - lastRender >= RENDER_EVERY_MS) {
+        flushText();
+      } else if (!renderQueued) {
         renderQueued = true;
-        requestAnimationFrame(flushText);
+        setTimeout(flushText, RENDER_EVERY_MS - (performance.now() - lastRender));
       }
       break;
     case "activity":

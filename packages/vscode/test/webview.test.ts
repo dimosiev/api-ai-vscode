@@ -135,6 +135,27 @@ describe("chat webview", () => {
     expect(exact.querySelector(".approval-result")?.textContent).toBe("Разрешено");
   });
 
+  it("a streaming reply is redrawn at most ten times a second, and completely at the end", async () => {
+    send({ type: "user", text: "длинный ответ", chips: [] });
+    send({ type: "text", text: "Начало. " });
+    const reply = $$(".assistant").at(-1)!;
+    let redraws = 0;
+    const observer = new MutationObserver(() => redraws++);
+    observer.observe(reply, { childList: true });
+    for (let i = 1; i <= 200; i++) send({ type: "text", text: `слово${i} ` });
+    // 200 pieces arrived at once: not 200 redraws, and the text is not there yet.
+    expect(reply.textContent).not.toContain("слово200");
+    const until = Date.now() + 5000;
+    while (!reply.textContent?.includes("слово200") && Date.now() < until) await new Promise((r) => setTimeout(r, 10));
+    expect(reply.textContent).toContain("слово200");
+    expect(redraws).toBeLessThanOrEqual(2);
+    // The end of the task draws what is left without waiting.
+    send({ type: "text", text: "Конец." });
+    send({ type: "busy", busy: false });
+    expect(reply.textContent).toContain("Конец.");
+    observer.disconnect();
+  });
+
   it("a web page card shows the whole address and offers to remember the site", () => {
     send({ type: "approval_request", id: "f1", kind: "fetch", url: "https://docs.example.com/guide?topic=fetch", host: "docs.example.com" });
     const card = $$(".approval").at(-1)!;
