@@ -51,7 +51,7 @@ async function steps(): Promise<void> {
   step("every command of package.json is registered");
 
   const config = vscode.workspace.getConfiguration("dimosi");
-  for (const [key, value] of Object.entries({ provider: "anthropic", approvalMode: "ask", sandbox: true, extraFolders: [], imageModel: "" })) {
+  for (const [key, value] of Object.entries({ provider: "anthropic", approvalMode: "ask", sandbox: true, extraFolders: [], imageModel: "", effort: "" })) {
     assert.deepEqual(config.inspect(key)?.defaultValue, value, `default of dimosi.${key}`);
   }
   step("settings have their defaults");

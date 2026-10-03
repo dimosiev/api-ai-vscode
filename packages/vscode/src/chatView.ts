@@ -54,6 +54,7 @@ const PANEL_COMMANDS = new Set([
   "dimosi.editAccess",
   "dimosi.showCommandRules",
   "dimosi.togglePlanFirst",
+  "dimosi.selectEffort",
   "workbench.action.files.openFolder",
 ]);
 const DECISIONS = new Set<string>(["allow", "deny", "allow_always"]);
@@ -183,6 +184,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       needsSetup: !hasKey || !s.model,
       hasFolder: Boolean(this.root()),
       planFirst: this.planFirst,
+      effort: s.effort ?? "",
       ...accessStatus(this.root(), s.extraFolders),
     });
   }
@@ -428,6 +430,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     agent.sandbox = settings.sandbox;
     agent.extraFolders = settings.extraFolders;
     agent.planFirst = this.planFirst;
+    agent.effort = settings.effort;
     agent.images = await buildImages(settings, this.keys).catch(() => undefined);
     const planning = this.planFirst;
     let finished = false;

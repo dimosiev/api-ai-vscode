@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { createProvider, getPreset, parseExtraFolders, polzaImages, type ExtraFolder, type ImageMaker, type Provider } from "@dimosi/core";
+import { createProvider, getPreset, parseEffort, parseExtraFolders, polzaImages, type Effort, type ExtraFolder, type ImageMaker, type Provider } from "@dimosi/core";
 import type { SecretKeyStore } from "./keyStore";
 import { fetchWithDirectFallback, vscodeOriginalFetch } from "./directFetch";
 import { log } from "./log";
@@ -15,6 +15,8 @@ export interface Settings {
   extraFolders: ExtraFolder[];
   /** The Polza AI model that draws pictures; empty: the default one. */
   imageModel: string;
+  /** How hard the model works; not set: the model's own default. */
+  effort?: Effort;
 }
 
 export function readSettings(): Settings {
@@ -29,6 +31,7 @@ export function readSettings(): Settings {
     sandbox: cfg.get<boolean>("sandbox", true),
     extraFolders: parseExtraFolders(cfg.get<unknown>("extraFolders", [])),
     imageModel: cfg.get<string>("imageModel", "").trim(),
+    effort: parseEffort(cfg.get<string>("effort", "")),
   };
 }
 

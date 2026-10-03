@@ -76,7 +76,18 @@ export type StreamEvent =
       usage?: Usage;
       /** Pictures the model put into its reply; they are not shown or kept. */
       droppedImages?: number;
+      /** The effort asked for was not applied: the service has no such setting, or it refused it. */
+      effortIgnored?: "unsupported" | "rejected";
     };
+
+/** How hard the model works on a reply. Not set: the model's own default, nothing is sent. */
+export type Effort = "low" | "medium" | "high" | "max";
+export const EFFORTS: readonly Effort[] = ["low", "medium", "high", "max"];
+
+/** A setting or a flag as written by the user; anything unknown means "not set". */
+export function parseEffort(value: unknown): Effort | undefined {
+  return EFFORTS.find((e) => e === value);
+}
 
 export interface ChatRequest {
   model: string;
@@ -84,6 +95,7 @@ export interface ChatRequest {
   messages: Message[];
   tools: ToolDefinition[];
   maxTokens?: number;
+  effort?: Effort;
   signal?: AbortSignal;
 }
 

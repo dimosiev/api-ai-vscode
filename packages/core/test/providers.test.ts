@@ -474,3 +474,122 @@ describe("usage and cost", () => {
     expect(bodies.map((b) => Boolean(b.stream_options))).toEqual([true, false]);
   });
 });
+
+describe("effort (how hard the model works)", () => {
+  const chunk = `data: ${JSON.stringify({ id: "x", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }] })}\n\n`;
+  const refused = (message: string) => new Response(JSON.stringify({ error: { message } }), { status: 400, headers: { "content-type": "application/json" } });
+  const done = async (it: AsyncIterable<StreamEvent>) => (await collect(it)).at(-1) as Extract<StreamEvent, { type: "done" }>;
+
+  /** An OpenAI-compatible service that refuses whatever `refuse` says. */
+  function service(presetId: string, refuse: (body: any) => string | undefined = () => undefined) {
+    const bodies: any[] = [];
+    const fetchMock = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      bodies.push(body);
+      const why = refuse(body);
+      return why ? refused(why) : sseResponse([chunk, "data: [DONE]\n\n"]);
+    }) as unknown as typeof fetch;
+    const baseURL = presetId === "custom" ? "https://x.test/v1" : undefined;
+    return { bodies, provider: createProvider({ presetId, apiKey: "k", baseURL, fetch: fetchMock }) };
+  }
+  const req = (model: string, effort?: "low" | "medium" | "high" | "max") => ({ model, system: "s", messages: history, tools: [], effort });
+
+  /** The Anthropic API; `refuse` as above. */
+  function anthropic(refuse: (body: any) => string | undefined = () => undefined) {
+    const bodies: any[] = [];
+    const ev = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+    const fetchMock = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      bodies.push(body);
+      const why = refuse(body);
+      if (why) return new Response(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: why } }), { status: 400, headers: { "content-type": "application/json" } });
+      return sseResponse([
+        ev("message_start", { message: { id: "m", type: "message", role: "assistant", model: body.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } }),
+        ev("content_block_start", { index: 0, content_block: { type: "text", text: "" } }),
+        ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: "ok" } }),
+        ev("content_block_stop", { index: 0 }),
+        ev("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 2 } }),
+        ev("message_stop", {}),
+      ]);
+    }) as unknown as typeof fetch;
+    return { bodies, provider: createProvider({ presetId: "anthropic", apiKey: "k", fetch: fetchMock }) };
+  }
+
+  it("is not sent at all until the user sets it: requests stay as they were", async () => {
+    const polza = service("polza");
+    await collect(polza.provider.stream(req("anthropic/claude-opus-5.5")));
+    expect(Object.keys(polza.bodies[0]).sort()).toEqual(["messages", "model", "stream", "stream_options"]);
+    const direct = anthropic();
+    expect(await done(direct.provider.stream(req("claude-opus-5-5")))).not.toHaveProperty("effortIgnored");
+    expect(direct.bodies[0]).not.toHaveProperty("output_config");
+  });
+
+  it("Anthropic: goes as output_config.effort", async () => {
+    const { bodies, provider } = anthropic();
+    expect(await done(provider.stream(req("claude-opus-5-5", "low")))).not.toHaveProperty("effortIgnored");
+    expect(bodies[0].output_config).toEqual({ effort: "low" });
+  });
+
+  it("each service gets it in its own form; Polza AI ignores the OpenAI field, so it gets `reasoning`", async () => {
+    const sent = async (presetId: string, model: string) => {
+      const { bodies, provider } = service(presetId);
+      const last = await done(provider.stream(req(model, "high")));
+      const { model: _m, messages: _ms, stream: _s, stream_options: _o, ...rest } = bodies[0];
+      return { rest, ignored: last.effortIgnored };
+    };
+    expect(await sent("polza", "anthropic/claude-opus-5.5")).toEqual({ rest: { reasoning: { type: "adaptive", effort_level: "high" } }, ignored: undefined });
+    expect(await sent("polza", "openai/gpt-6.1-sol")).toEqual({ rest: { reasoning: { effort: "high" } }, ignored: undefined });
+    expect(await sent("openrouter", "anthropic/claude-opus-5.5")).toEqual({ rest: { reasoning: { effort: "high" } }, ignored: undefined });
+    expect(await sent("openai", "gpt-6.1-sol")).toEqual({ rest: { reasoning_effort: "high" }, ignored: undefined });
+  });
+
+  it("a service without a known setting gets nothing, and the reply says the effort was not applied", async () => {
+    for (const presetId of ["deepseek", "ollama", "custom"]) {
+      const { bodies, provider } = service(presetId);
+      expect((await done(provider.stream(req("some-model", "high")))).effortIgnored).toBe("unsupported");
+      expect(bodies[0]).not.toHaveProperty("reasoning");
+      expect(bodies[0]).not.toHaveProperty("reasoning_effort");
+    }
+  });
+
+  it("a refused effort is left out and not sent to that model again; the cache marks stay", async () => {
+    const { bodies, provider } = service("polza", (b) => (b.reasoning ? "reasoning is not supported" : undefined));
+    const claude = req("anthropic/claude-opus-5.5", "max");
+    expect((await done(provider.stream(claude))).effortIgnored).toBe("rejected");
+    expect((await done(provider.stream(claude))).effortIgnored).toBe("rejected");
+    expect(bodies.map((b) => [Boolean(b.reasoning), Array.isArray(b.messages[0].content)])).toEqual([
+      [true, true],
+      [false, true],
+      [false, true],
+    ]);
+    // Another model is asked afresh.
+    await collect(provider.stream(req("openai/gpt-6.1-sol", "max")));
+    expect(bodies.at(-2).reasoning).toEqual({ effort: "max" });
+  });
+
+  it("a refusal for another reason does not switch the effort off for good", async () => {
+    // The service refuses the cache marks, not the effort.
+    const { bodies, provider } = service("polza", (b) => (Array.isArray(b.messages[0].content) ? "Unknown field: cache_control" : undefined));
+    const claude = req("anthropic/claude-opus-5.5", "high");
+    await collect(provider.stream(claude));
+    expect((await done(provider.stream(claude))).effortIgnored).toBeUndefined();
+    expect(bodies.at(-1).reasoning).toEqual({ type: "adaptive", effort_level: "high" });
+    expect(bodies.at(-1).messages[0].content).toBe("s");
+  });
+
+  it("Anthropic: a model that refuses the effort answers without it, and is not asked again", async () => {
+    const { bodies, provider } = anthropic((b) => (b.output_config ? "This model does not support the effort parameter." : undefined));
+    expect((await done(provider.stream(req("claude-haiku-4-5", "low")))).effortIgnored).toBe("rejected");
+    expect((await done(provider.stream(req("claude-haiku-4-5", "low")))).effortIgnored).toBe("rejected");
+    expect(bodies.map((b) => Boolean(b.output_config))).toEqual([true, false, false]);
+  });
+
+  it("Anthropic: a request refused for another reason fails as before and keeps the effort", async () => {
+    let fail = true;
+    const { bodies, provider } = anthropic(() => (fail ? "prompt is too long" : undefined));
+    await expect(collect(provider.stream(req("claude-opus-5-5", "high")))).rejects.toThrow(/prompt is too long/);
+    fail = false;
+    expect((await done(provider.stream(req("claude-opus-5-5", "high")))).effortIgnored).toBeUndefined();
+    expect(bodies.map((b) => Boolean(b.output_config))).toEqual([true, false, true]);
+  });
+});

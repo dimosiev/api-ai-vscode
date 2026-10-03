@@ -362,3 +362,31 @@ describe("a reply stopped by the user", () => {
     }
   });
 });
+
+describe("effort", () => {
+  const reply = (extra: Partial<Extract<StreamEvent, { type: "done" }>> = {}): StreamEvent[] => [
+    { type: "text_delta", text: "Готово." },
+    { type: "done", stopReason: "end_turn", message: { role: "assistant", parts: [{ type: "text", text: "Готово." }] }, ...extra },
+  ];
+
+  it("goes to the model with every request, and only when it is set", async () => {
+    const seen: Array<string | undefined> = [];
+    const provider = new FakeProvider([(req) => (seen.push(req.effort), reply()), (req) => (seen.push(req.effort), reply())]);
+    const agent = new Agent({ provider, model: "m", root: tmp(), approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL });
+    await collect(agent.run("раз"));
+    agent.effort = "high";
+    await collect(agent.run("два"));
+    expect(seen).toEqual([undefined, "high"]);
+  });
+
+  it("tells the user once per chat that the service did not apply it, and the work goes on", async () => {
+    const provider = new FakeProvider([() => reply({ effortIgnored: "unsupported" }), () => reply({ effortIgnored: "unsupported" }), () => reply({ effortIgnored: "rejected" })]);
+    const agent = new Agent({ provider, model: "m", root: tmp(), approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL });
+    agent.effort = "high";
+    const errors = async (text: string) => (await collect(agent.run(text))).filter((e) => e.type === "error").map((e) => (e as { message: string }).message);
+    expect(await errors("раз")).toEqual([expect.stringMatching(/^Настройка «Усердие» для этого сервиса не действует/)]);
+    expect(await errors("два")).toEqual([]);
+    agent.reset();
+    expect(await errors("новый чат")).toEqual([expect.stringMatching(/^Сервис не принял настройку «Усердие» для модели m/)]);
+  });
+});

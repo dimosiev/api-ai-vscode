@@ -43,6 +43,9 @@ export interface PlanItemView {
   status: "pending" | "in_progress" | "done";
 }
 
+/** The effort setting as the user reads it; "" is the model's own default. */
+export const EFFORT_LABELS: Record<string, string> = { "": "как решит модель", low: "низкое", medium: "среднее", high: "высокое", max: "наибольшее" };
+
 export type ToWebview =
   | {
       type: "status";
@@ -54,6 +57,8 @@ export type ToWebview =
       hasFolder: boolean;
       /** "Plan first" is on: the agent proposes a plan and changes nothing. */
       planFirst: boolean;
+      /** The effort setting: "low" | "medium" | "high" | "max", or "" for the model's own default. */
+      effort: string;
       /** What the agent can reach: "проект + 2 папки". */
       access: string;
       /** The folders one per line, for the tooltip. */

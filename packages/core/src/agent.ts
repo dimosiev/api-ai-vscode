@@ -8,6 +8,7 @@ import { IncompleteResponseError } from "./providers/openai";
 import type { ImageMaker } from "./tools/image";
 import { executeTool, TOOL_DEFINITIONS, type FileAccess, type FileChange, type PlanItem, type ProblemWatcher } from "./tools";
 import type {
+  Effort,
   ImagePart,
   Message,
   Part,
@@ -91,6 +92,10 @@ export class Agent {
   extraFolders: ExtraFolder[];
   /** "Plan first": the agent investigates and proposes a plan; nothing is changed until this is switched off. */
   planFirst = false;
+  /** How hard the model works; not set: its own default. Set by the host before a turn. */
+  effort?: Effort;
+  /** The service and model the user was already told about: the effort is not applied there. */
+  private effortNotice?: string;
   /** The previous turn was a planning one. */
   private planned = false;
   readonly root: string;
@@ -135,6 +140,7 @@ export class Agent {
     this.date = undefined;
     this.access = undefined;
     this.planned = false;
+    this.effortNotice = undefined;
     this.gate.resetSessionApprovals();
   }
 
@@ -207,6 +213,13 @@ export class Agent {
         }
         const done = yield* this.request(system, signal);
         if (done.usage) yield { type: "usage", usage: done.usage };
+        const noticed = `${this.provider.id}/${this.model}`;
+        if (done.effortIgnored && this.effortNotice !== noticed) {
+          // Once per chat and model: the answer is fine, only the setting did nothing.
+          this.effortNotice = noticed;
+          this.log?.warn(`effort ${this.effort} not applied: ${done.effortIgnored}`);
+          yield { type: "error", message: effortIgnoredText(done.effortIgnored, this.model) };
+        }
 
         const calls = done.message.parts.filter((p): p is ToolCallPart => p.type === "tool_call");
         if (done.message.parts.length) this.messages.push(done.message);
@@ -310,6 +323,7 @@ export class Agent {
           messages: this.messages,
           tools: TOOL_DEFINITIONS,
           maxTokens: this.maxTokens,
+          effort: this.effort,
           signal,
         })) {
           if (ev.type === "text_delta") {
@@ -437,6 +451,12 @@ function usageText(u: Usage): string {
   const total = u.inputTokens + read + write;
   const cache = read || write ? ` (cache read ${read}, write ${write}, hit ${Math.round((read / total) * 100)}%)` : "";
   return `in ${total}${cache} out ${u.outputTokens}`;
+}
+
+export function effortIgnoredText(why: "unsupported" | "rejected", model: string): string {
+  return why === "rejected"
+    ? `Сервис не принял настройку «Усердие» для модели ${model}. Ответ получен без неё, работа продолжается. Чтобы это сообщение не появлялось, выключите настройку.`
+    : "Настройка «Усердие» для этого сервиса не действует: она работает с Anthropic, Polza AI, OpenRouter и OpenAI. Ответ получен как обычно, работа продолжается.";
 }
 
 export function trimToolResults(messages: Message[], targetTokens: number): boolean {

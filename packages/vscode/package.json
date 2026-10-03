@@ -96,6 +96,10 @@
         "title": "dimosi: Режим «Сначала план» (включить или выключить)"
       },
       {
+        "command": "dimosi.selectEffort",
+        "title": "dimosi: Усердие модели…"
+      },
+      {
         "command": "dimosi.showCommandRules",
         "title": "dimosi: Запомненные команды и сайты («Всегда»)…"
       },
@@ -303,6 +307,26 @@
           "default": 50,
           "minimum": 1,
           "description": "Сколько шагов (вызовов модели) агент может сделать на одну задачу."
+        },
+        "dimosi.effort": {
+          "scope": "application",
+          "type": "string",
+          "enum": [
+            "",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ],
+          "enumDescriptions": [
+            "Как решит сама модель (настройка не передаётся)",
+            "Низкое: быстрее и дешевле",
+            "Среднее",
+            "Высокое",
+            "Наибольшее: дольше и дороже"
+          ],
+          "default": "",
+          "description": "Усердие модели: насколько старательно она работает над ответом. Пусто — как решит сама модель. Действует с Anthropic, Polza AI, OpenRouter и OpenAI. Через Polza AI для моделей Claude включает размышления, они оплачиваются как ответ."
         },
         "dimosi.imageModel": {
           "scope": "application",

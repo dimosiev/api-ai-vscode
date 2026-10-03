@@ -362,6 +362,43 @@ describe("files with secrets in the panel", () => {
   });
 });
 
+describe("effort", () => {
+  it("the setting reaches the panel and the agent; a service without it is named once per chat", async () => {
+    const panel = await setup([{ text: "Раз." }, { text: "Два." }]);
+    expect(panel.posted.filter(isType("status")).at(-1)?.effort).toBe("");
+    stub.config["dimosi.effort"] = "high";
+    await panel.provider.postStatus();
+    expect(panel.posted.filter(isType("status")).at(-1)?.effort).toBe("high");
+
+    const first = await panel.task("раз");
+    expect(first.filter(isType("error")).map((m) => m.message)).toEqual([expect.stringMatching(/^Настройка «Усердие» для этого сервиса не действует/)]);
+    expect(first.filter(isType("text")).map((m) => m.text).join("")).toBe("Раз.");
+    expect((await panel.task("два")).filter(isType("error"))).toEqual([]);
+    // The fake service is a "custom" one: nothing about effort is sent to it.
+    for (const { body } of server!.requests) expect(Object.keys(body)).not.toEqual(expect.arrayContaining(["reasoning"]));
+  });
+
+  it("the command offers the levels and saves the choice; a word that is not a level means «not set»", async () => {
+    const { activate } = await import("../../src/extension");
+    const { readSettings } = await import("../../src/settings");
+    context.globalState.update("dimosi.welcomed", true);
+    activate(context as never);
+    let offered: string[] = [];
+    stub.pick = (items) => ((offered = items.map((i) => i.label)), items.find((i) => i.label === "Высокое"));
+    await stub.commands.get("dimosi.selectEffort")!();
+    expect(offered).toEqual(["Как решит модель", "Низкое", "Среднее", "Высокое", "Наибольшее"]);
+    expect(stub.config["dimosi.effort"]).toBe("high");
+    expect(readSettings().effort).toBe("high");
+
+    stub.pick = (items) => items.find((i) => i.label === "Как решит модель");
+    await stub.commands.get("dimosi.selectEffort")!();
+    expect(readSettings().effort).toBeUndefined();
+    stub.config["dimosi.effort"] = "turbo";
+    expect(readSettings().effort).toBeUndefined();
+    for (const d of context.subscriptions) d.dispose();
+  });
+});
+
 describe("extension start and problem report", () => {
   it("starts with a journal, and the report carries versions and the journal but no key", async () => {
     const { activate } = await import("../../src/extension");

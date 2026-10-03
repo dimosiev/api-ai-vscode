@@ -226,6 +226,20 @@ describe("chat webview", () => {
     send({ type: "busy", busy: false });
   });
 
+  it("the effort is shown in the header only when it is set, and a click opens the choice", () => {
+    const status = { type: "status", provider: "Polza AI", model: "m", approval: "ask", needsSetup: false, hasFolder: true, planFirst: false, access: "проект", accessDetail: "" } as const;
+    send({ ...status, effort: "" });
+    const pill = $$("header .pill").find((b) => b.title.startsWith("Усердие"))!;
+    expect(pill.hidden).toBe(true);
+    send({ ...status, effort: "high" });
+    expect(pill.hidden).toBe(false);
+    expect(pill.textContent).toBe("Усердие: высокое");
+    pill.click();
+    expect(posted.at(-1)).toEqual({ type: "command", command: "dimosi.selectEffort" });
+    send({ ...status, effort: "" });
+    expect(pill.hidden).toBe(true);
+  });
+
   it("the access line shows what the agent can reach, and Change opens the list", () => {
     send({ type: "status", provider: "Polza AI", model: "m", approval: "ask", needsSetup: false, hasFolder: true, access: "проект + 2 папки", accessDetail: "/p — проект\n/notes — только чтение" });
     expect($(".access-text")?.textContent).toBe("Доступ: проект + 2 папки");

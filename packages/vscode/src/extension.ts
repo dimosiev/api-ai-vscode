@@ -27,6 +27,7 @@ import { log } from "./log";
 import { buildProblemReport, serverOrigin } from "./report";
 import { askAboutRules, trustDecisions } from "./ruleTrust";
 import { buildProvider, readSettings, updateSetting } from "./settings";
+import { EFFORT_LABELS } from "./protocol";
 import { Updater } from "./updater";
 
 const EDITOR_PROMPTS = {
@@ -115,6 +116,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     command("dimosi.togglePlanFirst", () => chat.togglePlanFirst()),
+    command("dimosi.selectEffort", selectEffort),
     command("dimosi.editAccess", () => editAccess(root())),
     command("dimosi.showCommandRules", () => showCommandRules(context, root())),
 
@@ -174,6 +176,7 @@ function logSettings(): void {
   const s = readSettings();
   log.info(
     `settings: provider ${s.provider}, model ${s.model || "(none)"}, approvals ${s.approvalMode}, max steps ${s.maxSteps}, extra folders ${s.extraFolders.length}` +
+      (s.effort ? `, effort ${s.effort}` : "") +
       (s.provider === "custom" ? `, server ${serverOrigin(s.customBaseUrl)}` : ""),
   );
 }
@@ -344,6 +347,28 @@ async function askAndStoreKey(keys: SecretKeyStore, presetId: string): Promise<b
   await keys.set(presetId, value.trim());
   void vscode.window.showInformationMessage(`Ключ для ${preset.label} сохранён (${maskKey(value.trim())}).`);
   return true;
+}
+
+const EFFORT_HINTS: Record<string, string> = {
+  "": "настройка не передаётся — так dimosi работал всегда",
+  low: "быстрее и дешевле; для простых правок",
+  medium: "",
+  high: "",
+  max: "дольше и дороже; для самых трудных задач",
+};
+
+async function selectEffort(): Promise<void> {
+  const current = readSettings().effort ?? "";
+  const items = Object.keys(EFFORT_LABELS).map((value) => ({
+    label: EFFORT_LABELS[value][0].toUpperCase() + EFFORT_LABELS[value].slice(1),
+    description: [value === current ? "выбрано" : "", EFFORT_HINTS[value]].filter(Boolean).join(" · "),
+    value,
+  }));
+  const pick = await vscode.window.showQuickPick(items, {
+    title: "Усердие модели",
+    placeHolder: "Насколько старательно модель работает над ответом. Через Polza AI у Claude это включает размышления (оплачиваются как ответ).",
+  });
+  if (pick) await updateSetting("effort", pick.value);
 }
 
 async function selectModel(keys: SecretKeyStore): Promise<void> {

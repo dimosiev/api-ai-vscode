@@ -60,9 +60,9 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
 
 ## Настройки расширения
 
-`dimosi.provider` (`anthropic` | `openai` | `polza` | `openrouter` | `deepseek` | `ollama` | `custom`, по умолчанию `anthropic`), `dimosi.model` (пусто — модель сервиса по умолчанию), `dimosi.customBaseUrl`, `dimosi.approvalMode` (`ask` | `auto`), `dimosi.maxSteps` (50), `dimosi.sandbox` (true), `dimosi.imageModel` (модель Polza AI для картинок; пусто — `qwen/image-2`), `dimosi.extraFolders` (`[{ "path", "access": "read" | "write" }]`, пусто), `dimosi.autoUpdate` (true). Все с `"scope": "application"`: действуют только из личных настроек, `.vscode/settings.json` проекта их не меняет. Ключи — в SecretStorage (Keychain), не в настройках. Свой адрес сервиса — только для `custom`/`ollama` и только `https://` (http — для localhost), проверка в `checkBaseUrl` (`presets.ts`).
+`dimosi.provider` (`anthropic` | `openai` | `polza` | `openrouter` | `deepseek` | `ollama` | `custom`, по умолчанию `anthropic`), `dimosi.model` (пусто — модель сервиса по умолчанию), `dimosi.customBaseUrl`, `dimosi.approvalMode` (`ask` | `auto`), `dimosi.maxSteps` (50), `dimosi.sandbox` (true), `dimosi.effort` (усердие модели: пусто | `low` | `medium` | `high` | `max`; пусто — ничего не передаётся), `dimosi.imageModel` (модель Polza AI для картинок; пусто — `qwen/image-2`), `dimosi.extraFolders` (`[{ "path", "access": "read" | "write" }]`, пусто), `dimosi.autoUpdate` (true). Все с `"scope": "application"`: действуют только из личных настроек, `.vscode/settings.json` проекта их не меняет. Ключи — в SecretStorage (Keychain), не в настройках. Свой адрес сервиса — только для `custom`/`ollama` и только `https://` (http — для localhost), проверка в `checkBaseUrl` (`presets.ts`).
 
-CLI: настройки в `~/.config/dimosi/` (`config.ts`), флаги `--provider`, `--model`, `--base-url`, `--dir`, `--read-dir`, `--write-dir`, `--auto`, `--plan`, `--no-sandbox`.
+CLI: настройки в `~/.config/dimosi/` (`config.ts`), флаги `--provider`, `--model`, `--base-url`, `--dir`, `--read-dir`, `--write-dir`, `--auto`, `--plan`, `--effort`, `--no-sandbox`.
 
 ## Устройство
 
@@ -92,6 +92,7 @@ CLI: настройки в `~/.config/dimosi/` (`config.ts`), флаги `--prov
 - Панель чата недоверенная: команды только из `PANEL_COMMANDS` (`chatView.ts`), пути через `resolvePath`.
 - Ничего тяжёлого в процессе расширений без лимита: поиск идёт в отдельном потоке, разбор веб-страницы линейный (`stripMarkup`, без регулярных выражений по всей странице).
 - Повтор запроса стоит денег: запрос к модели повторяется, только пока не пришло ни слова ответа (до 2 раз), запрос в обход прокси — только если не ушёл вовсе.
+- Усердие (`effort`) по умолчанию не передаётся вовсе; отказ сервиса (400) сначала снимает усердие и только потом пометки кэша, иначе чат подорожал бы из-за чужой ошибки.
 - Кэш у Anthropic — `cache_control` на весь запрос; через OpenAI-совместимый путь для моделей с `claude` в имени — пометки на системной инструкции и последнем сообщении, при 400 они выключаются до перезапуска.
 
 ## Тесты: как писать
@@ -146,7 +147,7 @@ CLI: настройки в `~/.config/dimosi/` (`config.ts`), флаги `--prov
 
 **Согласовано, ждёт владельца:**
 
-1. Переключатель «усердия» модели (`output_config.effort`). Как передать через Polza AI — нужна проверка на живом ключе, у агента его нет.
+1. Усердие модели (`dimosi.effort`) сделано, но **через Polza AI на живом ключе не проверено**: владелец должен включить его и выполнить задачу с инструментами. По документации Polza AI для Claude это `reasoning: { type: "adaptive", effort_level }`, то есть включение размышлений, а не экономия; размышления модели dimosi обратно не отправляет — если сервис из-за этого откажет на втором шаге, настройка сама выключится для модели (сообщение «Сервис не принял…»). Тогда нужно либо сохранять размышления в истории, либо убрать настройку для Polza AI.
 2. Правила вне системной инструкции, чтобы правка `CLAUDE.md` или `.dimosi/` посреди чата не сбрасывала кэш. Правила в сообщении пользователя — небольшая уступка в безопасности (файл может изобразить блок правил); нужно «да» владельца. Рекомендация: делать с меткой, случайной для каждого чата.
 
 **Предложено, владелец ещё не решал:**

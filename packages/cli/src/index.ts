@@ -34,6 +34,8 @@ import {
   type ImageMaker,
   type Provider,
   type RuleFile,
+  EFFORTS,
+  parseEffort,
 } from "@dimosi/core";
 import { commandRulesStorage, configDir, loadConfig, loadTrustDecisions, migrateLegacyConfig, saveConfig, secureConfigDir, writePrivateFile, type CliConfig } from "./config";
 import { EncryptedFileKeyStore, keyFileExists, keyFilePath } from "./keystore";
@@ -52,6 +54,7 @@ ${c.bold("Запуск чата")} (в папке проекта):
   dimosi --auto                  не спрашивать подтверждений (осторожно!)
   dimosi --no-sandbox            команды без песочницы macOS (осторожно!)
   dimosi --plan                  сначала план: агент ничего не меняет, пока вы не ответите /go
+  dimosi --effort high           усердие модели: low, medium, high или max (без флага — как решит модель)
   dimosi --read-dir ПУТЬ         открыть агенту ещё одну папку только для чтения
   dimosi --write-dir ПУТЬ        открыть агенту ещё одну папку для чтения и записи
                                  (оба флага можно повторять; постоянный список —
@@ -103,6 +106,7 @@ interface Flags {
   auto?: boolean;
   noSandbox?: boolean;
   plan?: boolean;
+  effort?: string;
   /** --read-dir and --write-dir, in the order given. */
   folders: ExtraFolder[];
   positional: string[];
@@ -125,6 +129,7 @@ function parseArgs(argv: string[]): Flags {
     else if (a === "--write-dir") flags.folders.push({ path: path.resolve(next()), mode: "write" });
     else if (a === "--auto") flags.auto = true;
     else if (a === "--plan") flags.plan = true;
+    else if (a === "--effort") flags.effort = next();
     else if (a === "--no-sandbox") flags.noSandbox = true;
     else if (a === "--help" || a === "-h") flags.positional.unshift("help");
     else if (a === "--version" || a === "-v") flags.positional.unshift("version");
@@ -456,6 +461,10 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
     ruleTrust: rememberingTrust(await loadTrustDecisions(), (file) => askAboutRules(io, file)),
   });
   agent.planFirst = Boolean(flags.plan);
+  if (flags.effort !== undefined) {
+    agent.effort = parseEffort(flags.effort);
+    if (!agent.effort) fail(`Неизвестное усердие «${flags.effort}». Допустимо: ${EFFORTS.join(", ")}.`);
+  }
   agent.images = await imagesFor(presetId, keys);
   log.info(`chat: provider ${presetId}, model ${agent.model}, approvals ${agent.gate.mode}, sandbox ${agent.sandbox ? "on" : "off"}, extra folders ${extraFolders.length}`);
 

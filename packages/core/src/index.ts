@@ -26,6 +26,6 @@ export { polzaImages, imageFormat, DEFAULT_POLZA_IMAGE_MODEL, IMAGE_EXTENSIONS, 
 export * from "./access";
 export { PRESETS, CUSTOM_URL_PRESETS, checkBaseUrl, getPreset, createProvider, type ProviderPreset } from "./providers/presets";
 export { AnthropicProvider, toAnthropicMessages } from "./providers/anthropic";
-export { OpenAIProvider, toOpenAIMessages, parsePricing, parseUsage } from "./providers/openai";
+export { OpenAIProvider, toOpenAIMessages, parsePricing, parseUsage, effortParams } from "./providers/openai";
 export * from "./update";
 export { UPDATE_PUBLIC_KEYS } from "./update-key";

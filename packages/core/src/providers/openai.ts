@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { ToolIdMapper } from "./toolIds";
-import type { ChatRequest, Message, Part, Pricing, Provider, StopReason, StreamEvent, Usage } from "../types";
+import type { ChatRequest, Effort, Message, Part, Pricing, Provider, StopReason, StreamEvent, Usage } from "../types";
 
 export interface OpenAIProviderOptions {
   id: string;
@@ -21,6 +21,8 @@ export class OpenAIProvider implements Provider {
   private includeUsage: boolean;
   /** Mark cache points for Claude models; turned off if the service rejects the marks. */
   private promptCache = true;
+  /** Models for which the service refused the effort setting: it is not sent again. */
+  private noEffort = new Set<string>();
   private catalog?: Promise<Catalog>;
 
   constructor(opts: OpenAIProviderOptions) {
@@ -48,10 +50,12 @@ export class OpenAIProvider implements Provider {
   }
 
   private async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
-    const create = (withUsage: boolean, withCache: boolean) =>
+    const effortFields = req.effort && !this.noEffort.has(req.model) ? effortParams(this.id, req.model, req.effort) : undefined;
+    const create = (withUsage: boolean, withCache: boolean, withEffort: boolean) =>
       this.client.chat.completions.create(
         {
           model: req.model,
+          ...(withEffort ? effortFields : {}),
           messages: toOpenAIMessages(req.system, req.messages, { cache: withCache }),
           tools: req.tools.length
             ? req.tools.map((t) => ({
@@ -65,15 +69,21 @@ export class OpenAIProvider implements Provider {
         { signal: req.signal },
       );
     let cache = this.promptCache && isClaude(req.model);
+    const cacheAsked = cache;
     let withUsage = this.includeUsage;
+    let withEffort = Boolean(effortFields);
     let stream;
     for (;;) {
       try {
-        stream = await create(withUsage, cache);
+        stream = await create(withUsage, cache, withEffort);
         break;
       } catch (e) {
         if ((e as { status?: number }).status !== 400) throw e;
-        if (cache) {
+        if (withEffort) {
+          // Effort goes first: dropping the cache marks for a refusal they did not cause
+          // would make every later step of the chat cost its full price.
+          withEffort = false;
+        } else if (cache) {
           // Any 400 with cache marks: retry once without them. If that works,
           // the service does not accept them and they are not sent again.
           cache = false;
@@ -87,6 +97,9 @@ export class OpenAIProvider implements Provider {
     }
     if (this.promptCache && isClaude(req.model) && !cache) this.promptCache = false;
     this.includeUsage = withUsage;
+    // Remembered only when leaving the effort out was enough: otherwise something else was refused.
+    if (effortFields && !withEffort && cache === cacheAsked) this.noEffort.add(req.model);
+    const effortIgnored = !req.effort || withEffort ? undefined : effortFields || this.noEffort.has(req.model) ? ("rejected" as const) : ("unsupported" as const);
 
     let text = "";
     let finishReason: string | null = null;
@@ -135,6 +148,7 @@ export class OpenAIProvider implements Provider {
       stopReason: mapFinishReason(finishReason, calls.size > 0),
       usage,
       ...(droppedImages ? { droppedImages } : {}),
+      ...(effortIgnored ? { effortIgnored } : {}),
     };
   }
 
@@ -287,6 +301,18 @@ export class IncompleteResponseError extends Error {
   constructor() {
     super("Ответ сервиса оборвался на середине. Напишите «продолжай».");
   }
+}
+
+/**
+ * How each service takes the effort setting; undefined: the service has none that is known.
+ * Polza AI ignores the OpenAI field `reasoning_effort` without an error and reads `reasoning`
+ * (its docs, "Reasoning Tokens"); for Claude it is the adaptive thinking with a level.
+ */
+export function effortParams(providerId: string, model: string, effort: Effort): Record<string, unknown> | undefined {
+  if (providerId === "polza") return { reasoning: isClaude(model) ? { type: "adaptive", effort_level: effort } : { effort } };
+  if (providerId === "openrouter") return { reasoning: { effort } };
+  if (providerId === "openai") return { reasoning_effort: effort };
+  return undefined;
 }
 
 /** Claude needs explicit cache marks; other models cache automatically or not at all. */

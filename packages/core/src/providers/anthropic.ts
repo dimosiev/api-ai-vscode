@@ -24,6 +24,8 @@ export interface AnthropicProviderOptions {
 export class AnthropicProvider implements Provider {
   readonly id: string;
   private client: Anthropic;
+  /** Models that refused the effort setting: it is not sent to them again. */
+  private noEffort = new Set<string>();
 
   constructor(opts: AnthropicProviderOptions) {
     this.id = opts.id ?? "anthropic";
@@ -31,10 +33,30 @@ export class AnthropicProvider implements Provider {
   }
 
   async *stream(req: ChatRequest): AsyncIterable<StreamEvent> {
+    const effort = this.noEffort.has(req.model) ? undefined : req.effort;
+    const ignored = req.effort && !effort ? ({ effortIgnored: "rejected" } as const) : {};
+    try {
+      for await (const ev of this.chat(req, effort)) yield ev.type === "done" ? { ...ev, ...ignored } : ev;
+    } catch (e) {
+      // A refused request (400) arrives before any text. Not every model has the effort
+      // setting: ask once more without it, and remember the model only if that worked.
+      if (!effort || (e as { status?: number }).status !== 400 || req.signal?.aborted) throw e;
+      for await (const ev of this.chat(req, undefined)) {
+        if (ev.type !== "done") yield ev;
+        else {
+          this.noEffort.add(req.model);
+          yield { ...ev, effortIgnored: "rejected" };
+        }
+      }
+    }
+  }
+
+  private async *chat(req: ChatRequest, effort: ChatRequest["effort"]): AsyncIterable<StreamEvent> {
     const stream = this.client.messages.stream(
       {
         model: req.model,
         max_tokens: req.maxTokens ?? 64000,
+        ...(effort ? { output_config: { effort } } : {}),
         // Automatic prompt caching: each agent step resends the whole history,
         // so cached prefixes make long tasks much cheaper.
         cache_control: { type: "ephemeral" },

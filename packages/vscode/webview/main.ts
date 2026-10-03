@@ -1,4 +1,4 @@
-import type { FromWebview, ToWebview } from "../src/protocol";
+import { EFFORT_LABELS, type FromWebview, type ToWebview } from "../src/protocol";
 import {
   approvalCommandCard,
   approvalFetchCard,
@@ -29,7 +29,8 @@ const post = (msg: FromWebview) => vscode.postMessage(msg);
 
 const modelBtn = h("button", { class: "model-btn", title: "Выбрать сервис и модель", onclick: () => post({ type: "command", command: "dimosi.selectModel" }) });
 const approvalBtn = h("button", { class: "pill", title: "Подтверждения действий агента", onclick: () => post({ type: "command", command: "dimosi.toggleApproval" }) });
-const header = h("header", { class: "top" }, svg(LOGO, "brand-logo"), modelBtn, approvalBtn);
+const effortBtn = h("button", { class: "pill", title: "Усердие модели: насколько старательно она работает над ответом", onclick: () => post({ type: "command", command: "dimosi.selectEffort" }) });
+const header = h("header", { class: "top" }, svg(LOGO, "brand-logo"), modelBtn, effortBtn, approvalBtn);
 const accessText = h("span", { class: "access-text" });
 const accessRow = h(
   "div",
@@ -156,6 +157,9 @@ function handle(msg: ToWebview): void {
       modelBtn.replaceChildren(h("span", { class: "model-provider" }, msg.provider), h("span", { class: "model-name" }, msg.model));
       approvalBtn.textContent = msg.approval === "auto" ? "Без подтверждений" : "С подтверждением";
       approvalBtn.classList.toggle("danger", msg.approval === "auto");
+      // Shown only when set: by default nothing is sent and the header stays as it was.
+      effortBtn.hidden = !msg.effort;
+      effortBtn.textContent = `Усердие: ${EFFORT_LABELS[msg.effort] ?? msg.effort}`;
       composer.setPlanFirst(msg.planFirst);
       accessText.textContent = `Доступ: ${msg.access}`;
       accessText.title = msg.accessDetail;
