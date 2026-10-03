@@ -76,6 +76,13 @@ describe("О-2: which failures mean that the request never left", () => {
     expect(neverConnected(failed(new AggregateError([coded("ECONNREFUSED"), coded("ENETUNREACH")], "")))).toBe(true);
   });
 
+  it("the same failures told only in words, without a code", () => {
+    expect(neverConnected(failed(new Error("connect ECONNREFUSED 127.0.0.1:1082")))).toBe(true);
+    expect(neverConnected(new Error("getaddrinfo ENOTFOUND polza.ai"))).toBe(true);
+    expect(neverConnected(failed(new Error("read ECONNRESET")))).toBe(false);
+    expect(neverConnected(failed(new Error("read ETIMEDOUT")))).toBe(false);
+  });
+
   it("anything after the connection was made is not repeated", () => {
     for (const code of ["ECONNRESET", "EPIPE", "UND_ERR_SOCKET", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"]) {
       expect(neverConnected(failed(coded(code))), code).toBe(false);

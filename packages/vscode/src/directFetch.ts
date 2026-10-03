@@ -28,8 +28,11 @@ const NEVER_CONNECTED = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOS
  */
 export function neverConnected(e: unknown, depth = 0): boolean {
   if (!e || typeof e !== "object" || depth > 4) return false;
-  const err = e as { code?: unknown; syscall?: unknown; cause?: unknown; errors?: unknown };
+  const err = e as { code?: unknown; syscall?: unknown; message?: unknown; cause?: unknown; errors?: unknown };
   if (typeof err.code === "string" && (NEVER_CONNECTED.has(err.code) || (err.code === "ETIMEDOUT" && err.syscall === "connect"))) return true;
+  // Some layers (a proxy agent) pass on only the text: "connect ECONNREFUSED 127.0.0.1:1082".
+  const text = typeof err.message === "string" ? err.message : "";
+  if (/\b(connect|getaddrinfo) (ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|EHOSTDOWN|ETIMEDOUT)\b/.test(text)) return true;
   // Node tries several addresses of a host and reports them together.
   if (Array.isArray(err.errors) && err.errors.length) return err.errors.every((one) => neverConnected(one, depth + 1));
   return neverConnected(err.cause, depth + 1);

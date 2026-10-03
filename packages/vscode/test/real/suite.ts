@@ -7,6 +7,7 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+import { inspect } from "node:util";
 import * as vscode from "vscode";
 import { fetchWithDirectFallback, vscodeOriginalFetch } from "../../src/directFetch";
 import { startFakeServer } from "../e2e/fakeServer";
@@ -25,6 +26,16 @@ async function eventually<T>(what: string, check: () => T | undefined | false | 
 const step = (name: string) => console.log(`  ✓ ${name}`);
 
 export async function run(): Promise<void> {
+  try {
+    await steps();
+  } catch (e) {
+    // The full logs of a CI run cannot be read without signing in; an annotation can.
+    if (process.env.GITHUB_ACTIONS) console.log(`::error title=Real VS Code::${inspect(e, { depth: 6 }).slice(0, 3000).replace(/%/g, "%25").replace(/\r?\n/g, "%0A")}`);
+    throw e;
+  }
+}
+
+async function steps(): Promise<void> {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   assert.ok(root, "the test workspace folder is open");
 
