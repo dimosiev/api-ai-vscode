@@ -47,14 +47,15 @@ export function parsePageUrl(raw: string): URL {
  */
 export function isPublicAddress(ip: string): boolean {
   if (isIP(ip) === 4) {
-    const [a, b] = ip.split(".").map(Number);
+    const [a, b, c] = ip.split(".").map(Number);
     return !(
       a === 0 || a === 10 || a === 127 || a >= 224 ||
       (a === 100 && b >= 64 && b <= 127) ||
       (a === 169 && b === 254) ||
       (a === 172 && b >= 16 && b <= 31) ||
       (a === 192 && b === 168) ||
-      (a === 192 && b === 0)
+      // Only these two blocks of 192.0.x.x are reserved; the rest is ordinary internet.
+      (a === 192 && b === 0 && (c === 0 || c === 2))
     );
   }
   if (isIP(ip) !== 6) return false;

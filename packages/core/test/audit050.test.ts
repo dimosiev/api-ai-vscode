@@ -151,7 +151,7 @@ describe("О-6: writing through a temporary file", () => {
 });
 
 describe("О-7: public addresses", () => {
-  bug("192.0.x.x outside the two reserved blocks is the public internet (WordPress.com lives there)", () => {
+  it("192.0.x.x outside the two reserved blocks is the public internet (WordPress.com lives there)", () => {
     expect(isPublicAddress("192.0.78.9")).toBe(true);
     expect(isPublicAddress("192.0.0.1")).toBe(false);
     expect(isPublicAddress("192.0.2.1")).toBe(false);
