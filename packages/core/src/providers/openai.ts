@@ -143,7 +143,7 @@ export class OpenAIProvider implements Provider {
     const ids: string[] = [];
     for await (const model of this.client.models.list()) {
       const raw = model as unknown as Record<string, unknown>;
-      if (!modelKind(raw) && canCallTools(raw)) ids.push(model.id);
+      if (!modelKind(raw, this.id === "polza") && canCallTools(raw)) ids.push(model.id);
     }
     return ids.sort();
   }
@@ -161,7 +161,7 @@ export class OpenAIProvider implements Provider {
         const raw = m as unknown as Record<string, unknown>;
         const price = parsePricing(raw);
         if (price) catalog.prices.set(m.id, price);
-        const kind = modelKind(raw);
+        const kind = modelKind(raw, this.id === "polza");
         if (kind) catalog.kinds.set(m.id, kind);
       }
       return catalog;
@@ -182,9 +182,12 @@ interface Catalog {
  * What a model makes when it is not a chat model ("image", "video"...), by the
  * Polza AI (`type`) and OpenRouter (`output_modalities`) model lists.
  * Undefined for a chat model and for a service that does not say.
+ * `polza`: the list is Polza AI's own, where any type but "chat" does not chat.
  */
-export function modelKind(raw: Record<string, unknown>): string | undefined {
-  if (typeof raw.type === "string") return raw.type === "chat" ? undefined : raw.type;
+export function modelKind(raw: Record<string, unknown>, polza = false): string | undefined {
+  // Only Polza AI is known to name every kind in `type`. Elsewhere the field may mean something
+  // else (Mistral: "base", Together AI: "language"), so only the kinds known not to chat count.
+  if (typeof raw.type === "string" && (polza || Object.hasOwn(KIND_TEXT, raw.type))) return raw.type === "chat" ? undefined : raw.type;
   const out = (raw.architecture as { output_modalities?: unknown } | undefined)?.output_modalities;
   if (!Array.isArray(out) || out.length === 0 || out.includes("text")) return undefined;
   return String(out[0]);

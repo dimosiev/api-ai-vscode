@@ -117,12 +117,20 @@ describe("О-3: «Модель ничего не ответила» after a turn
 
 describe("О-4: the model list filter and services that are not Polza AI or OpenRouter", () => {
   // `type` means "what the model makes" only at Polza AI. Elsewhere it is something else.
-  bug("Mistral: every model has type «base» and is still a chat model", () => {
+  it("Mistral: every model has type «base» and is still a chat model", () => {
     expect(modelKind({ id: "mistral-large-latest", object: "model", type: "base", capabilities: { completion_chat: true, function_calling: true } })).toBeUndefined();
   });
 
-  bug("Together AI: «language» and «code» models answer chat requests", () => {
+  it("Together AI: «language» and «code» models answer chat requests", () => {
     expect(modelKind({ id: "meta-llama/Llama-4-70b", object: "model", type: "language" })).toBeUndefined();
+  });
+
+  it("known kinds that do not chat are hidden at any service; at Polza AI any type but «chat»", () => {
+    expect(modelKind({ id: "x/image", type: "image" })).toBe("image");
+    expect(modelKind({ id: "x/embed", type: "embedding" })).toBe("embedding");
+    expect(modelKind({ id: "x/rerank", type: "rerank" })).toBeUndefined();
+    expect(modelKind({ id: "x/rerank", type: "rerank" }, true)).toBe("rerank");
+    expect(modelKind({ id: "x/chat", type: "chat" }, true)).toBeUndefined();
   });
 
   it("(for comparison) services that say nothing keep all their models", () => {
