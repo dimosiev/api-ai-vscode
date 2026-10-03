@@ -54,7 +54,8 @@ export const HOME_PRIVATE = [
 /**
  * Personal folders where the user keeps their own work. A folder inside one
  * may be opened by name (a project there works the same way); the rest of it
- * stays closed. Folders with keys and program data can't be opened at all.
+ * stays closed, and the personal folder itself can't be opened whole. Folders
+ * with keys and program data can't be opened at all.
  */
 const HOME_PERSONAL = ["Documents", "Desktop", "Downloads", "Pictures", "Movies", "Music"];
 
@@ -123,6 +124,8 @@ function checkFolder(folder: string, root: string | undefined, home: string, pri
   if (priv.some((p) => inside(real, p) && !personal.includes(p))) {
     return { reason: "закрытая папка: в ней ключи, пароли или данные программ" };
   }
+  // The whole of Documents or ~/Library: what is closed inside would stay closed, but the rest is too much to open at once.
+  if (priv.some((p) => inside(p, real))) return { reason: "слишком широко: внутри есть закрытые папки (личные файлы, ключи, данные программ). Откройте конкретную папку внутри" };
   if (root !== undefined && inside(real, realPath(root))) return { reason: "она внутри проекта и уже доступна" };
   return { path: real };
 }

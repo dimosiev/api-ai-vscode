@@ -1,7 +1,5 @@
 // Findings of the audit after 0.5.0 (docs/AUDIT.md, «Аудит после 0.5.0»).
-// A test written with `bug(...)` describes the right behaviour of something
-// that is not fixed yet: it stays green until the fix lands.
-// AUDIT_STRICT=1 shows the real failures.
+// Every finding is fixed now; the tests stay to keep it that way.
 import { linkSync, mkdirSync, mkdtempSync, promises as fs, realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -14,7 +12,6 @@ import { today } from "../src/prompt";
 import { diskFiles, executeTool } from "../src/tools";
 import { fetchPage, htmlToText, isPublicAddress, parsePageUrl, type WebAccess } from "../src/tools/web";
 
-const bug = process.env.AUDIT_STRICT ? it : it.fails;
 const tmp = (prefix: string) => realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
 
 describe("О-3: a page must not freeze the editor", () => {
@@ -223,21 +220,27 @@ describe("Р-1: plan mode and remembered commands", () => {
   });
 });
 
-describe("Р-2 (waits for the owner's decision): how wide an extra folder may be", () => {
+describe("Р-2: how wide an extra folder may be", () => {
   const home = tmp("dimosi-home-");
   for (const dir of ["proj", "Documents/work", "Library/Keychains", "Library/LaunchAgents"]) mkdirSync(path.join(home, dir), { recursive: true });
   const access = (folder: string) => createAccess(path.join(home, "proj"), [{ path: path.join(home, folder), mode: "write" }], { home, own: [] });
 
-  bug("the whole of Documents can't be opened, only a folder inside it", () => {
+  it("the whole of Documents can't be opened, only a folder inside it", () => {
     expect(access("Documents").folders).toEqual([]);
   });
 
-  bug("the whole of ~/Library can't be opened (programs started at login live there)", () => {
+  it("the whole of ~/Library can't be opened (programs started at login live there)", () => {
     expect(access("Library").folders).toEqual([]);
   });
 
-  it("whatever is opened, the folders with keys inside stay closed", () => {
-    expect(() => resolvePath(access("Library"), path.join(home, "Library/Keychains/login.keychain"))).toThrow(/private folder/);
+  it("the user is told why, and what to do", () => {
+    expect(access("Library").rejected[0].reason).toMatch(/слишком широко.*Откройте конкретную папку внутри/);
+  });
+
+  it("a folder next to the closed ones inside ~/Library can be opened; the closed ones stay closed", () => {
+    expect(access("Library/LaunchAgents").folders).toHaveLength(1);
+    expect(access("Library/Keychains").folders).toEqual([]);
+    expect(() => resolvePath(access("Library/LaunchAgents"), path.join(home, "Library/Keychains/login.keychain"))).toThrow(/outside the project/);
   });
 
   it("a folder inside Documents can be opened", () => {

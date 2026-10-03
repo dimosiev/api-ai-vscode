@@ -185,8 +185,12 @@ describe("file tools and extra folders", () => {
     const tools = path.join(home, "Library/Application Support");
     mkdirSync(path.join(tools, "Slack"), { recursive: true });
     writeFileSync(path.join(tools, "Slack/data"), "PRIVATE");
-    const access = policy([{ path: tools, mode: "read" }, { path: work, mode: "write" }]);
-    expect(access.folders).toHaveLength(2);
+    // Such a wide folder is no longer accepted from the settings...
+    const checked = policy([{ path: tools, mode: "read" }, { path: work, mode: "write" }]);
+    expect(checked.folders.map((f) => f.path)).toEqual([work]);
+    expect(checked.rejected[0].reason).toMatch(/слишком широко/);
+    // ...and if one got in anyway, what is private inside it would still be closed.
+    const access = { ...checked, folders: [{ path: tools, mode: "read" as const }, ...checked.folders] };
     const r = await call("read_file", { path: path.join(tools, "Slack/data") }, access);
     expect(r.isError).toBe(true);
     expect(r.content).toMatch(/private folder/);
