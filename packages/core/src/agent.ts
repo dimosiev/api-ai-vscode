@@ -266,8 +266,9 @@ export class Agent {
         yield { type: "error", message: "Остановлено." };
         return;
       }
-      this.log?.error(`task failed: ${describeError(e)}`);
-      yield { type: "error", message: describeError(e) };
+      const message = this.log ? this.log.redact(describeError(e)) : describeError(e);
+      this.log?.error(`task failed: ${message}`);
+      yield { type: "error", message };
     }
   }
 
@@ -437,8 +438,25 @@ function seconds(since: number): string {
 
 /** Masked before it is cut: a key split at the cut would no longer be recognized. */
 function errorText(e: unknown, log?: Log): string {
-  const text = e instanceof Error ? e.message : String(e);
+  const text = messageWithCause(e);
   return (log ? log.redact(text) : text).slice(0, 300);
+}
+
+/**
+ * The message plus what lies under it. For a network failure the libraries say only
+ * "Connection error." and keep the real reason (refused, no such host, a dead proxy) in `cause`.
+ */
+function messageWithCause(e: unknown): string {
+  const parts: string[] = [];
+  let cur: unknown = e;
+  for (let depth = 0; cur != null && depth < 4; depth++) {
+    const err = cur as { message?: unknown; code?: unknown; cause?: unknown; errors?: unknown[] };
+    const text = cur instanceof Error ? String(err.message || err.code || cur.name) : String(cur);
+    if (text && !parts.some((p) => p.includes(text))) parts.push(text);
+    // Node reports a failure on several addresses as an AggregateError with an empty message.
+    cur = cur instanceof Error ? (err.cause ?? err.errors?.[0]) : undefined;
+  }
+  return parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(": ")})` : (parts[0] ?? "");
 }
 
 function statusOf(e: unknown): number | undefined {
@@ -496,8 +514,9 @@ export function describeError(e: unknown): string {
   }
   if (status && status >= 500) return `Сервис временно недоступен (${status}). Попробуйте ещё раз через минуту. (${msg})`;
   if (status) return `Ошибка сервиса ${status}: ${msg}`;
-  if (/fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|network|Connection error/i.test(msg)) {
-    return `Нет связи с сервисом. Проверьте интернет (или адрес сервера). (${msg})`;
+  const full = messageWithCause(e);
+  if (/fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|network|Connection error/i.test(full)) {
+    return `Нет связи с сервисом. Проверьте интернет (или адрес сервера). (${full})`;
   }
   return msg;
 }

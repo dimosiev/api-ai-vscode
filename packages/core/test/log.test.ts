@@ -143,6 +143,42 @@ describe("agent journal", () => {
     expect(text).not.toContain("Готово");
   });
 
+  it("names the real reason of a connection error, in the journal and in the message", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-log-"));
+    const lines: string[] = [];
+    const log = new Log((level, msg) => lines.push(`${level} ${msg}`));
+    log.addSecret(KEY);
+    // The shape the OpenAI and Anthropic libraries throw: the reason is two levels down.
+    const refused = () => {
+      const socket = Object.assign(new Error(`connect ECONNREFUSED 127.0.0.1:1082 ${KEY}`), { code: "ECONNREFUSED" });
+      throw new Error("Connection error.", { cause: new TypeError("fetch failed", { cause: socket }) });
+    };
+    const agent = new Agent({
+      provider: new FakeProvider([refused, refused, refused]),
+      model: "qwen/qwen3.8-27b",
+      root,
+      approval: { approve: async () => "allow" },
+      globalRulesPath: path.join(root, "none.md"),
+      log,
+    });
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((fn: () => void) => realSetTimeout(fn, 0)) as typeof setTimeout;
+    let events: AgentEvent[];
+    try {
+      events = await collect(agent.run("привет"));
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+
+    const text = lines.join("\n");
+    expect(text).toMatch(/warn request .*Connection error\. \(fetch failed: connect ECONNREFUSED 127\.0\.0\.1:1082 .*retrying in 2s/);
+    expect(text).toMatch(/error request .*attempt 3\): failed .*ECONNREFUSED 127\.0\.0\.1:1082/);
+    const shown = events.find((e) => e.type === "error");
+    expect(shown).toMatchObject({ message: expect.stringMatching(/^Нет связи с сервисом\..*ECONNREFUSED 127\.0\.0\.1:1082/) });
+    expect(text).not.toContain(KEY);
+    expect(JSON.stringify(shown)).not.toContain(KEY);
+  });
+
   it("masks a key before cutting a long error, so no piece of it is left", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-log-"));
     const log = new Log();
