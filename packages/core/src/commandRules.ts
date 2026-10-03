@@ -34,10 +34,38 @@ const SHELL_SYNTAX = /[;&|<>()`$\\\n\r]/;
  */
 const RUNS_ANOTHER = new Set([
   "sh", "bash", "zsh", "dash", "fish", "ksh", "csh", "tcsh", "cmd", "powershell", "pwsh",
-  "env", "xargs", "eval", "exec", "sudo", "doas", "nohup", "time", "command", "builtin", "nice", "timeout", "watch", "ssh", "find",
+  "env", "xargs", "eval", "exec", "sudo", "doas", "su", "nohup", "time", "command", "builtin", "nice", "timeout", "watch", "ssh", "find",
+  "caffeinate", "arch", "script", "stdbuf", "setsid", "chroot", "flock", "parallel", "unbuffer",
+  // Not runners, but every address is a decision of its own (as with fetch_page).
+  "curl", "wget",
 ]);
 
+/**
+ * The same, where it takes two words to say "run this other program":
+ * `npm exec tsc` must not allow `npm exec anything-else`.
+ */
+const RUNS_ANOTHER_AFTER: Record<string, string[]> = {
+  npm: ["exec", "x"],
+  pnpm: ["exec", "dlx"],
+  yarn: ["exec", "dlx"],
+  bun: ["x"],
+  docker: ["run", "exec", "compose"],
+  podman: ["run", "exec"],
+  kubectl: ["run", "exec"],
+  uv: ["run", "tool"],
+  poetry: ["run"],
+  pipenv: ["run"],
+  pdm: ["run"],
+  hatch: ["run"],
+  conda: ["run"],
+  bundle: ["exec"],
+  // `git submodule foreach <command>`
+  git: ["submodule"],
+};
+
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+/** `npm run build`: the script is the third word. */
+const RUN_SCRIPT = new Set(["run", "run-script"]);
 
 const words = (command: string) => command.trim().split(/\s+/).filter(Boolean);
 
@@ -46,10 +74,10 @@ export function commandRule(command: string): CommandRule {
   const exact: CommandRule = { kind: "exact", text: command.trim() };
   if (SHELL_SYNTAX.test(command)) return exact;
   const w = words(command);
-  // `npm run build`: the script is the third word; `npm run` alone would cover every script.
-  const length = PACKAGE_MANAGERS.has(w[0]) && w[1] === "run" ? 3 : 2;
+  // `npm run build`: `npm run` alone would cover every script.
+  const length = PACKAGE_MANAGERS.has(w[0]) && RUN_SCRIPT.has(w[1]) ? 3 : 2;
   const head = w.slice(0, length);
-  if (head.length < length || RUNS_ANOTHER.has(head[0])) return exact;
+  if (head.length < length || RUNS_ANOTHER.has(head[0]) || RUNS_ANOTHER_AFTER[head[0]]?.includes(head[1])) return exact;
   // An option (`node -e …`), a variable (`FOO=1 cmd`) or quotes: nothing safe to generalise.
   if (head.some((word, i) => (i > 0 && word.startsWith("-")) || /["'=]/.test(word))) return exact;
   return { kind: "prefix", text: head.join(" ") };
@@ -57,8 +85,10 @@ export function commandRule(command: string): CommandRule {
 
 export function ruleMatches(rule: CommandRule, command: string): boolean {
   if (rule.kind === "exact") return command.trim() === rule.text;
-  // Checked again here: the saved list is read from a file.
-  if (SHELL_SYNTAX.test(command) || SHELL_SYNTAX.test(rule.text) || words(rule.text).length < 2) return false;
+  // Checked again here: the saved list is read from a file, and a rule saved
+  // by an older version may be wider than what would be remembered today.
+  const today = commandRule(rule.text);
+  if (SHELL_SYNTAX.test(command) || today.kind !== "prefix" || today.text !== rule.text) return false;
   const normal = words(command).join(" ");
   return normal === rule.text || normal.startsWith(rule.text + " ");
 }

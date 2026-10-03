@@ -64,12 +64,12 @@ describe("О-2: \"Always\" by the beginning must not cover programs that run oth
     ["wget https://example.com", "wget https://example.com https://other.example/"],
   ];
   for (const [approved, later] of cases) {
-    bug(`"${approved}" does not allow "${later}"`, () => {
+    it(`"${approved}" does not allow "${later}"`, () => {
       expect(ruleMatches(commandRule(approved), later)).toBe(false);
     });
   }
 
-  bug("a rule saved by an older version does not cover them either", () => {
+  it("a rule saved by an older version does not cover them either", () => {
     expect(ruleMatches({ kind: "prefix", text: "npm exec" }, "npm exec -- rimraf src")).toBe(false);
   });
 
