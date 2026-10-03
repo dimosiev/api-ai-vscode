@@ -7,9 +7,6 @@ import { editorFiles } from "../src/editorFiles";
 import { EditorProblems, type ProblemTimings } from "../src/problems";
 import { DiagnosticSeverity, Position, Range, stub, Uri, type Diagnostic, type TextDocument } from "./e2e/vscode";
 
-/** A known bug that is not fixed yet: green until the fix lands (AUDIT_STRICT=1 shows the failure). */
-const bug = process.env.AUDIT_STRICT ? it : it.fails;
-
 let root: string;
 let problems: EditorProblems;
 
@@ -70,12 +67,14 @@ describe("the editor's errors after the agent changes a file", () => {
   });
 
   // Audit after 0.5.0, О-1; measured in the real VS Code 1.140 (test/real).
-  bug("a preview tab the user has in the background is not replaced and closed by the check", async () => {
+  it("a preview tab the user has in the background is not replaced and closed by the check", async () => {
     await fs.writeFile(path.join(root, "notes.md"), "notes\n");
     await fs.writeFile(path.join(root, "mine.ts"), "ok\n");
     await stub.showFile(uri("notes.md"), { preview: true });
     await stub.showFile(uri("mine.ts"));
-    await run("write_file", { path: "a.ts", content: "BAD\n" });
+    const r = await run("write_file", { path: "a.ts", content: "BAD\n" });
+    expect(r.content).toContain("- line 1: Cannot find name 'BAD'.");
+    expect(stub.executed.find((e) => e.id === "vscode.open")?.args[1]).toEqual({ background: true, preview: false, preserveFocus: true });
     expect(stub.tabs).toEqual(["notes.md(p)", "mine.ts*"]);
   });
 

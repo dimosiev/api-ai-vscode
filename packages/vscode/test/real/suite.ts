@@ -43,6 +43,8 @@ export async function run(): Promise<void> {
 
   // The user looks at a file of their own. VS Code's checkers wake up, as in everyday work.
   const mine = vscode.Uri.file(path.join(root, "mine.ts"));
+  // ...and has another one in a preview tab (a single click in the Explorer: the name in italics).
+  await vscode.window.showTextDocument(vscode.Uri.file(path.join(root, "README.md")), { preview: true });
   await vscode.window.showTextDocument(mine, { preview: false });
   await eventually("VS Code reports the error in mine.ts", () => vscode.languages.getDiagnostics(mine).length > 0, 60_000);
   step("VS Code's TypeScript checker is running");
@@ -91,8 +93,8 @@ export async function run(): Promise<void> {
     assert.equal(results[4], "Edited mine.ts (1 replacement).", "the error the agent fixed is not reported any more");
     step("the editor's errors for the changed files reach the model");
 
-    const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs.map((t) => t.label));
-    assert.deepEqual(tabs, ["mine.ts"], "tabs opened for the check are closed again");
+    const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs.map((t) => `${t.label}${t.isPreview ? " (preview)" : ""}`));
+    assert.deepEqual(tabs, ["README.md (preview)", "mine.ts"], "tabs opened for the check are closed again, the user's preview tab is still there");
     assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, mine.fsPath, "the user's file stays in front");
     step("the user's tab stays in front and no tabs are left behind");
   } finally {

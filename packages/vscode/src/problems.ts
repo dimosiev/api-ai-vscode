@@ -126,7 +126,10 @@ export class EditorProblems implements vscode.Disposable {
           const first = this.firstWait(language);
           if (first > 0 && !tabOf(uri)) {
             // In the background: the user's own tab stays in front and keeps the keyboard.
-            await vscode.commands.executeCommand("vscode.open", uri, { background: true, preview: true, preserveFocus: true });
+            // A window keeps one preview tab (the name in italics): if the user has one, a second
+            // would replace it, so the file gets an ordinary tab then.
+            const preview = !vscode.window.tabGroups.all.some((group) => group.tabs.some((tab) => tab.isPreview));
+            await vscode.commands.executeCommand("vscode.open", uri, { background: true, preview, preserveFocus: true });
             ownTab = true;
           }
           const started = Date.now();
