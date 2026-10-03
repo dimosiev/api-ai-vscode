@@ -1,7 +1,7 @@
 // Starts a real VS Code with the freshly built extension and runs suite.ts
 // inside it:  npm run test:vscode
 //
-// VS Code is downloaded once into .vscode-test/ (about 150 MB). It runs with
+// VS Code is downloaded once into .vscode-test/ (a download of about 150 MB, close to 900 MB unpacked). It runs with
 // its own empty profile and no other extensions, so the user's VS Code, its
 // settings and keys are not touched. The build has no update address: the
 // test never contacts the update server. The model is the fake server on

@@ -214,6 +214,13 @@ describe("CLI, end to end", () => {
     expect(out.match(/Разрешить\?/g)).toHaveLength(2);
   }, 30_000);
 
+  it("--help names every rules file the agent reads", async () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-home-"));
+    const { code, out } = await runCli(["--help"], home, home, "");
+    expect(code).toBe(0);
+    for (const file of ["AGENTS.md", "CLAUDE.md", ".dimosi/rules.md", ".dimosi/rules/*.md"]) expect(out).toContain(file);
+  });
+
   it("--base-url is accepted only for custom and ollama", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-root-"));
     const home = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-home-"));

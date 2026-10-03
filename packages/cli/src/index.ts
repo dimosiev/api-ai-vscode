@@ -65,7 +65,7 @@ ${c.bold("Ключи")}:
 ${c.bold("Правила")} (агент читает их перед каждым ответом):
   dimosi rules                     показать, какие правила действуют в текущей папке
   dimosi rules global              создать/показать путь к глобальным правилам
-  Правила проекта: файлы AGENTS.md, .dimosi/rules.md, .dimosi/rules/*.md
+  Правила проекта: файлы AGENTS.md, CLAUDE.md, .dimosi/rules.md, .dimosi/rules/*.md
 
 ${c.bold("Провайдеры и модели")}:
   dimosi providers               список поддерживаемых провайдеров
