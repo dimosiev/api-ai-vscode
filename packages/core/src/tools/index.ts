@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
 import { createAccess, folderOf, isClosedFolder, relativeInFolder, resolvePath, showPath, type AccessPolicy } from "../access";
-import { revealHidden, type PermissionGate } from "../permissions";
+import { PLAN_MODE_REFUSAL, revealHidden, type PermissionGate } from "../permissions";
 import type { ToolCallPart, ToolDefinition } from "../types";
 import { commandEnv, defaultSandboxPaths, sandboxAvailable, sandboxedCommand } from "./sandbox";
 import { IMAGE_EXTENSIONS, imageFormat, type ImageMaker } from "./image";
@@ -379,6 +379,17 @@ async function writeAndCheck(ctx: ToolContext, abs: string, text: string): Promi
   return { written, note: `\n\nThe editor now reports ${count} in this file (some may have been there before your change):\n${lines.join("\n")}` };
 }
 
+/** The promise, or a rejection as soon as the user presses Stop. */
+function stoppable<T>(promise: Promise<T> | undefined, signal?: AbortSignal): Promise<T | undefined> {
+  if (!promise || !signal) return Promise.resolve(promise);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error("aborted"));
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
 const accessOf = (ctx: ToolContext): AccessPolicy => ctx.access ?? createAccess(ctx.root);
 
 /**
@@ -592,7 +603,13 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
         "Pictures are not set up: they are made through Polza AI and need its API key. Tell the user to add the key for Polza AI (the chat model may stay any).",
       );
     }
-    const price = await images.price?.().catch(() => undefined);
+    // Plan mode refuses before anything is asked of the service, the price included.
+    if (gate.planOnly) throw new Error(PLAN_MODE_REFUSAL);
+    // The price is a hint: no price is fine, but Stop must not wait for it.
+    const price = await stoppable(images.price?.(signal), signal).catch((e) => {
+      if (signal?.aborted) throw e;
+      return undefined;
+    });
     const ok = await gate.check({ kind: "image", prompt, path: abs, relPath: showPath(access, abs), model: images.model, price });
     if (!ok) throw new Error("The user did not allow making this picture.");
     const { bytes, cost } = await images.generate({ prompt, aspectRatio, signal });

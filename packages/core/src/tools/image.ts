@@ -13,13 +13,15 @@ export interface ImageMaker {
   /** The image model, as shown to the user. */
   readonly model: string;
   /** The price of one picture for the question to the user, e.g. "4 ₽"; undefined when unknown. */
-  price?(): Promise<string | undefined>;
+  price?(signal?: AbortSignal): Promise<string | undefined>;
   generate(req: { prompt: string; aspectRatio?: string; signal?: AbortSignal }): Promise<GeneratedImage>;
 }
 
 export const DEFAULT_POLZA_IMAGE_MODEL = "qwen/image-2";
 export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp"] as const;
-export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
+/** The price is only a hint on the question: the user is not kept waiting for it. */
+const PRICE_TIMEOUT_MS = 10_000;
 
 /** The real format of a picture by its first bytes; undefined for anything else. */
 export function imageFormat(bytes: Uint8Array): "png" | "jpg" | "webp" | undefined {
@@ -65,8 +67,9 @@ export function polzaImages(opts: PolzaImagesOptions): ImageMaker {
 
   return {
     model,
-    price() {
-      price ??= call(`${base}/models`, { headers })
+    price(signal) {
+      const limit = AbortSignal.timeout(PRICE_TIMEOUT_MS);
+      price ??= call(`${base}/models`, { headers, signal: signal ? AbortSignal.any([signal, limit]) : limit })
         .then((list) => priceOf((list.data as Array<Record<string, unknown>> | undefined)?.find((m) => m.id === model)))
         .catch(() => {
           price = undefined; // ask again next time
@@ -92,13 +95,42 @@ export function polzaImages(opts: PolzaImagesOptions): ImageMaker {
       // Polza's storage, not the API: the key is not sent there.
       const res = await send(url, { signal });
       if (!res.ok) throw new Error(`The picture could not be downloaded (${res.status}).`);
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      if (bytes.length > MAX_IMAGE_BYTES) throw new Error(`The picture is too large (${Math.round(bytes.length / 1024 / 1024)} MB).`);
+      const bytes = await readLimited(res, MAX_IMAGE_BYTES);
       const usage = status.usage as { cost_rub?: unknown } | undefined;
       const rub = Number(usage?.cost_rub);
       return { bytes, cost: Number.isFinite(rub) && usage?.cost_rub != null ? rubles(rub) : undefined };
     },
   };
+}
+
+/** The body, read only up to the limit: a larger download is cut off, not kept in memory. */
+async function readLimited(res: Response, limit: number): Promise<Uint8Array> {
+  const tooLarge = () => new Error(`The picture is too large (over ${Math.round(limit / 1024 / 1024)} MB). Nothing was saved.`);
+  const reader = res.body?.getReader();
+  if (!reader) return new Uint8Array();
+  if (Number(res.headers.get("content-length")) > limit) {
+    await reader.cancel().catch(() => undefined);
+    throw tooLarge();
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > limit) {
+      await reader.cancel().catch(() => undefined);
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.length;
+  }
+  return bytes;
 }
 
 const rubles = (n: number) => `${String(Math.round(n * 100) / 100).replace(".", ",")} ₽`;

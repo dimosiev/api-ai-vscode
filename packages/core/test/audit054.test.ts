@@ -141,7 +141,7 @@ describe("О-4: the model list filter and services that are not Polza AI or Open
 });
 
 describe("О-5: the price of a picture is asked for before the question", () => {
-  bug("Stop works while the price list is loading", async () => {
+  it("Stop works while the price list is loading", async () => {
     const stop = new AbortController();
     const { run } = imageTool({ bytes: PNG, price: () => new Promise(() => undefined) });
     const call = run({ prompt: "кот", path: "cat.png" }, stop.signal);
@@ -151,14 +151,14 @@ describe("О-5: the price of a picture is asked for before the question", () => 
     expect(outcome).not.toBe(hung);
   });
 
-  bug("the real price request has a time limit of its own and listens to Stop", async () => {
+  it("the real price request has a time limit of its own and listens to Stop", async () => {
     let init: RequestInit | undefined;
     const maker = polzaImages({ apiKey: "k", fetch: (async (_url: string, i?: RequestInit) => ((init = i), new Response("{}"))) as unknown as typeof fetch });
     await maker.price!();
     expect(init?.signal).toBeDefined();
   });
 
-  bug("plan mode: refused without any request to the service", async () => {
+  it("plan mode: refused without any request to the service", async () => {
     const { gate, counts, run } = imageTool({ bytes: PNG });
     gate.planOnly = true;
     const result = await run({ prompt: "кот", path: "cat.png" });
@@ -168,7 +168,7 @@ describe("О-5: the price of a picture is asked for before the question", () => 
 });
 
 describe("Р-2: the picture is downloaded from an address the service names", () => {
-  bug("a download larger than the limit is stopped, not read to the end", async () => {
+  it("a download larger than the limit is stopped, not read to the end", async () => {
     const MB = 1024 * 1024;
     let sent = 0;
     const endless = new ReadableStream<Uint8Array>({
@@ -184,7 +184,36 @@ describe("Р-2: the picture is downloaded from an address the service names", ()
     ];
     const maker = polzaImages({ apiKey: "k", fetch: (async () => answers.shift()!()) as unknown as typeof fetch });
     await expect(maker.generate({ prompt: "кот" })).rejects.toThrow(/too large/);
-    expect(sent).toBeLessThanOrEqual(27 * MB);
+    expect(sent).toBeLessThanOrEqual(32 * MB);
+  });
+});
+
+describe("Р-2: the limit is 30 MB", () => {
+  const completed = () => new Response(JSON.stringify({ id: "a", status: "completed", data: { url: "https://s3.polza.ai/x.png" } }));
+  const maker = (picture: () => Response) => {
+    const answers = [completed, picture];
+    return polzaImages({ apiKey: "k", fetch: (async () => answers.shift()!()) as unknown as typeof fetch });
+  };
+
+  it("a picture just under the limit is kept whole", async () => {
+    const big = new Uint8Array(29 * 1024 * 1024);
+    big.set(PNG);
+    const image = await maker(() => new Response(big)).generate({ prompt: "кот" });
+    expect(image.bytes.length).toBe(big.length);
+    expect([...image.bytes.subarray(0, PNG.length)]).toEqual([...PNG]);
+  });
+
+  it("a size announced over the limit is refused without reading", async () => {
+    let read = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        read++;
+        controller.enqueue(new Uint8Array(1024));
+      },
+    });
+    const refused = maker(() => new Response(body, { headers: { "content-length": String(31 * 1024 * 1024) } })).generate({ prompt: "кот" });
+    await expect(refused).rejects.toThrow("too large (over 30 MB)");
+    expect(read).toBeLessThanOrEqual(2);
   });
 });
 
