@@ -54,15 +54,22 @@ describe("О-4: pages that are not UTF-8", () => {
   });
   const PRIVET_1251 = [0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2];
 
-  bug("the encoding named by the site is used (windows-1251)", async () => {
+  it("the encoding named by the site is used (windows-1251)", async () => {
     const r = await fetchPage(parsePageUrl("https://example.com/"), page(PRIVET_1251, "text/html; charset=windows-1251"));
     expect(r).toMatchObject({ kind: "page", text: "Привет" });
   });
 
-  bug("...or the one named in the page itself", async () => {
+  it("...or the one named in the page itself", async () => {
     const head = [...Buffer.from('<html><head><meta charset="windows-1251"></head><body>', "latin1")];
     const r = await fetchPage(parsePageUrl("https://example.com/"), page([...head, ...PRIVET_1251], "text/html"));
     expect(r).toMatchObject({ kind: "page", text: "Привет" });
+  });
+
+  it("a page in UTF-8, an unknown encoding name and no name at all are read as UTF-8", async () => {
+    const utf8 = [...Buffer.from("Привет", "utf8")];
+    for (const type of ["text/html; charset=utf-8", "text/html; charset=no-such-encoding", "text/html", ""]) {
+      expect(await fetchPage(parsePageUrl("https://example.com/"), page(utf8, type))).toMatchObject({ kind: "page", text: "Привет" });
+    }
   });
 });
 

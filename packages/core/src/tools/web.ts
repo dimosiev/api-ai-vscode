@@ -158,7 +158,24 @@ async function assertPublic(url: URL, web: WebAccess): Promise<void> {
   }
 }
 
-async function readBody(res: Response): Promise<{ text: string; cut: boolean }> {
+/**
+ * The encoding of a page: the one the site names, else the one the page
+ * names in its first lines (`<meta charset=…>`), else UTF-8. Older Russian
+ * sites are often in windows-1251.
+ */
+function decoderFor(type: string, bytes: Uint8Array): InstanceType<typeof TextDecoder> {
+  const named =
+    /charset\s*=\s*["']?([\w.:-]+)/i.exec(type)?.[1] ??
+    /<meta[^>]{0,200}?charset\s*=\s*["']?([\w.:-]+)/i.exec(Buffer.from(bytes.subarray(0, 2048)).toString("latin1"))?.[1];
+  try {
+    return new TextDecoder(named ?? "utf-8");
+  } catch {
+    // a name this computer does not know
+    return new TextDecoder("utf-8");
+  }
+}
+
+async function readBody(res: Response, type: string): Promise<{ text: string; cut: boolean }> {
   const reader = res.body?.getReader();
   if (!reader) return { text: "", cut: false };
   const chunks: Uint8Array[] = [];
@@ -175,7 +192,8 @@ async function readBody(res: Response): Promise<{ text: string; cut: boolean }> 
       break;
     }
   }
-  return { text: new TextDecoder("utf-8").decode(Buffer.concat(chunks).subarray(0, MAX_BYTES)), cut };
+  const bytes = Buffer.concat(chunks).subarray(0, MAX_BYTES);
+  return { text: decoderFor(type, bytes).decode(bytes), cut };
 }
 
 export type PageResult =
@@ -226,7 +244,7 @@ export async function fetchPage(start: URL, web: WebAccess, signal?: AbortSignal
       await res.body?.cancel().catch(() => undefined);
       throw new Error(`This address is not a text page (${type.split(";")[0]}), so it is not read.`);
     }
-    const body = await readBody(res);
+    const body = await readBody(res, type);
     const text = /html/i.test(type) || /^\s*<(!doctype|html)/i.test(body.text) ? htmlToText(body.text) : body.text.trim();
     const cut = body.cut || text.length > MAX_CHARS;
     return { kind: "page", url: url.toString(), text: (text.slice(0, MAX_CHARS) || "(the page has no text)") + (cut ? "\n... (the rest of the page is cut)" : "") };
