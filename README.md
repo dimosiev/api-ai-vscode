@@ -43,6 +43,8 @@ npm run package
 
 ## Разработка
 
+Устройство кода, правила, которые нельзя ломать, и рецепты типовых задач: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Правила работы для ИИ-агента: [CLAUDE.md](CLAUDE.md).
+
 ```
 npm test            # vitest: ядро, откат, панель (jsdom), сквозные тесты VS Code и CLI с фейковым сервером
 npm run typecheck   # tsc: core, cli, vscode, webview
