@@ -129,6 +129,33 @@ describe("fetch_page", () => {
     expect(requests).toHaveLength(3);
   });
 
+  // Audit after 0.5.0, Р-3: the site sees the whole address, so data could leave through it.
+  it("on a site allowed with Always, an address with a long part after «?» is still asked about, with a warning", async () => {
+    decision = "allow_always";
+    const g = gate();
+    await read("https://docs.example.com/guide", g);
+    decision = "allow";
+    const short = `https://docs.example.com/search?q=${"a".repeat(96)}`; // "?q=" + 96 = 99 characters
+    const long = `https://docs.example.com/search?q=${"a".repeat(98)}`; // 101 characters
+    await read(short, g);
+    expect(requests).toHaveLength(1);
+    await read(long, g);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toMatchObject({ kind: "fetch", url: long, warning: expect.stringMatching(/длина 101/) });
+    expect(fetched).toContain(long);
+    // Refused: the site is not contacted.
+    decision = "deny";
+    const other = `https://docs.example.com/x?data=${"b".repeat(200)}`;
+    expect((await read(other, g)).isError).toBe(true);
+    expect(fetched).not.toContain(other);
+    // Asked every time, also with approvals off; the site itself stays allowed.
+    decision = "allow";
+    await read(long, gate("auto"));
+    expect(requests).toHaveLength(4);
+    await read("https://docs.example.com/api", g);
+    expect(requests).toHaveLength(4);
+  });
+
   it("plan mode does not refuse reading: it asks as usual", async () => {
     const g = gate();
     g.planOnly = true;

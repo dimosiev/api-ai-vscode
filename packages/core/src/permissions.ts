@@ -116,6 +116,25 @@ function hiddenCharsWarning(req: ApprovalRequest): string | undefined {
     : undefined;
 }
 
+/** The part of a page address after "?" that is still read without a question on a site allowed with "Always". */
+const MAX_QUIET_QUERY = 100;
+
+/**
+ * The site sees the whole address. A long part after "?" is how text from the
+ * project could be carried out, so it is asked about even on an allowed site.
+ */
+function pageAddressWarning(url: string): string | undefined {
+  let query = "";
+  try {
+    query = new URL(url).search;
+  } catch {
+    // not an address: the tool refuses it itself
+  }
+  return query.length > MAX_QUIET_QUERY
+    ? `В адресе после «?» длинная строка (длина ${query.length}). Сайт увидит её целиком: так наружу могут уйти данные из проекта. Проверьте, что в ней нет лишнего.`
+    : undefined;
+}
+
 /** Up to the next `;`, `&&`, `|` or line break: one command of a chain. */
 const ARGS = String.raw`[^;&|\n]*`;
 
@@ -188,7 +207,7 @@ export class PermissionGate {
   ) {}
 
   async check(req: ApprovalRequest): Promise<boolean> {
-    const own = req.kind === "write" ? protectedWriteWarning(req) : req.kind === "command" ? dangerousCommandWarning(req.command) : undefined;
+    const own = req.kind === "write" ? protectedWriteWarning(req) : req.kind === "command" ? dangerousCommandWarning(req.command) : pageAddressWarning(req.url);
     const warning = [req.warning, hiddenCharsWarning(req), own].filter(Boolean).join(" ") || undefined;
     if (req.kind === "fetch") return this.checkSite(req, warning);
     const remembered = () => req.kind === "command" && [...(this.rules?.list() ?? []), ...this.sessionRules].some((rule) => ruleMatches(rule, req.command));
