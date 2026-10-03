@@ -464,7 +464,7 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     const content = str(input, "content");
     const oldContent = await readTextOrNull(files, abs, relPath);
     if (oldContent === content) return "File already has this content; nothing changed.";
-    const ok = await gate.check({ kind: "write", path: abs, relPath, oldContent, newContent: content });
+    const ok = await gate.check({ kind: "write", path: abs, relPath, folderPath: relativeInFolder(access, abs), oldContent, newContent: content });
     if (!ok) throw new Error("The user rejected this change.");
     // The path is checked again: a link could have been swapped while the user decided.
     resolvePath(access, str(input, "path"), "write");
@@ -503,7 +503,7 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     const newContent = input.replace_all === true
       ? oldContent.split(oldString).join(newString)
       : oldContent.replace(oldString, () => newString);
-    const ok = await gate.check({ kind: "write", path: abs, relPath, oldContent, newContent });
+    const ok = await gate.check({ kind: "write", path: abs, relPath, folderPath: relativeInFolder(access, abs), oldContent, newContent });
     if (!ok) throw new Error("The user rejected this change.");
     resolvePath(access, str(input, "path"), "write");
     const { written, note } = await writeAndCheck(ctx, abs, newContent);

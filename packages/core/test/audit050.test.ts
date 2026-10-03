@@ -119,11 +119,11 @@ describe("О-5: protected files in an extra folder", () => {
     return asked;
   }
 
-  bug("the agent's rules there (.dimosi/) are asked about even with approvals off", async () => {
+  it("the agent's rules there (.dimosi/) are asked about even with approvals off", async () => {
     expect(await write(path.join(tmp("dimosi-a5-"), "shared"), ".dimosi/rules.md")).toBe(1);
   });
 
-  bug("a folder that merely lies below something named .vscode is not all \"protected\"", async () => {
+  it("a folder that merely lies below something named .vscode is not all \"protected\"", async () => {
     expect(await write(path.join(tmp("dimosi-a5-"), ".vscode", "shared"), "notes.txt")).toBe(0);
   });
 

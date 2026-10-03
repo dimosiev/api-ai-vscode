@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { commandRule, ruleMatches, type CommandRule, type CommandRuleStore } from "./commandRules";
 import { isSecretFile } from "./tools/workspace";
 
@@ -6,8 +7,10 @@ export type ApprovalRequest =
       kind: "write";
       /** Absolute path. */
       path: string;
-      /** Path relative to the project root, for display. */
+      /** As shown to the user: relative to the project root, or the full path in an extra folder. */
       relPath: string;
+      /** Path inside the open folder the file really lies in (the project or an extra folder): what the protected-file check looks at. */
+      folderPath?: string;
       /** null when the file is being created. */
       oldContent: string | null;
       newContent: string;
@@ -40,6 +43,17 @@ export interface ApprovalHandler {
 }
 
 export type ApprovalMode = "ask" | "auto";
+
+/**
+ * The warning for a write. A file in an extra folder is shown by its full
+ * path, but what counts is where it lies inside that folder: `.dimosi/` there
+ * is protected, and a folder is not protected just because something above
+ * it is called `.vscode`.
+ */
+function protectedWriteWarning(req: Extract<ApprovalRequest, { kind: "write" }>): string | undefined {
+  if (req.folderPath === undefined) return protectedPathWarning(req.relPath);
+  return protectedPathWarning(req.folderPath) ?? (path.isAbsolute(req.relPath) ? undefined : protectedPathWarning(req.relPath));
+}
 
 /**
  * Files whose content runs later without another question: VS Code tasks and
@@ -174,7 +188,7 @@ export class PermissionGate {
   ) {}
 
   async check(req: ApprovalRequest): Promise<boolean> {
-    const own = req.kind === "write" ? protectedPathWarning(req.relPath) : req.kind === "command" ? dangerousCommandWarning(req.command) : undefined;
+    const own = req.kind === "write" ? protectedWriteWarning(req) : req.kind === "command" ? dangerousCommandWarning(req.command) : undefined;
     const warning = [req.warning, hiddenCharsWarning(req), own].filter(Boolean).join(" ") || undefined;
     if (req.kind === "fetch") return this.checkSite(req, warning);
     const remembered = () => req.kind === "command" && [...(this.rules?.list() ?? []), ...this.sessionRules].some((rule) => ruleMatches(rule, req.command));
