@@ -321,6 +321,33 @@ describe("models that do not chat (Polza AI lists image, video and speech models
     await expect(run).rejects.toThrow(/^Модель kling\/v3 создаёт видео и не умеет вести разговор/);
   });
 
+  it("does not offer a model that cannot call tools (OpenRouter: supported_parameters)", async () => {
+    const list = {
+      data: [
+        { id: "google/gemini-2.5-flash-image", architecture: { output_modalities: ["image", "text"] }, supported_parameters: ["max_tokens", "temperature"] },
+        { id: "google/gemini-3-pro-image", architecture: { output_modalities: ["image", "text"] }, supported_parameters: ["max_tokens", "tools", "tool_choice"] },
+        { id: "deepseek/deepseek-v4-pro", architecture: { output_modalities: ["text"] }, supported_parameters: ["tools"] },
+      ],
+    };
+    const fetchMock = (async () => new Response(JSON.stringify(list), { headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+    const provider = createProvider({ presetId: "openrouter", apiKey: "k", fetch: fetchMock });
+    expect(await provider.listModels()).toEqual(["deepseek/deepseek-v4-pro", "google/gemini-3-pro-image"]);
+  });
+
+  it("reports pictures in the reply instead of dropping them without a word (OpenRouter: delta.images)", async () => {
+    const chunk = (delta: object, finish: string | null = null) =>
+      `data: ${JSON.stringify({ id: "x", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+    const { provider } = service(() =>
+      sseResponse([
+        chunk({ role: "assistant", content: "", images: [{ type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } }] }),
+        chunk({}, "stop"),
+        "data: [DONE]\n\n",
+      ]),
+    );
+    const events = await collect(provider.stream({ model: "google/gemini-3-pro-image", system: "s", messages: history, tools: [] }));
+    expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "end_turn", message: { parts: [] }, droppedImages: 1 });
+  });
+
   it("leaves the error of a chat model as it is", async () => {
     const { provider } = service(rejected);
     const run = collect(provider.stream({ model: "qwen/qwen3.8-27b", system: "s", messages: history, tools: [] }));

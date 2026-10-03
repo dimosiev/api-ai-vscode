@@ -210,6 +210,17 @@ export class Agent {
           return;
         }
         if (!calls.length) {
+          if (done.droppedImages) {
+            this.log?.warn(`the reply had ${done.droppedImages} image(s): not shown, not kept`);
+            yield {
+              type: "error",
+              message:
+                "Модель ответила картинкой, но dimosi пока не умеет показывать и сохранять картинки от модели. Запрос при этом оплачен. Для работы с проектом выберите обычную разговорную модель.",
+            };
+          } else if (!done.message.parts.length && done.stopReason !== "max_tokens") {
+            this.log?.warn("the model answered nothing");
+            yield { type: "error", message: "Модель ничего не ответила. Отправьте сообщение ещё раз или выберите другую модель." };
+          }
           if (done.stopReason === "max_tokens") {
             this.log?.warn("reply cut off at the output token limit");
             yield { type: "error", message: "Ответ упёрся в лимит длины и был обрезан. Напишите «продолжай»." };
@@ -508,6 +519,9 @@ export function describeError(e: unknown): string {
     case 403:
       return `Доступ запрещён (403): у ключа нет прав на эту модель или регион. (${msg})`;
     case 404:
+      if (/support tool use/i.test(msg)) {
+        return `Эта модель не умеет пользоваться инструментами (читать файлы, запускать команды), а без них агент не работает. Выберите другую модель. (${msg})`;
+      }
       return `Модель или адрес не найдены (404). Проверьте название модели. (${msg})`;
     case 429:
       return `Слишком много запросов или исчерпан лимит (429). Подождите минуту или проверьте тариф. (${msg})`;

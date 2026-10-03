@@ -69,7 +69,14 @@ export interface Usage {
 
 export type StreamEvent =
   | { type: "text_delta"; text: string }
-  | { type: "done"; message: Message; stopReason: StopReason; usage?: Usage };
+  | {
+      type: "done";
+      message: Message;
+      stopReason: StopReason;
+      usage?: Usage;
+      /** Pictures the model put into its reply; they are not shown or kept. */
+      droppedImages?: number;
+    };
 
 export interface ChatRequest {
   model: string;

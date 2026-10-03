@@ -2,7 +2,7 @@ import { mkdtempSync, promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { Agent, type AgentEvent, type ChatRequest, type Message, type Provider, type StreamEvent } from "../src";
+import { Agent, describeError, type AgentEvent, type ChatRequest, type Message, type Provider, type StreamEvent } from "../src";
 
 /** Replays scripted assistant turns and records what it was sent. */
 class FakeProvider implements Provider {
@@ -28,6 +28,42 @@ async function collect(gen: AsyncIterable<AgentEvent>) {
   for await (const ev of gen) out.push(ev);
   return out;
 }
+
+describe("a reply with nothing to show", () => {
+  const run = async (done: Partial<Extract<StreamEvent, { type: "done" }>>) => {
+    const provider = new FakeProvider([() => [{ type: "done", stopReason: "end_turn", message: { role: "assistant", parts: [] }, ...done }]]);
+    const agent = new Agent({ provider, model: "m", root: tmp(), approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL });
+    return { agent, events: (await collect(agent.run("нарисуй погоду"))).filter((e) => e.type !== "rules") };
+  };
+
+  it("says that the model answered with a picture dimosi cannot show: the request was paid", async () => {
+    const { events } = await run({ droppedImages: 1 });
+    expect(events).toEqual([
+      { type: "error", message: expect.stringMatching(/^Модель ответила картинкой, но dimosi пока не умеет показывать и сохранять картинки.*оплачен/) },
+      { type: "done", stopReason: "end_turn" },
+    ]);
+  });
+
+  it("says that the model answered nothing", async () => {
+    const { events } = await run({});
+    expect(events).toEqual([
+      { type: "error", message: expect.stringMatching(/^Модель ничего не ответила/) },
+      { type: "done", stopReason: "end_turn" },
+    ]);
+  });
+
+  it("keeps the text of a reply that had a picture too", async () => {
+    const { events } = await run({ droppedImages: 2, message: { role: "assistant", parts: [{ type: "text", text: "Вот." }] } });
+    expect(events.map((e) => e.type)).toEqual(["error", "done"]);
+    expect(events[0]).toMatchObject({ message: expect.stringMatching(/^Модель ответила картинкой/) });
+  });
+
+  it("explains a model that cannot call tools instead of «not found» (OpenRouter answers 404)", () => {
+    const e = Object.assign(new Error('404 No endpoints found that support tool use. Try disabling "list_files".'), { status: 404 });
+    expect(describeError(e)).toMatch(/^Эта модель не умеет пользоваться инструментами.*Выберите другую модель\. \(404 No endpoints/);
+    expect(describeError(Object.assign(new Error("404 model not found"), { status: 404 }))).toMatch(/^Модель или адрес не найдены/);
+  });
+});
 
 describe("Agent", () => {
   it("runs tool calls and feeds results back until the model stops", async () => {

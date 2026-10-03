@@ -92,12 +92,16 @@ export class OpenAIProvider implements Provider {
     let finishReason: string | null = null;
     let usage: Usage | undefined;
     const calls = new Map<number, { id: string; name: string; args: string }>();
+    let droppedImages = 0;
 
     for await (const chunk of stream) {
       if (chunk.usage) usage = parseUsage(chunk.usage as unknown as Record<string, unknown>, this.id);
       const choice = chunk.choices?.[0];
       if (!choice) continue;
       const delta = choice.delta;
+      // OpenRouter: a model that draws puts its pictures next to the text.
+      const images = (delta as { images?: unknown } | undefined)?.images;
+      if (Array.isArray(images)) droppedImages += images.length;
       if (delta?.content) {
         text += delta.content;
         yield { type: "text_delta", text: delta.content };
@@ -130,6 +134,7 @@ export class OpenAIProvider implements Provider {
       message: { role: "assistant", parts },
       stopReason: mapFinishReason(finishReason, calls.size > 0),
       usage,
+      ...(droppedImages ? { droppedImages } : {}),
     };
   }
 
@@ -137,7 +142,8 @@ export class OpenAIProvider implements Provider {
   async listModels(): Promise<string[]> {
     const ids: string[] = [];
     for await (const model of this.client.models.list()) {
-      if (!modelKind(model as unknown as Record<string, unknown>)) ids.push(model.id);
+      const raw = model as unknown as Record<string, unknown>;
+      if (!modelKind(raw) && canCallTools(raw)) ids.push(model.id);
     }
     return ids.sort();
   }
@@ -182,6 +188,12 @@ export function modelKind(raw: Record<string, unknown>): string | undefined {
   const out = (raw.architecture as { output_modalities?: unknown } | undefined)?.output_modalities;
   if (!Array.isArray(out) || out.length === 0 || out.includes("text")) return undefined;
   return String(out[0]);
+}
+
+/** OpenRouter lists what each model accepts; a model without tools cannot work as an agent. */
+export function canCallTools(raw: Record<string, unknown>): boolean {
+  const supported = raw.supported_parameters;
+  return !Array.isArray(supported) || supported.includes("tools");
 }
 
 const KIND_TEXT: Record<string, string> = {
