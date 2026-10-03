@@ -89,7 +89,7 @@ describe("О-3: «Модель ничего не ответила» after a turn
   }
 
   // Claude sometimes ends a turn with an empty reply after the tool results: it has already said everything.
-  bug("the model spoke, used a tool and ended with an empty reply: no error is shown", async () => {
+  it("the model spoke, used a tool and ended with an empty reply: no error is shown", async () => {
     const provider = new Scripted([
       [
         { type: "text_delta", text: "Готово, отмечаю план." },

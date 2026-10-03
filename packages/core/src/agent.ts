@@ -225,7 +225,8 @@ export class Agent {
               message:
                 "Модель ответила картинкой прямо в разговоре, а такие картинки dimosi не сохраняет и не показывает. Запрос при этом оплачен. Выберите обычную разговорную модель и попросите её создать картинку: она сделает это отдельным инструментом через Polza AI.",
             };
-          } else if (!done.message.parts.length && done.stopReason !== "max_tokens") {
+          } else if (step === 0 && !done.message.parts.length && done.stopReason !== "max_tokens") {
+            // Only the first reply of a turn: after tool calls an empty reply means "nothing to add".
             this.log?.warn("the model answered nothing");
             yield { type: "error", message: "Модель ничего не ответила. Отправьте сообщение ещё раз или выберите другую модель." };
           }
