@@ -141,6 +141,20 @@ describe("CLI, end to end", () => {
     expect(third.out).toContain("Выполнить команду:");
   }, 60_000);
 
+  it("--plan: the agent changes nothing until /go", async () => {
+    const write = { toolCalls: [{ name: "write_file", args: { path: "page.html", content: "<h1>hi</h1>\n" } }] };
+    server = await startFakeServer([write, { text: "План: создать page.html." }, write, { text: "Готово." }]);
+    const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-root-"));
+    const home = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-home-"));
+    const { code, out } = await runCli(["--provider", "custom", "--base-url", server.url, "--model", "fake-model", "--plan", "сделай страницу"], root, home, "/go\ny\n");
+    expect(code).toBe(0);
+    expect(out).toContain("План готов, ничего не изменено");
+    // One question only: the write of the planning turn was refused without asking.
+    expect(out.match(/Создать файл page\.html/g)).toHaveLength(1);
+    expect(String(server.requests[1].body.messages.find((m) => m.role === "tool")!.content)).toMatch(/Plan mode is on/);
+    expect(await fs.readFile(path.join(root, "page.html"), "utf8")).toBe("<h1>hi</h1>\n");
+  }, 30_000);
+
   it("a denied change is not written, and the model is told", async () => {
     server = await startFakeServer([
       { toolCalls: [{ name: "write_file", args: { path: "package.json", content: "{}" } }] },

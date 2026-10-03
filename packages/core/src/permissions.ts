@@ -133,6 +133,12 @@ export function dangerousCommandWarning(command: string): string | undefined {
   return DANGEROUS_COMMANDS.find(([re]) => re.test(command))?.[1];
 }
 
+/** What the model is told when a call is refused in "plan first" mode. */
+export const PLAN_MODE_REFUSAL =
+  "Plan mode is on, so this call was not run and nothing was changed. Finish investigating with the read-only tools " +
+  "(list_files, read_file, search), show the plan with update_plan, describe it briefly and stop. " +
+  "The user will read the plan and switch plan mode off; carry it out then.";
+
 /**
  * "Always" covers all file writes until the new chat. For a command it
  * remembers a rule (see commandRule): allowing `npm test` must not allow
@@ -142,6 +148,13 @@ export class PermissionGate {
   private writesAllowed = false;
   /** Rules of this chat: all of them without a store, or those the store could not save. */
   private sessionRules: CommandRule[] = [];
+  /**
+   * "Plan first": nothing is changed and the user is not asked. Writes are
+   * refused; so are commands, except the ones the user allowed with "Always"
+   * (`git status`, `npm test`...), which help to investigate. Done here and
+   * not by hiding tools: the tool list must stay the same for the prompt cache.
+   */
+  planOnly = false;
 
   constructor(
     private handler: ApprovalHandler,
@@ -152,6 +165,11 @@ export class PermissionGate {
   async check(req: ApprovalRequest): Promise<boolean> {
     const own = req.kind === "write" ? protectedPathWarning(req.relPath) : dangerousCommandWarning(req.command);
     const warning = [req.warning, hiddenCharsWarning(req), own].filter(Boolean).join(" ") || undefined;
+    const remembered = () => req.kind === "command" && [...(this.rules?.list() ?? []), ...this.sessionRules].some((rule) => ruleMatches(rule, req.command));
+    if (this.planOnly) {
+      if (warning || !remembered()) throw new Error(PLAN_MODE_REFUSAL);
+      return true;
+    }
     if (warning) return (await this.handler.approve({ ...req, warning })) !== "deny";
     if (this.mode === "auto") return true;
     if (req.kind === "write") {
@@ -161,7 +179,7 @@ export class PermissionGate {
       return decision !== "deny";
     }
     // The saved list is read every time: a rule the user removed stops working at once.
-    if ([...(this.rules?.list() ?? []), ...this.sessionRules].some((rule) => ruleMatches(rule, req.command))) return true;
+    if (remembered()) return true;
     const always = commandRule(req.command);
     const decision = await this.handler.approve({ ...req, always });
     if (decision === "allow_always") {

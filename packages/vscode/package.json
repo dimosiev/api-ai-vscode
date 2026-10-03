@@ -92,6 +92,10 @@
         "title": "dimosi: Доступ к папкам вне проекта…"
       },
       {
+        "command": "dimosi.togglePlanFirst",
+        "title": "dimosi: Режим «Сначала план» (включить или выключить)"
+      },
+      {
         "command": "dimosi.showCommandRules",
         "title": "dimosi: Запомненные команды («Всегда»)…"
       },

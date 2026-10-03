@@ -114,6 +114,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
+    command("dimosi.togglePlanFirst", () => chat.togglePlanFirst()),
     command("dimosi.editAccess", () => editAccess(root())),
     command("dimosi.showCommandRules", () => showCommandRules(context, root())),
 

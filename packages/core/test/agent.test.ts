@@ -195,3 +195,55 @@ describe("Agent", () => {
     ]);
   });
 });
+
+describe("plan first", () => {
+  it("keeps the system prompt and the tools the same, tells the model in the user's message, and refuses changes", async () => {
+    const root = tmp();
+    const sent: ChatRequest[] = [];
+    const text = (t: string): StreamEvent[] => [{ type: "done", stopReason: "end_turn", message: { role: "assistant", parts: [{ type: "text", text: t }] } }];
+    const provider = new FakeProvider([
+      () => text("Привет."),
+      () => [
+        {
+          type: "done",
+          stopReason: "tool_use",
+          message: { role: "assistant", parts: [{ type: "tool_call", id: "w1", name: "write_file", input: { path: "a.txt", content: "x" } }] },
+        },
+      ],
+      () => text("Вот план."),
+      () => [
+        {
+          type: "done",
+          stopReason: "tool_use",
+          message: { role: "assistant", parts: [{ type: "tool_call", id: "w2", name: "write_file", input: { path: "a.txt", content: "x" } }] },
+        },
+      ],
+      () => text("Готово."),
+    ]);
+    const stream = provider.stream.bind(provider);
+    provider.stream = (req) => (sent.push(structuredClone({ ...req, signal: undefined })), stream(req));
+    let asked = 0;
+    const agent = new Agent({ provider, model: "m", root, approval: { approve: async () => (asked++, "allow") }, globalRulesPath: NO_GLOBAL });
+
+    await collect(agent.run("привет"));
+    agent.planFirst = true;
+    const planning = await collect(agent.run("добавь файл"));
+    agent.planFirst = false;
+    await collect(agent.run("Выполняй план."));
+
+    // The start of every request is identical: the prompt cache survives the mode switch.
+    expect(new Set(sent.map((r) => r.system)).size).toBe(1);
+    expect(new Set(sent.map((r) => JSON.stringify(r.tools))).size).toBe(1);
+
+    const userTexts = (r: ChatRequest) => r.messages.filter((m) => m.role === "user").flatMap((m) => m.parts).flatMap((p) => (p.type === "text" ? [p.text] : []));
+    expect(userTexts(sent[0])).toEqual(["привет"]);
+    expect(userTexts(sent[1]).at(-1)).toMatch(/plan mode is on/);
+    expect(userTexts(sent[3]).at(-1)).toMatch(/plan mode is off now/);
+
+    // The write was refused without a question, and the model was told why.
+    expect(planning.find((e) => e.type === "tool_end")).toMatchObject({ isError: true, result: expect.stringMatching(/Plan mode is on/) });
+    expect(planning.some((e) => e.type === "file_changed")).toBe(false);
+    expect(asked).toBe(1);
+    expect(await fs.readFile(path.join(root, "a.txt"), "utf8")).toBe("x");
+  });
+});

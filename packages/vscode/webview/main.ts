@@ -6,6 +6,7 @@ import {
   chipEl,
   finishToolCard,
   planCard,
+  planReadyCard,
   renderPlan,
   resolveApproval,
   toolCard,
@@ -147,12 +148,18 @@ function handle(msg: ToWebview): void {
       modelBtn.replaceChildren(h("span", { class: "model-provider" }, msg.provider), h("span", { class: "model-name" }, msg.model));
       approvalBtn.textContent = msg.approval === "auto" ? "Без подтверждений" : "С подтверждением";
       approvalBtn.classList.toggle("danger", msg.approval === "auto");
+      composer.setPlanFirst(msg.planFirst);
       accessText.textContent = `Доступ: ${msg.access}`;
       accessText.title = msg.accessDetail;
       if (!log.querySelector(".turn")) showWelcome();
       break;
     }
+    case "plan_ready":
+      add(planReadyCard(post), turnEl ?? log);
+      break;
     case "user": {
+      // An older plan is no longer the one to run.
+      for (const old of log.querySelectorAll(".plan-ready .approval-actions")) old.remove();
       flushText();
       turnEl = null;
       textEl = null;

@@ -576,3 +576,45 @@ describe("errors of the editor", () => {
     expect(String(toolMessage.content)).toContain("Cannot find name 'x'. (ts 2304)");
   });
 });
+
+describe("plan first", () => {
+  it("the agent proposes a plan and changes nothing; «Выполнить план» switches the mode off and starts the work", async () => {
+    const write = { toolCalls: [{ name: "write_file", args: { path: "page.html", content: "<h1>Привет</h1>\n" } }] };
+    const panel = await setup([write, { text: "План: создать page.html." }, write, { text: "Готово." }]);
+    panel.provider.togglePlanFirst();
+    expect((await panel.waitFor((m): m is Extract<ToWebview, { type: "status" }> => m.type === "status" && m.planFirst)).planFirst).toBe(true);
+
+    const planning = await panel.task("сделай страницу");
+    expect(planning.filter(isType("approval_request"))).toEqual([]);
+    expect(planning.find(isType("tool_end"))).toMatchObject({ isError: true, result: expect.stringMatching(/Plan mode is on/) });
+    expect(planning.some((m) => m.type === "plan_ready")).toBe(true);
+    expect(existsSync(path.join(root, "page.html"))).toBe(false);
+
+    const from = panel.posted.length;
+    panel.send({ type: "run_plan" });
+    const request = await panel.waitFor(isType("approval_request"), from);
+    panel.send({ type: "approval_response", id: request.id, decision: "allow" });
+    await panel.waitFor((m): m is ToWebview => m.type === "busy" && !m.busy, from);
+    const after = panel.posted.slice(from);
+    expect(after.find(isType("status"))?.planFirst).toBe(false);
+    expect(after.find(isType("user"))?.text).toBe("Выполняй план.");
+    expect(after.some((m) => m.type === "plan_ready")).toBe(false);
+    expect(await fs.readFile(path.join(root, "page.html"), "utf8")).toBe("<h1>Привет</h1>\n");
+    // The model was told about the switch in the user's messages, not in the system prompt.
+    const systems = server!.requests.map((r) => String(r.body.messages[0].content));
+    expect(new Set(systems).size).toBe(1);
+    expect(JSON.stringify(server!.requests[0].body.messages)).toContain("plan mode is on");
+    expect(JSON.stringify(server!.requests[2].body.messages)).toContain("plan mode is off now");
+  });
+
+  it("a planning turn that ended with an error does not offer to run a plan", async () => {
+    const panel = await setup([{ toolCalls: [{ name: "run_command", args: { command: "touch made.txt" } }] }, { status: 400, error: "bad request" }], "auto");
+    panel.provider.togglePlanFirst();
+    const events = await panel.task("подумай");
+    // In plan mode the command is refused even with approvals off.
+    expect(events.find(isType("tool_end"))?.result).toMatch(/Plan mode is on/);
+    expect(existsSync(path.join(root, "made.txt"))).toBe(false);
+    expect(events.some((m) => m.type === "error")).toBe(true);
+    expect(events.some((m) => m.type === "plan_ready")).toBe(false);
+  });
+});

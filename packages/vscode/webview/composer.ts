@@ -12,6 +12,7 @@ export class Composer {
   private chipsRow: HTMLElement;
   private sendBtn: HTMLButtonElement;
   private stopBtn: HTMLButtonElement;
+  private planBtn: HTMLButtonElement;
   private popup: HTMLElement;
   private chips: ChipView[] = [];
   private rules: RuleView[] = [];
@@ -34,6 +35,12 @@ export class Composer {
     this.popup = h("div", { class: "mentions", hidden: true });
     this.sendBtn = h("button", { class: "btn primary", title: "Отправить (Enter)", onclick: () => this.send() }, svg(ICONS.send, "inline-icon"), "Отправить");
     this.stopBtn = h("button", { class: "btn danger", hidden: true, title: "Остановить агента", onclick: () => this.post({ type: "stop" }) }, svg(ICONS.stop, "inline-icon"), "Стоп");
+    this.planBtn = h(
+      "button",
+      { class: "btn subtle plan-toggle", "aria-pressed": "false", onclick: () => this.post({ type: "command", command: "dimosi.togglePlanFirst" }) },
+      "Сначала план",
+    );
+    this.setPlanFirst(false);
     const attachBtn = h("button", { class: "icon-btn", title: "Прикрепить файлы или картинки", onclick: () => this.post({ type: "pick_files" }) }, svg(ICONS.clip));
 
     this.el = h(
@@ -41,7 +48,7 @@ export class Composer {
       { class: "composer" },
       this.chipsRow,
       h("div", { class: "input-wrap" }, this.popup, this.input),
-      h("div", { class: "composer-row" }, attachBtn, h("span", { class: "spacer" }), this.stopBtn, this.sendBtn),
+      h("div", { class: "composer-row" }, attachBtn, this.planBtn, h("span", { class: "spacer" }), this.stopBtn, this.sendBtn),
     );
 
     this.input.addEventListener("keydown", (e) => this.onKeyDown(e));
@@ -61,6 +68,14 @@ export class Composer {
     this.sendBtn.hidden = busy;
     this.stopBtn.hidden = !busy;
     if (!busy) this.input.focus();
+  }
+
+  setPlanFirst(on: boolean): void {
+    this.planBtn.classList.toggle("on", on);
+    this.planBtn.setAttribute("aria-pressed", String(on));
+    this.planBtn.title = on
+      ? "Включено: агент изучит задачу и покажет план, ничего не меняя. Нажмите, чтобы выключить."
+      : "Сначала план: агент изучит задачу и покажет план, а менять файлы начнёт только после вашего «Выполнить план».";
   }
 
   setChips(chips: ChipView[]): void {

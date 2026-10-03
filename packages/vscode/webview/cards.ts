@@ -233,6 +233,27 @@ export function resolveApproval(card: HTMLElement, decision: "allow" | "deny" | 
   card.querySelector(".diff-more")?.remove();
 }
 
+/** After a planning turn: one click switches "plan first" off and starts the work. */
+export function planReadyCard(post: Post): HTMLElement {
+  const actions = h(
+    "div",
+    { class: "approval-actions" },
+    h(
+      "button",
+      {
+        class: "btn primary",
+        onclick: () => {
+          actions.remove();
+          post({ type: "run_plan" });
+        },
+      },
+      "Выполнить план",
+    ),
+    h("span", { class: "plan-ready-hint" }, "или напишите, что в плане поправить"),
+  );
+  return h("div", { class: "plan-ready" }, h("div", { class: "plan-ready-text" }, svg(ICONS.check, "inline-icon"), "План готов. Агент пока ничего не менял."), actions);
+}
+
 export function changesCard(turn: number, files: ChangedFileView[], post: Post): HTMLElement {
   const active = files.filter((f) => !f.reverted && !f.unavailable);
   return h(

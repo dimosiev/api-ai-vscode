@@ -34,6 +34,7 @@ const RECORDED = new Set<ToWebview["type"]>([
   "approval_resolved",
   "changes",
   "error",
+  "plan_ready",
 ]);
 
 /** The visible chat as a list of panel messages, kept compact. */

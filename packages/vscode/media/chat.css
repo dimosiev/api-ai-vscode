@@ -142,6 +142,31 @@ button {
   background: transparent;
 }
 
+.plan-toggle.on {
+  color: var(--brand);
+  border-color: var(--brand-border);
+  background: var(--brand-soft);
+}
+
+.plan-ready {
+  margin: 6px 0;
+  border: 1px solid var(--brand-border);
+  border-radius: 8px;
+  background: var(--brand-soft);
+}
+
+.plan-ready-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+}
+
+.plan-ready-hint {
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
 .access {
   display: flex;
   align-items: center;

@@ -214,3 +214,39 @@ describe("\"Always\" for a command: kept between sessions, per project, outside 
     expect(await asksAfterAlways("npm test", ["npm test"], gate(broken))).toBe(0);
   });
 });
+
+describe("plan mode", () => {
+  const write = () => ({ kind: "write" as const, path: path.join(root, "a.txt"), relPath: "a.txt", oldContent: null, newContent: "x" });
+
+  it("refuses every write and every command without asking, whatever the approval mode", async () => {
+    for (const mode of ["ask", "auto"] as const) {
+      const g = gate(undefined, mode);
+      g.planOnly = true;
+      await expect(g.check(write())).rejects.toThrow(/Plan mode is on/);
+      await expect(run(g, "npm install left-pad")).rejects.toThrow(/Plan mode is on/);
+      await expect(run(g, "git push")).rejects.toThrow(/Plan mode is on/);
+    }
+    expect(requests).toEqual([]);
+  });
+
+  it("commands the user allowed with Always still run, to investigate; their chains and dangerous forms do not", async () => {
+    const g = gate();
+    await asksAfterAlways("git status", [], g);
+    await asksAfterAlways("git checkout main", [], g);
+    g.planOnly = true;
+    expect(await run(g, "git status --short")).toBe(true);
+    await expect(run(g, "git status && rm x")).rejects.toThrow(/Plan mode is on/);
+    await expect(run(g, "git checkout -- .")).rejects.toThrow(/Plan mode is on/);
+    expect(requests).toEqual([]);
+  });
+
+  it("Always for file writes from before does not let a write through", async () => {
+    const g = gate();
+    decision = "allow_always";
+    await g.check(write());
+    g.planOnly = true;
+    await expect(g.check(write())).rejects.toThrow(/Plan mode is on/);
+    g.planOnly = false;
+    expect(await g.check(write())).toBe(true);
+  });
+});

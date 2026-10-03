@@ -52,6 +52,8 @@ export type ToWebview =
       /** Show the setup screen: no key or no model yet. */
       needsSetup: boolean;
       hasFolder: boolean;
+      /** "Plan first" is on: the agent proposes a plan and changes nothing. */
+      planFirst: boolean;
       /** What the agent can reach: "проект + 2 папки". */
       access: string;
       /** The folders one per line, for the tooltip. */
@@ -100,6 +102,8 @@ export type ToWebview =
   | { type: "attachments"; chips: ChipView[] }
   | { type: "active_file"; label: string | null }
   | { type: "mentions"; query: string; items: string[] }
+  /** A planning turn ended: offer to carry the plan out. */
+  | { type: "plan_ready" }
   | { type: "focus_input" }
   | { type: "clear" }
   /** Redraws a saved chat: the same messages the panel got while it ran. */
@@ -109,6 +113,8 @@ export type FromWebview =
   | { type: "ready" }
   | { type: "send"; text: string }
   | { type: "stop" }
+  /** "Выполнить план": switches "plan first" off and tells the agent to go. */
+  | { type: "run_plan" }
   | { type: "command"; command: string }
   | { type: "approval_response"; id: string; decision: "allow" | "deny" | "allow_always" }
   | { type: "open_diff"; id: string }

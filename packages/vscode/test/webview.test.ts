@@ -135,6 +135,32 @@ describe("chat webview", () => {
     expect(exact.querySelector(".approval-result")?.textContent).toBe("Разрешено");
   });
 
+  it("the plan toggle shows its state; a ready plan offers to run it once", () => {
+    const status = { type: "status", provider: "Polza AI", model: "m", approval: "ask", needsSetup: false, hasFolder: true, access: "проект", accessDetail: "" } as const;
+    send({ ...status, planFirst: false });
+    const toggle = $(".plan-toggle")!;
+    expect(toggle.classList.contains("on")).toBe(false);
+    toggle.click();
+    expect(posted.at(-1)).toEqual({ type: "command", command: "dimosi.togglePlanFirst" });
+    send({ ...status, planFirst: true });
+    expect(toggle.classList.contains("on")).toBe(true);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+
+    send({ type: "user", text: "сделай страницу", chips: [] });
+    send({ type: "plan_ready" });
+    const card = $$(".plan-ready").at(-1)!;
+    expect(card.textContent).toContain("План готов. Агент пока ничего не менял.");
+    (card.querySelector(".btn.primary") as HTMLElement).click();
+    expect(posted.at(-1)).toEqual({ type: "run_plan" });
+    expect(card.querySelector(".btn")).toBeNull();
+
+    // An older plan can't be run after the conversation moved on.
+    send({ type: "plan_ready" });
+    send({ type: "user", text: "поправь план", chips: [] });
+    expect($$(".plan-ready .btn")).toEqual([]);
+    send({ type: "busy", busy: false });
+  });
+
   it("the access line shows what the agent can reach, and Change opens the list", () => {
     send({ type: "status", provider: "Polza AI", model: "m", approval: "ask", needsSetup: false, hasFolder: true, access: "проект + 2 папки", accessDetail: "/p — проект\n/notes — только чтение" });
     expect($(".access-text")?.textContent).toBe("Доступ: проект + 2 папки");

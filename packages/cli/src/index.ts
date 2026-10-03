@@ -49,6 +49,7 @@ ${c.bold("Запуск чата")} (в папке проекта):
   dimosi --provider polza --model anthropic/claude-opus-5.5
   dimosi --auto                  не спрашивать подтверждений (осторожно!)
   dimosi --no-sandbox            команды без песочницы macOS (осторожно!)
+  dimosi --plan                  сначала план: агент ничего не меняет, пока вы не ответите /go
   dimosi --read-dir ПУТЬ         открыть агенту ещё одну папку только для чтения
   dimosi --write-dir ПУТЬ        открыть агенту ещё одну папку для чтения и записи
                                  (оба флага можно повторять; постоянный список —
@@ -78,7 +79,7 @@ ${c.bold("Обновление")}:
 ${c.bold("Журнал")} (для разбора проблем, без ключей и текста переписки):
   dimosi log                       показать, где лежит журнал, и его последние строки
 
-${c.bold("Команды внутри чата")}: /help /model /models /provider /key /rules /folders /allowed /auto /ask /clear /exit
+${c.bold("Команды внутри чата")}: /help /model /models /provider /key /rules /folders /allowed /plan /go /auto /ask /clear /exit
 `;
 
 const CHAT_HELP = `${c.bold("Команды:")}
@@ -87,6 +88,8 @@ const CHAT_HELP = `${c.bold("Команды:")}
   /auto             работать без подтверждений   /ask   снова спрашивать подтверждения
   /rules            какие правила действуют     /folders           какие папки открыты агенту
   /allowed          команды, запомненные ответом [a] («всегда»); /allowed remove N, /allowed clear
+  /plan             сначала план: агент изучает задачу и ничего не меняет (вкл/выкл)
+  /go               выполнить показанный план (выключает режим «сначала план»)
   /clear            начать новый диалог     /exit              выйти (или Ctrl+D)
   Ctrl+C во время работы агента — остановить его.`;
 
@@ -97,6 +100,7 @@ interface Flags {
   dir?: string;
   auto?: boolean;
   noSandbox?: boolean;
+  plan?: boolean;
   /** --read-dir and --write-dir, in the order given. */
   folders: ExtraFolder[];
   positional: string[];
@@ -118,6 +122,7 @@ function parseArgs(argv: string[]): Flags {
     else if (a === "--read-dir") flags.folders.push({ path: path.resolve(next()), mode: "read" });
     else if (a === "--write-dir") flags.folders.push({ path: path.resolve(next()), mode: "write" });
     else if (a === "--auto") flags.auto = true;
+    else if (a === "--plan") flags.plan = true;
     else if (a === "--no-sandbox") flags.noSandbox = true;
     else if (a === "--help" || a === "-h") flags.positional.unshift("help");
     else if (a === "--version" || a === "-v") flags.positional.unshift("version");
@@ -430,11 +435,13 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
     log,
     ruleTrust: rememberingTrust(await loadTrustDecisions(), (file) => askAboutRules(io, file)),
   });
+  agent.planFirst = Boolean(flags.plan);
   log.info(`chat: provider ${presetId}, model ${agent.model}, approvals ${agent.gate.mode}, sandbox ${agent.sandbox ? "on" : "off"}, extra folders ${extraFolders.length}`);
 
   console.log(`${c.bold(c.blue("dimosi"))} ${c.dim(VERSION)}  ${getPreset(presetId).label} · ${c.cyan(agent.model)}`);
   console.log(c.dim(`Проект: ${root}`));
   if (extraFolders.length) printAccess();
+  if (agent.planFirst) console.log(c.cyan("Режим «сначала план»: агент покажет план и ничего не изменит. /go — выполнить план."));
   if (agent.gate.mode === "auto") console.log(c.red("Режим без подтверждений: агент сам меняет файлы и запускает команды."));
   if (!agent.sandbox && process.platform === "darwin") console.log(c.red("Песочница выключена: команды агента работают со всеми вашими правами."));
   console.log(c.dim("Напишите задачу. /help — команды, Ctrl+C — остановить агента, /exit — выход.\n"));
@@ -503,6 +510,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
       controller = undefined;
     }
     newline();
+    if (agent.planFirst) console.log(c.cyan("План готов, ничего не изменено. /go — выполнить, или напишите, что поправить. /plan — выключить режим."));
     if (usage.totalInput || usage.output) {
       const pricing: Pricing | undefined = await agent.provider.getPricing?.(agent.model).catch(() => undefined);
       const cost = formatCost(usage.cost(pricing));
@@ -533,6 +541,14 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         break;
       case "folders":
         printAccess();
+        break;
+      case "plan":
+        agent.planFirst = !agent.planFirst;
+        console.log(agent.planFirst ? c.cyan("Режим «сначала план» включён: агент покажет план и ничего не изменит. /go — выполнить план.") : c.dim("Режим «сначала план» выключен."));
+        break;
+      case "go":
+        agent.planFirst = false;
+        await runTurn("Выполняй план.");
         break;
       case "allowed": {
         const rules = commandRules.list();
@@ -626,7 +642,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
   if (initial) await runTurn(initial);
 
   for (;;) {
-    const line = await io.ask(c.bold("› "));
+    const line = await io.ask(c.bold(agent.planFirst ? "план › " : "› "));
     if (line === null) break; // Ctrl+D / input closed
     if (!line) continue;
     if (line.startsWith("/")) {

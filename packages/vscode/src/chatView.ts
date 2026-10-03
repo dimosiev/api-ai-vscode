@@ -52,6 +52,7 @@ const PANEL_COMMANDS = new Set([
   "dimosi.setApiKey",
   "dimosi.editAccess",
   "dimosi.showCommandRules",
+  "dimosi.togglePlanFirst",
   "workbench.action.files.openFolder",
 ]);
 const DECISIONS = new Set<string>(["allow", "deny", "allow_always"]);
@@ -73,6 +74,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private chatUsage = new UsageTotals();
   private fileCache?: { at: number; files: string[] };
   private starting = false;
+  /** "Plan first" for this window; off again after a reload. */
+  private planFirst = false;
   /** One for the whole window: it learns which languages report errors. */
   private problems = new EditorProblems();
   /** What the panel shows, so it can be redrawn after a reload or when the view is recreated. */
@@ -178,8 +181,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       approval: s.approvalMode,
       needsSetup: !hasKey || !s.model,
       hasFolder: Boolean(this.root()),
+      planFirst: this.planFirst,
       ...accessStatus(this.root(), s.extraFolders),
     });
+  }
+
+  togglePlanFirst(): void {
+    this.planFirst = !this.planFirst;
+    void this.postStatus();
   }
 
   addAttachment(att: Attachment): void {
@@ -216,6 +225,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       case "stop":
         this.controller?.abort();
+        break;
+      case "run_plan":
+        if (this.busy) break;
+        this.planFirst = false;
+        await this.postStatus();
+        await this.send("Выполняй план.");
         break;
       case "command":
         // Exactly the buttons the panel has, never with arguments.
@@ -404,6 +419,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     agent.maxSteps = settings.maxSteps;
     agent.sandbox = settings.sandbox;
     agent.extraFolders = settings.extraFolders;
+    agent.planFirst = this.planFirst;
+    const planning = this.planFirst;
+    let finished = false;
     agent.contextWindow = getPreset(settings.provider).contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     agent.gate.mode = settings.approvalMode;
 
@@ -488,6 +506,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.post({ type: "error", message: ev.message });
             break;
           case "done":
+            finished = true;
             break;
         }
       }
@@ -500,6 +519,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.approval.cancelAll();
       const current = generation === this.generation;
       if (current && !tracker.isEmpty) this.post({ type: "changes", turn, files: tracker.summary() });
+      if (current && planning && finished) this.post({ type: "plan_ready" });
       this.post({ type: "busy", busy: false });
       if (current) this.saveChat();
     }

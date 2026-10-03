@@ -64,6 +64,12 @@ export type UserInput = string | Array<TextPart | ImagePart>;
 type DoneEvent = Extract<StreamEvent, { type: "done" }>;
 
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
+// Notes about "plan first" go into the user's message, never into the system
+// prompt or the tool list: those must stay the same for the prompt cache.
+const PLAN_NOTE =
+  "[dimosi: plan mode is on. Investigate with the read-only tools, then show a step-by-step plan with update_plan, explain it briefly and stop. " +
+  "Do not change files or run commands in this turn: such calls are refused.]";
+const EXECUTE_NOTE = "[dimosi: plan mode is off now. Unless the user asks for something else, carry out the plan.]";
 /** Pauses before retrying a failed request (network drop, overload, 5xx). */
 const RETRY_DELAYS_MS = [2000, 5000];
 const TRIMMED_RESULT = "[Output removed to free context space. Run the tool again if you still need it.]";
@@ -77,6 +83,10 @@ export class Agent {
   contextWindow: number;
   /** As written in the user's settings; checked when a task starts. */
   extraFolders: ExtraFolder[];
+  /** "Plan first": the agent investigates and proposes a plan; nothing is changed until this is switched off. */
+  planFirst = false;
+  /** The previous turn was a planning one. */
+  private planned = false;
   readonly root: string;
   readonly gate: PermissionGate;
   messages: Message[] = [];
@@ -111,6 +121,7 @@ export class Agent {
     this.messages = [];
     this.layout = undefined;
     this.access = undefined;
+    this.planned = false;
     this.gate.resetSessionApprovals();
   }
 
@@ -158,7 +169,11 @@ export class Agent {
   }
 
   private async *runTurn(input: UserInput, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
-    const parts: Part[] = typeof input === "string" ? [{ type: "text", text: input }] : input;
+    const parts: Part[] = typeof input === "string" ? [{ type: "text", text: input }] : [...input];
+    const note = this.planFirst ? PLAN_NOTE : this.planned ? EXECUTE_NOTE : undefined;
+    if (note) parts.push({ type: "text", text: note });
+    this.planned = this.planFirst;
+    this.gate.planOnly = this.planFirst;
     this.appendUserParts(parts);
 
     try {
