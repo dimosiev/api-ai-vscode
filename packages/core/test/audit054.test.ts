@@ -1,15 +1,11 @@
 // Findings of the audit after 0.5.4 (docs/AUDIT.md, «Аудит после 0.5.4»).
-// Each test describes the right behaviour and is marked bug(...): green while
-// the bug is there. Real failures: AUDIT_STRICT=1 npx vitest run audit054.
-// After a fix replace bug( with it(.
+// Every finding is fixed now; the tests stay to keep it that way.
 import { mkdtempSync, promises as fs, readdirSync, realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { Agent, executeTool, PermissionGate, polzaImages, type AgentEvent, type ChatRequest, type ImageMaker, type Provider, type StreamEvent } from "../src";
 import { modelKind } from "../src/providers/openai";
-
-const bug = process.env.AUDIT_STRICT ? it : it.fails;
 
 const tmp = () => realpathSync(mkdtempSync(path.join(os.tmpdir(), "dimosi-audit054-")));
 const NO_GLOBAL = path.join(os.tmpdir(), "dimosi-no-global-rules.md");

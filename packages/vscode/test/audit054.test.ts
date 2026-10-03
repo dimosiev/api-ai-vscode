@@ -1,5 +1,5 @@
 // Findings of the audit after 0.5.4 (docs/AUDIT.md, «Аудит после 0.5.4») in the extension.
-// bug(...) is green while the bug is there; real failures: AUDIT_STRICT=1 npx vitest run audit054.
+// Every finding is fixed now; the tests stay to keep it that way.
 import { mkdtempSync, promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,8 +9,6 @@ import { fetchWithDirectFallback, neverConnected } from "../src/directFetch";
 import { pictureDataUrl } from "../src/pictures";
 import { buildImages, buildProvider, readSettings } from "../src/settings";
 import type { SecretKeyStore } from "../src/keyStore";
-
-const bug = process.env.AUDIT_STRICT ? it : it.fails;
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });

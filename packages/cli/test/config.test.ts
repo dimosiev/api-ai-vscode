@@ -49,7 +49,7 @@ describe.skipIf(process.platform === "win32")("the dimosi settings folder", () =
     for (let i = 0; i < 5; i++) await store.set(`k${i}`, `v${i}`);
     const text = (await import("node:fs")).readFileSync(path.join(home, "keys.aienc"), "utf8");
     expect(Object.keys(decryptKeys(text, "pw"))).toHaveLength(5);
-  });
+  }, 30_000); // every save derives the key anew (scrypt): about a second alone, much longer on a busy machine
 });
 
 describe("installing a CLI update", () => {

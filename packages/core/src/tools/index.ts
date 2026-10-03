@@ -600,7 +600,7 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     }
     if (!images) {
       throw new Error(
-        "Pictures are not set up: they are made through Polza AI and need its API key. Tell the user to add the key for Polza AI (the chat model may stay any).",
+        "Pictures are not set up: they are made through Polza AI and need its API key. Tell the user to add the key for Polza AI (in VS Code the chat model may stay any; in the terminal version Polza AI must also be the chosen service).",
       );
     }
     // Plan mode refuses before anything is asked of the service, the price included.
