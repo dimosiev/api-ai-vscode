@@ -2,7 +2,7 @@
   "name": "dimosi",
   "displayName": "dimosi",
   "description": "AI-агент для программирования: Claude, OpenAI, Polza AI и любые OpenAI-совместимые API по вашим ключам",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "publisher": "dimosi",
   "license": "MIT",
   "private": true,

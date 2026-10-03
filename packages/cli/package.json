@@ -1,6 +1,6 @@
 {
   "name": "@dimosi/cli",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Terminal coding agent that works with Claude, OpenAI, Polza AI and any OpenAI-compatible API",
   "license": "MIT",
   "bin": {
