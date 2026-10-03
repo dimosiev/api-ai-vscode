@@ -571,7 +571,8 @@ describe("effort (how hard the model works)", () => {
     // The service refuses the cache marks, not the effort.
     const { bodies, provider } = service("polza", (b) => (Array.isArray(b.messages[0].content) ? "Unknown field: cache_control" : undefined));
     const claude = req("anthropic/claude-opus-5.5", "high");
-    await collect(provider.stream(claude));
+    // Nothing is said about the effort: it was not what the service refused.
+    expect((await done(provider.stream(claude))).effortIgnored).toBeUndefined();
     expect((await done(provider.stream(claude))).effortIgnored).toBeUndefined();
     expect(bodies.at(-1).reasoning).toEqual({ type: "adaptive", effort_level: "high" });
     expect(bodies.at(-1).messages[0].content).toBe("s");

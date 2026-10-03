@@ -190,6 +190,8 @@ export function restoredTranscript(chat: SavedChat, trackers: Map<number, Change
 // shows, so that listing never reads the chats themselves (up to 20 MB each).
 
 export const MAX_ARCHIVED_CHATS = 30;
+/** A chat without an index entry is read for its title only when it is this small. */
+const MAX_TITLE_READ_BYTES = 1024 * 1024;
 const INDEX_FILE = "index.json";
 const CHAT_ID = /^[a-z0-9]+-[a-f0-9]{8}$/;
 
@@ -232,7 +234,8 @@ const writeIndex = (dir: string, chats: ChatInfo[]) => writeChatFile(path.join(d
 /**
  * The earlier chats, newest first. The files are the truth and the index is a
  * note about them: an entry without a file is dropped, a file without an entry
- * (the index was lost) is read once and gets one.
+ * (the index was lost) gets one: a small chat is read once for its title, a big
+ * one is named by its date, so that nothing heavy runs in the extension host.
  */
 export async function listChats(dir: string): Promise<ChatInfo[]> {
   let names: string[];
@@ -250,9 +253,13 @@ export async function listChats(dir: string): Promise<ChatInfo[]> {
     let info: ChatInfo = { id, title: "(чат не удалось прочитать)", savedAt: 0, tasks: 0 };
     try {
       const file = archivedFile(dir, id);
-      const raw = JSON.parse(await fs.readFile(file, "utf8")) as Partial<SavedChat>;
-      const transcript = Array.isArray(raw.transcript) ? raw.transcript : [];
-      info = { id, title: chatTitle(transcript), savedAt: (await fs.stat(file)).mtimeMs, tasks: countTasks(transcript) };
+      const stat = await fs.stat(file);
+      if (stat.size > MAX_TITLE_READ_BYTES) info = { id, title: "(большой чат без названия)", savedAt: stat.mtimeMs, tasks: 0 };
+      else {
+        const raw = JSON.parse(await fs.readFile(file, "utf8")) as Partial<SavedChat>;
+        const transcript = Array.isArray(raw.transcript) ? raw.transcript : [];
+        info = { id, title: chatTitle(transcript), savedAt: stat.mtimeMs, tasks: countTasks(transcript) };
+      }
     } catch {
       // Listed as unreadable: the user can delete it, and it is not read again.
     }
@@ -277,7 +284,8 @@ export async function archiveChat(file: string, dir: string, info: Omit<ChatInfo
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw e;
   }
-  const chats = [{ id, ...info }, ...(await listChats(dir)).filter((c) => c.id !== id)].sort((a, b) => b.savedAt - a.savedAt);
+  // By the index alone: the chat just moved must not be read back for a title that is already known.
+  const chats = [{ id, ...info }, ...(await readIndex(dir))].sort((a, b) => b.savedAt - a.savedAt);
   const max = opts.max ?? MAX_ARCHIVED_CHATS;
   const kept: ChatInfo[] = [];
   for (const c of chats) {

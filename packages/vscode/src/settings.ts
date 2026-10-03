@@ -78,3 +78,17 @@ export async function buildProvider(settings: Settings, keys: SecretKeyStore, pr
     fetch: directFallbackFor(presetId) ? serviceFetch() : undefined,
   });
 }
+
+/**
+ * The service for the chat, built once and kept while the service, its address and the key stay
+ * the same. The service object remembers what the server refused (cache marks, effort) and the
+ * price list: built anew for every message, it would send the refused request again each time.
+ */
+export function rememberedProvider(): (settings: Settings, keys: SecretKeyStore) => Promise<Provider> {
+  let last: { id: string; provider: Provider } | undefined;
+  return async (settings, keys) => {
+    const id = JSON.stringify([settings.provider, settings.customBaseUrl, await keys.get(settings.provider)]);
+    if (last?.id !== id) last = { id, provider: await buildProvider(settings, keys) };
+    return last.provider;
+  };
+}

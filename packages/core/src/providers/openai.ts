@@ -99,7 +99,8 @@ export class OpenAIProvider implements Provider {
     this.includeUsage = withUsage;
     // Remembered only when leaving the effort out was enough: otherwise something else was refused.
     if (effortFields && !withEffort && cache === cacheAsked) this.noEffort.add(req.model);
-    const effortIgnored = !req.effort || withEffort ? undefined : effortFields || this.noEffort.has(req.model) ? ("rejected" as const) : ("unsupported" as const);
+    // Left out this once for a refusal it did not cause: nothing to tell, the next request carries it again.
+    const effortIgnored = !req.effort || withEffort ? undefined : this.noEffort.has(req.model) ? ("rejected" as const) : effortFields ? undefined : ("unsupported" as const);
 
     let text = "";
     let finishReason: string | null = null;

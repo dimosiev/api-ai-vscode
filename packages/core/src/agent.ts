@@ -115,6 +115,8 @@ export class Agent {
   private streamed = "";
   private access?: { key: string; policy: AccessPolicy };
   private running = false;
+  /** Counts the chats: a turn still stopping after reset() must not write into the new chat. */
+  private chat = 0;
 
   constructor(opts: AgentOptions) {
     this.provider = opts.provider;
@@ -135,6 +137,7 @@ export class Agent {
   }
 
   reset(): void {
+    this.chat++;
     this.messages = [];
     this.layout = undefined;
     this.date = undefined;
@@ -188,6 +191,7 @@ export class Agent {
   }
 
   private async *runTurn(input: UserInput, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
+    const chat = this.chat;
     const parts: Part[] = typeof input === "string" ? [{ type: "text", text: input }] : [...input];
     const note = this.planFirst ? PLAN_NOTE : this.planned ? EXECUTE_NOTE : undefined;
     if (note) parts.push({ type: "text", text: note });
@@ -212,6 +216,8 @@ export class Agent {
           this.log?.info(`context trimmed: ≈${size} → ≈${estimateTokens(this.messages)} tok (window ${this.contextWindow})`);
         }
         const done = yield* this.request(system, signal);
+        // "New chat" came while the model was answering: the reply belongs to no chat now.
+        if (chat !== this.chat) return;
         if (done.usage) yield { type: "usage", usage: done.usage };
         const noticed = `${this.provider.id}/${this.model}`;
         if (done.effortIgnored && this.effortNotice !== noticed) {
@@ -284,6 +290,7 @@ export class Agent {
           yield* pending;
           yield { type: "tool_end", call, result: result.content, isError: result.isError };
         }
+        if (chat !== this.chat) return;
         this.messages.push({ role: "user", parts: results });
         this.closeDanglingToolCalls("Cancelled by the user.");
         if (signal?.aborted) {
@@ -294,6 +301,8 @@ export class Agent {
       this.log?.warn(`stopped after ${this.maxSteps} steps`);
       yield { type: "error", message: `Агент сделал ${this.maxSteps} шагов и остановился. Напишите «продолжай», чтобы он продолжил.` };
     } catch (e) {
+      // "New chat" came while this turn was stopping: the history is no longer this turn's.
+      if (chat !== this.chat) return;
       this.closeDanglingToolCalls("Cancelled by the user.");
       if (signal?.aborted) {
         this.noteStoppedReply();

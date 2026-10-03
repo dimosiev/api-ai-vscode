@@ -1,7 +1,7 @@
 import { mkdtempSync, promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Message } from "@dimosi/core";
 import { ChangeTracker } from "../src/changes";
 import {
@@ -234,6 +234,26 @@ describe("earlier chats", () => {
     await fs.writeFile(path.join(dir, "zzzzzzzz-0123abcd.json"), "{ not json");
     expect((await listChats(dir)).map((c) => c.title)).toEqual(["чат 2", "(чат не удалось прочитать)"]);
     expect(JSON.parse(await fs.readFile(path.join(dir, "index.json"), "utf8")).chats).toHaveLength(2);
+  });
+
+  it("putting a chat away reads no chat, and a lost index is rebuilt without reading the big ones", async () => {
+    const { root, file, dir } = await store(1);
+    const read = vi.spyOn(fs, "readFile");
+    try {
+      await writeChatFile(file, serializeChat(chat(root)).text!);
+      await archiveChat(file, dir, { title: "ещё один", savedAt: 5, tasks: 1 });
+      expect(read.mock.calls.map((c) => path.basename(String(c[0])))).toEqual(["index.json"]);
+    } finally {
+      read.mockRestore();
+    }
+    // A chat of several megabytes whose index entry is lost: listed by its date, not parsed.
+    const big = chat(root, { transcript: [{ type: "user", text: "большой", chips: [] }, { type: "text", text: "я".repeat(2 * 1024 * 1024) }] });
+    await fs.writeFile(path.join(dir, "bigbigbig-0123abcd.json"), JSON.stringify(big));
+    await fs.rm(path.join(dir, "index.json"));
+    const titles = (await listChats(dir)).map((c) => c.title);
+    expect(titles).toEqual(expect.arrayContaining(["чат 1", "привет"])); // small ones are read for their title
+    expect(titles.some((t) => t.startsWith("(большой чат"))).toBe(true);
+    expect(titles).not.toContain("большой");
   });
 
   it("an id that is not one of ours never becomes a path", async () => {

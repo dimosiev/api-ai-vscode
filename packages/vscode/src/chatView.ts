@@ -49,7 +49,7 @@ import {
 import type { SecretKeyStore } from "./keyStore";
 import type { FromWebview, ToWebview } from "./protocol";
 import { isPicturePath, pictureDataUrl } from "./pictures";
-import { buildImages, buildProvider, MissingKeyError, readSettings } from "./settings";
+import { buildImages, MissingKeyError, readSettings, rememberedProvider } from "./settings";
 
 const CONTEXT_WARNING_TOKENS = 150_000;
 /** Commands the panel's buttons run; the panel can ask for nothing else. */
@@ -99,6 +99,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private generation = 0;
   /** The task in progress: its revert card is not in the transcript yet. */
   private running?: { turn: number; tracker: ChangeTracker };
+  /** Another chat is being opened: no task may start until it is in place. */
+  private switching = false;
+  private provider = rememberedProvider();
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -155,7 +158,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   get busy(): boolean {
-    return this.controller !== undefined || this.starting;
+    return this.controller !== undefined || this.starting || this.switching;
   }
 
   private root(): string | undefined {
@@ -169,7 +172,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.generation++;
     this.controller?.abort();
     this.approval.cancelAll();
-    this.putAway();
+    void this.putAway().then((kept) => {
+      if (!kept) void vscode.window.showWarningMessage("Не удалось сохранить прежний чат в прошлых чатах: с первым сообщением в новом чате он будет потерян. Причина — в журнале («Вывод → dimosi»).");
+    });
     this.forget();
     this.attachments = [];
     this.post({ type: "clear" });
@@ -190,24 +195,40 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /**
    * Moves the current chat to the earlier ones, as it is now. A chat where the
    * user wrote nothing is just deleted. `keep`: an earlier chat that must not
-   * be pushed out by this one.
+   * be pushed out by this one. False: the chat could not be moved and is still
+   * the current file.
    */
-  private putAway(keep?: string): void {
+  private putAway(keep?: string): Promise<boolean> {
     const file = this.chatFile();
     const dir = this.chatsDir();
-    if (!file || !dir) return;
-    const tasks = countTasks(this.transcript.items);
-    if (!tasks) {
-      this.saving = this.saving.then(() => deleteChatFile(file)).catch(() => undefined);
-      return;
+    if (!file || !dir) return Promise.resolve(true);
+    let work: () => Promise<unknown>;
+    if (!this.loaded) {
+      // The panel was not shown in this window yet: the saved chat is only on the disk.
+      this.loaded = true;
+      const root = this.root();
+      work = async () => {
+        const saved = root ? await readChatFile(file, root) : undefined;
+        const tasks = saved ? countTasks(saved.transcript) : 0;
+        if (!saved || !tasks) return deleteChatFile(file);
+        return archiveChat(file, dir, { title: chatTitle(saved.transcript), savedAt: Date.now(), tasks }, { keep });
+      };
+    } else {
+      const tasks = countTasks(this.transcript.items);
+      if (!tasks) work = () => deleteChatFile(file);
+      else {
+        // A task stopped by this very action is kept with its revert card, and without the "window was reloaded" note.
+        this.saveChat(this.running, false);
+        const info = { title: chatTitle(this.transcript.items), savedAt: Date.now(), tasks };
+        work = () => archiveChat(file, dir, info, { keep });
+      }
     }
-    // A task stopped by this very action is kept with its revert card, and without the "window was reloaded" note.
-    this.saveChat(this.running, false);
-    const info = { title: chatTitle(this.transcript.items), savedAt: Date.now(), tasks };
-    this.saving = this.saving
-      .then(() => archiveChat(file, dir, info, { keep }))
-      .then(() => undefined)
-      .catch((e) => log.warn(`could not keep the chat: ${errorText(e)}`));
+    const done = this.saving.then(work).then(
+      () => true,
+      (e) => (log.warn(`could not keep the chat: ${errorText(e)}`), false),
+    );
+    this.saving = done.then(() => undefined);
+    return done;
   }
 
   /** The list of earlier chats: open one or delete it. */
@@ -215,6 +236,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const dir = this.chatsDir();
     const root = this.root();
     if (!dir || !root) return void vscode.window.showWarningMessage("Сначала откройте папку проекта: чаты хранятся отдельно для каждой папки.");
+    // The command can come before the panel was ever shown: the saved chat must be known first.
+    await this.loadSavedChat();
     await this.saving;
     const chats = await listChats(dir);
     if (!chats.length) return void vscode.window.showInformationMessage("Прошлых чатов пока нет. Чат попадает сюда, когда вы начинаете новый.");
@@ -227,7 +250,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (action?.label === "Открыть") await this.openChat(picked.chat);
     else if (action?.label === "Удалить") {
       const ok = await vscode.window.showWarningMessage(`Удалить чат «${picked.chat.title}»? Вернуть его будет нельзя.`, { modal: true }, "Удалить");
-      if (ok) await deleteArchivedChat(dir, picked.chat.id);
+      if (!ok) return;
+      // In the queue with the saves: they write the same list.
+      const id = picked.chat.id;
+      this.saving = this.saving.then(() => deleteArchivedChat(dir, id)).catch((e) => log.warn(`could not delete the chat: ${errorText(e)}`));
+      await this.saving;
     }
   }
 
@@ -237,18 +264,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const root = this.root();
     if (!file || !dir || !root) return;
     if (this.busy) return void vscode.window.showWarningMessage("dimosi ещё работает над задачей. Дождитесь окончания или нажмите «Стоп», потом откройте другой чат.");
-    const saved = await readArchivedChat(dir, chat.id, root);
-    if (!saved) return void vscode.window.showWarningMessage("Этот чат не удалось открыть: его файл повреждён или сохранён другой версией dimosi. Его можно удалить из списка.");
-    this.generation++;
-    this.approval.cancelAll();
-    this.putAway(chat.id);
-    this.saving = this.saving.then(() => unarchiveChat(dir, chat.id, file)).catch((e) => log.warn(`could not make the chat current: ${errorText(e)}`));
-    await this.saving;
-    this.forget();
-    this.adopt(saved);
-    log.info(`earlier chat opened: ${saved.messages.length} messages, ${saved.trackers.length} revert cards`);
-    this.post({ type: "restore", items: this.transcript.items });
-    await this.postStatus();
+    this.switching = true;
+    try {
+      const saved = await readArchivedChat(dir, chat.id, root);
+      if (!saved) return void vscode.window.showWarningMessage("Этот чат не удалось открыть: его файл повреждён или сохранён другой версией dimosi. Его можно удалить из списка.");
+      this.generation++;
+      this.approval.cancelAll();
+      if (!(await this.putAway(chat.id))) {
+        return void vscode.window.showWarningMessage("Не удалось убрать текущий чат в прошлые, поэтому другой чат не открыт: иначе текущий был бы потерян. Причина — в журнале («Вывод → dimosi»).");
+      }
+      const moved = this.saving.then(() => unarchiveChat(dir, chat.id, file)).then(
+        () => true,
+        (e) => (log.warn(`could not make the chat current: ${errorText(e)}`), false),
+      );
+      this.saving = moved.then(() => undefined);
+      if (!(await moved)) return void vscode.window.showWarningMessage("Не удалось открыть чат. Он остался в списке прошлых чатов. Причина — в журнале («Вывод → dimosi»).");
+      this.forget();
+      this.adopt(saved);
+      log.info(`earlier chat opened: ${saved.messages.length} messages, ${saved.trackers.length} revert cards`);
+      this.post({ type: "restore", items: this.transcript.items });
+      await this.postStatus();
+    } finally {
+      this.switching = false;
+    }
   }
 
   async postStatus(): Promise<void> {
@@ -473,7 +511,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     let provider;
     try {
       if (!settings.model) throw new Error("Не выбрана модель.");
-      provider = await buildProvider(settings, this.keys);
+      provider = await this.provider(settings, this.keys);
     } catch (e) {
       log.warn(`cannot start a task: ${errorText(e)}`);
       this.post({

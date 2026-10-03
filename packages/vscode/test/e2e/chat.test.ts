@@ -458,6 +458,87 @@ describe("earlier chats", () => {
     expect(stub.messages.at(-1)).toMatch(/^Прошлых чатов пока нет/);
   });
 
+  /** A chat saved by one window; the next window has not shown the panel yet. */
+  async function savedThenReloaded(text: string): Promise<Panel> {
+    const first = await setup([{ text: "Ответ." }, { text: "Ещё ответ." }]);
+    await first.task(text);
+    expect(await eventually(() => existsSync(path.join(storage, "chat.json")))).toBe(true);
+    first.close();
+    return new Panel(context); // no "ready": the saved chat is not loaded
+  }
+
+  it("«Новый чат» before the panel was ever shown keeps the saved chat too", async () => {
+    const panel = await savedThenReloaded("чат до перезагрузки");
+    panel.provider.newChat();
+    expect(await eventually(() => archived().length === 1)).toBe(true);
+    expect(archived()).toEqual(["чат до перезагрузки"]);
+    // The panel opens afterwards: it must not bring the put-away chat back as the current one.
+    panel.send({ type: "ready" });
+    await panel.waitFor(isType("status"));
+    expect(panel.posted.some(isType("restore"))).toBe(false);
+  });
+
+  it("opening an earlier chat before the panel was ever shown does not lose the saved one", async () => {
+    const first = await setup([{ text: "Раз." }, { text: "Два." }]);
+    await first.task("первый");
+    first.provider.newChat();
+    await first.task("второй");
+    expect(await eventually(() => archived().length === 1 && existsSync(path.join(storage, "chat.json")))).toBe(true);
+    first.close();
+
+    const panel = new Panel(context);
+    choose("первый", "Открыть");
+    await panel.provider.showChats();
+    expect(archived()).toEqual(["второй"]);
+  });
+
+  it("nothing else starts while a chat is being opened", async () => {
+    const panel = await setup([{ text: "Раз." }]);
+    await panel.task("первый чат");
+    panel.provider.newChat();
+    expect(await eventually(() => archived().length === 1)).toBe(true);
+    // The last thing opening does is refresh the status, which asks for the key of a service that needs one.
+    stub.config["dimosi.provider"] = "polza";
+    const seen: boolean[] = [];
+    const get = context.secrets.get;
+    context.secrets.get = async (k: string) => (seen.push(panel.provider.busy), get(k));
+    choose("первый чат", "Открыть");
+    await panel.provider.showChats();
+    expect(seen.at(-1)).toBe(true);
+    expect(panel.provider.busy).toBe(false);
+  });
+
+  // Folder permissions: not on Windows, and they do not stop an administrator.
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("when the current chat cannot be put away, the other chat is not opened over it", async () => {
+    const panel = await setup([{ text: "Раз." }, { text: "Два." }]);
+    await panel.task("первый");
+    panel.provider.newChat();
+    await panel.task("второй");
+    expect(await eventually(() => archived().length === 1)).toBe(true);
+    await fs.chmod(chatsDir(), 0o555); // nothing can be moved in or out
+    try {
+      const from = panel.posted.length;
+      choose("первый", "Открыть");
+      await panel.provider.showChats();
+      expect(stub.messages.at(-1)).toMatch(/^Не удалось убрать текущий чат в прошлые/);
+      expect(panel.posted.slice(from).some(isType("restore"))).toBe(false);
+      expect(readFileSync(path.join(storage, "chat.json"), "utf8")).toContain("второй");
+    } finally {
+      await fs.chmod(chatsDir(), 0o755);
+    }
+    expect(archived()).toEqual(["первый"]);
+  });
+
+  it("the service is remembered between messages: what it refused once is not sent with every message", async () => {
+    const marked = (body: { messages: Array<{ content: unknown }> }) => Array.isArray(body.messages[0].content);
+    const reply = (text: string) => (body: { messages: Array<{ content: unknown }> }) => (marked(body) ? { status: 400, error: "Unknown field: cache_control" } : { text });
+    const panel = await setup([reply("Раз."), reply("Раз."), reply("Два."), reply("Два.")]);
+    stub.config["dimosi.model"] = "claude-on-my-server";
+    await panel.task("раз");
+    await panel.task("два");
+    expect(server!.requests.map((r) => marked(r.body))).toEqual([true, false, false]);
+  });
+
   it("another chat is not opened while a task is running", async () => {
     const panel = await setup([{ text: "Раз." }, { text: "Пишу.", toolCalls: [{ name: "write_file", args: { path: "b.txt", content: "B\n" } }] }, { text: "Готово." }]);
     await panel.task("первый чат");

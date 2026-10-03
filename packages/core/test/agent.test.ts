@@ -390,3 +390,50 @@ describe("effort", () => {
     expect(await errors("новый чат")).toEqual([expect.stringMatching(/^Сервис не принял настройку «Усердие» для модели m/)]);
   });
 });
+
+describe("a new chat started while the model is still answering", () => {
+  it("takes nothing of the stopped reply into the new chat", async () => {
+    const provider: Provider = {
+      id: "fake",
+      async *stream(req: ChatRequest): AsyncIterable<StreamEvent> {
+        yield { type: "text_delta", text: "Секрет старого чата" };
+        await new Promise((_resolve, reject) => {
+          const stop = () => reject(new Error("aborted"));
+          if (req.signal!.aborted) stop();
+          else req.signal!.addEventListener("abort", stop);
+        });
+      },
+      listModels: async () => [],
+    };
+    const agent = new Agent({ provider, model: "m", root: tmp(), approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL });
+    const controller = new AbortController();
+    const run = agent.run("старая задача", controller.signal);
+    for (;;) {
+      const next = await run.next();
+      if (next.done || next.value.type === "text") break;
+    }
+    // What "New chat" does: stop the task, forget the conversation.
+    controller.abort();
+    agent.reset();
+    await collect(run);
+    expect(agent.messages).toEqual([]);
+  });
+
+  it("a tool that finishes after the reset does not put its result into the new chat", async () => {
+    let release!: () => void;
+    const asked = new Promise<void>((resolve) => (release = resolve));
+    let answer!: (d: "deny") => void;
+    const provider = new FakeProvider([
+      () => [{ type: "done", stopReason: "tool_use", message: { role: "assistant", parts: [{ type: "tool_call", id: "t1", name: "write_file", input: { path: "a.txt", content: "A" } }] } }],
+    ]);
+    const approval = { approve: () => new Promise<"deny">((resolve) => ((answer = resolve), release())) };
+    const agent = new Agent({ provider, model: "m", root: tmp(), approval, globalRulesPath: NO_GLOBAL });
+    const events = collect(agent.run("старая задача"));
+    await asked;
+    agent.reset();
+    answer("deny");
+    await events;
+    // A tool result without its call would make the service refuse the new chat's first request.
+    expect(agent.messages).toEqual([]);
+  });
+});
