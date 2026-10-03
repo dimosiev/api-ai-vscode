@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
@@ -68,11 +68,23 @@ export const diskFiles: FileAccess = {
     // (its target is replaced), and the file keeps its permissions.
     let target = abs;
     let mode: number | undefined;
+    let names = 1;
     try {
       target = await fs.realpath(abs);
-      mode = (await fs.stat(target)).mode & 0o7777;
+      const stat = await fs.stat(target);
+      mode = stat.mode & 0o7777;
+      names = stat.nlink;
     } catch {
       // a new file
+    }
+    if (mode !== undefined) {
+      // A rename needs no permission on the file itself: it would replace a file the user made read-only.
+      await fs.access(target, fsConstants.W_OK);
+      // A file with a second name (hard link) is written in place: a rename would leave the other name with the old text.
+      if (names > 1) {
+        await fs.writeFile(target, text, "utf8");
+        return text;
+      }
     }
     const tmp = path.join(path.dirname(target), `.${path.basename(target)}.${randomBytes(4).toString("hex")}.tmp`);
     try {

@@ -133,7 +133,7 @@ describe("О-5: protected files in an extra folder", () => {
 });
 
 describe("О-6: writing through a temporary file", () => {
-  bug("a file the user made read-only is not replaced", async () => {
+  it("a file the user made read-only is not replaced", async () => {
     const file = path.join(tmp("dimosi-a6-"), "locked.txt");
     await fs.writeFile(file, "mine");
     await fs.chmod(file, 0o444);
@@ -141,7 +141,7 @@ describe("О-6: writing through a temporary file", () => {
     expect(await fs.readFile(file, "utf8")).toBe("mine");
   });
 
-  bug("a file with a second name (hard link) stays one file", async () => {
+  it("a file with a second name (hard link) stays one file", async () => {
     const dir = tmp("dimosi-a6-");
     await fs.writeFile(path.join(dir, "a.txt"), "old");
     linkSync(path.join(dir, "a.txt"), path.join(dir, "b.txt"));
