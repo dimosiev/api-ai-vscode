@@ -72,6 +72,9 @@ export class EventEmitter<T> {
     this.listeners.add(l);
     return { dispose: () => this.listeners.delete(l) };
   };
+  get count(): number {
+    return this.listeners.size;
+  }
   fire(e?: T): void {
     for (const l of this.listeners) l(e as T);
   }
@@ -83,6 +86,10 @@ export class EventEmitter<T> {
 /** An editor tab's document: text that may differ from the disk, plus an undo history. */
 export class TextDocument {
   isClosed = false;
+  /** Enough for tests: the file's extension. */
+  get languageId(): string {
+    return nodePath.extname(this.uri.fsPath).slice(1) || "plaintext";
+  }
   isDirty = false;
   encoding = "utf8";
   private undoStack: string[] = [];
@@ -131,11 +138,32 @@ export class TextDocument {
   }
 }
 
+export interface Diagnostic {
+  range: Range;
+  message: string;
+  severity: DiagnosticSeverity;
+  source?: string;
+  code?: string | number | { value: string | number };
+}
+
+const diagnosticsChanged = new EventEmitter<{ uris: Uri[] }>();
+
 /** Test controls. */
 export const stub = {
   config: {} as Record<string, unknown>,
   /** Answers modal and non-modal message boxes; undefined = dismissed. */
   answer: (_message: string, _items: string[]): string | undefined => undefined,
+  /** What the editor shows for each file (by `uri.toString()`). */
+  diagnostics: new Map<string, Diagnostic[]>(),
+  /** A language service reports on a file: the list is replaced and listeners are told. */
+  report(uri: Uri, list: Diagnostic[]): void {
+    this.diagnostics.set(uri.toString(), list);
+    diagnosticsChanged.fire({ uris: [uri] });
+  },
+  /** How many parts of the extension are listening for reports right now. */
+  get diagnosticListeners(): number {
+    return diagnosticsChanged.count;
+  },
   /** What the user picks in a quick pick list. */
   pick: (_items: Array<{ label: string }>): { label: string } | undefined => undefined,
   /** What the user chooses in an "open" dialog. */
@@ -154,6 +182,8 @@ export const stub = {
     this.config = {};
     this.answer = () => undefined;
     this.pick = () => undefined;
+    this.diagnostics.clear();
+    diagnosticsChanged.dispose();
     this.openDialog = () => undefined;
     this.messages = [];
     this.messageOptions = [];
@@ -189,6 +219,14 @@ export const workspace = {
         stub.config[`${section}.${key}`] = value;
       },
     };
+  },
+  /** Loads a file as a document without showing it, like VS Code does. */
+  async openTextDocument(uri: Uri): Promise<TextDocument> {
+    const open = this.textDocuments.find((d) => !d.isClosed && d.uri.toString() === uri.toString());
+    if (open) return open;
+    const doc = new TextDocument(uri, await fs.readFile(uri.fsPath, "utf8"));
+    this.textDocuments.push(doc);
+    return doc;
   },
   onDidChangeConfiguration: () => disposable(),
   onDidChangeWorkspaceFolders: () => disposable(),
@@ -234,7 +272,11 @@ export const commands = {
   },
 };
 
-export const languages = { registerCodeActionsProvider: () => disposable() };
+export const languages = {
+  registerCodeActionsProvider: () => disposable(),
+  getDiagnostics: (uri: Uri) => stub.diagnostics.get(uri.toString()) ?? [],
+  onDidChangeDiagnostics: diagnosticsChanged.event,
+};
 export const env = { appName: "Visual Studio Code", appRoot: "/nonexistent/vscode/app", clipboard: { text: "", async writeText(t: string) { this.text = t; } } };
 export const version = "1.140.0";
 

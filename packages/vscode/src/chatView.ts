@@ -26,6 +26,7 @@ import { ChangeTracker } from "./changes";
 import { commandRuleStore } from "./commandRules";
 import { editorFiles } from "./editorFiles";
 import { log } from "./log";
+import { EditorProblems } from "./problems";
 import { vscodeRuleTrust } from "./ruleTrust";
 import {
   CHAT_FORMAT,
@@ -72,6 +73,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private chatUsage = new UsageTotals();
   private fileCache?: { at: number; files: string[] };
   private starting = false;
+  /** One for the whole window: it learns which languages report errors. */
+  private problems = new EditorProblems();
   /** What the panel shows, so it can be redrawn after a reload or when the view is recreated. */
   private transcript = new Transcript();
   /** History of a restored chat, handed to the agent when it is created. */
@@ -90,6 +93,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.approval = approval(this);
     this.resetReady();
     context.subscriptions.push(
+      this.problems,
       vscode.window.onDidChangeActiveTextEditor(() => this.postActiveFile()),
     );
   }
@@ -386,6 +390,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         root,
         approval: this.approval,
         files: editorFiles,
+        problems: this.problems.watch,
         commandRules: commandRuleStore(this.context, root),
         log,
         ruleTrust: vscodeRuleTrust(this.context),

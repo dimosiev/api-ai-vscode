@@ -5,7 +5,7 @@ import type { Log } from "./log";
 import { buildSystemPrompt, snapshotLayout } from "./prompt";
 import { isProjectRulesFile, loadRules, type RuleSource, type RuleTrust } from "./rules";
 import { IncompleteResponseError } from "./providers/openai";
-import { executeTool, TOOL_DEFINITIONS, type FileAccess, type FileChange, type PlanItem } from "./tools";
+import { executeTool, TOOL_DEFINITIONS, type FileAccess, type FileChange, type PlanItem, type ProblemWatcher } from "./tools";
 import type {
   ImagePart,
   Message,
@@ -35,6 +35,8 @@ export interface AgentOptions {
   globalRulesPath?: string;
   /** How tools read and write files; defaults to the disk. */
   files?: FileAccess;
+  /** The editor's errors for a changed file, added to the tool result (VS Code only). */
+  problems?: ProblemWatcher;
   /** Folders outside the project that the user opened to the agent. */
   extraFolders?: ExtraFolder[];
   /** Keeps the commands allowed with "Always" between sessions; without it they last until the new chat. */
@@ -81,6 +83,7 @@ export class Agent {
   private maxTokens?: number;
   private globalRulesPath?: string;
   private files?: FileAccess;
+  private problems?: ProblemWatcher;
   private log?: Log;
   private ruleTrust?: RuleTrust;
   private layout?: string;
@@ -97,6 +100,7 @@ export class Agent {
     this.maxTokens = opts.maxTokens;
     this.globalRulesPath = opts.globalRulesPath;
     this.files = opts.files;
+    this.problems = opts.problems;
     this.extraFolders = opts.extraFolders ?? [];
     this.log = opts.log;
     this.ruleTrust = opts.ruleTrust;
@@ -207,6 +211,7 @@ export class Agent {
                 access,
                 gate: this.gate,
                 files: this.files,
+                problems: this.problems,
                 sandbox: this.sandbox,
                 signal,
                 onFileChange: (change) => pending.push({ type: "file_changed", change }),

@@ -2,7 +2,7 @@ import { mkdtempSync, promises as fs, symlinkSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { executeTool, PermissionGate, type ApprovalDecision, type ApprovalRequest } from "../src";
+import { executeTool, PermissionGate, type ApprovalDecision, type ApprovalRequest, type FileProblem, type ProblemWatcher } from "../src";
 
 let root: string;
 let requests: ApprovalRequest[];
@@ -123,5 +123,41 @@ describe("writes need approval", () => {
     const r = await call("read_file", { __invalid_arguments: "{oops" });
     expect(r.isError).toBe(true);
     expect(r.content).toMatch(/not valid JSON/);
+  });
+});
+
+describe("the editor's errors in the result of a change", () => {
+  const withProblems = (problems: ProblemWatcher, name: string, input: Record<string, unknown>) =>
+    executeTool({ type: "tool_call", id: "1", name, input }, { root, gate: gate(), problems });
+  const fixed = (list: FileProblem[]): ProblemWatcher => () => ({ after: async () => list, cancel() {} });
+
+  it("at most 10 are listed, each on one line and not too long", async () => {
+    const many = Array.from({ length: 13 }, (_, i) => ({ line: i + 1, message: i === 0 ? `long ${"x".repeat(500)}` : `problem\n${i}` }));
+    const r = await withProblems(fixed(many), "write_file", { path: "b.ts", content: "x" });
+    const lines = r.content.split("\n");
+    expect(lines[0]).toBe("Created b.ts (1 lines).");
+    expect(lines[2]).toMatch(/^The editor now reports 13 errors in this file/);
+    expect(lines.slice(3)).toHaveLength(11);
+    expect(lines[3].length).toBeLessThan(330);
+    expect(lines[3].endsWith("...")).toBe(true);
+    expect(lines[4]).toBe("- line 2: problem 1");
+    expect(lines.at(-1)).toBe("... and 3 more");
+  });
+
+  it("an editor that can't tell does not fail the change", async () => {
+    const broken: ProblemWatcher = () => ({ after: async () => Promise.reject(new Error("no editor")), cancel() {} });
+    const r = await withProblems(broken, "edit_file", { path: "a.txt", old_string: "one", new_string: "1" });
+    expect(r).toEqual({ content: "Edited a.txt (1 replacement).", isError: false });
+  });
+
+  it("nothing is asked of the editor when the change is rejected or there is nothing to change", async () => {
+    let watched = 0;
+    const counting: ProblemWatcher = () => (watched++, { after: async () => [], cancel() {} });
+    decision = "deny";
+    await withProblems(counting, "write_file", { path: "b.ts", content: "x" });
+    decision = "allow";
+    await withProblems(counting, "write_file", { path: "a.txt", content: "one\ntwo\ntwo\n" });
+    await withProblems(counting, "read_file", { path: "a.txt" });
+    expect(watched).toBe(0);
   });
 });

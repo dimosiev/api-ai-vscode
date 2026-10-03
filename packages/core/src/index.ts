@@ -16,6 +16,8 @@ export {
   NotUtf8Error,
   type FileAccess,
   type FileChange,
+  type FileProblem,
+  type ProblemWatcher,
   type PlanItem,
   type PlanStatus,
 } from "./tools";

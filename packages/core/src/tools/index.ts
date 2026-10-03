@@ -66,6 +66,23 @@ export const diskFiles: FileAccess = {
   },
 };
 
+/** An error the editor shows in a file. */
+export interface FileProblem {
+  /** 1-based. */
+  line: number;
+  message: string;
+  /** Who reported it, e.g. "ts 2304" or "eslint no-undef". */
+  source?: string;
+}
+
+/**
+ * The editor's errors for a file the agent changes (VS Code only; the
+ * terminal has no editor). Called before the write so that no report is
+ * missed; `after` waits for the editor to re-check the file and returns its
+ * errors, `cancel` is called instead if the write did not happen.
+ */
+export type ProblemWatcher = (abs: string) => { after(signal?: AbortSignal): Promise<FileProblem[]>; cancel(): void };
+
 export interface ToolContext {
   root: string;
   /** What may be reached besides the project. Default: the project only. */
@@ -80,6 +97,8 @@ export interface ToolContext {
   searchTimeoutMs?: number;
   /** Run commands in the macOS sandbox. Default: true (ignored elsewhere). */
   sandbox?: boolean;
+  /** Adds the editor's errors to the result of write_file and edit_file. */
+  problems?: ProblemWatcher;
 }
 
 export interface ToolResult {
@@ -93,6 +112,8 @@ const MAX_READ_CHARS = 50_000;
 const MAX_LINE_CHARS = 2000;
 const MAX_READ_BYTES = 10 * 1024 * 1024;
 const MAX_OUTPUT_CHARS = 30_000;
+const MAX_PROBLEMS = 10;
+const MAX_PROBLEM_CHARS = 300;
 const SEARCH_TIMEOUT_MS = 15_000;
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -250,6 +271,36 @@ async function readTextOrNull(files: FileAccess, abs: string, relPath: string): 
   }
 }
 
+/**
+ * Writes the file and returns a note with the errors the editor reports for
+ * it afterwards ("" if none, or if there is no editor). The note never fails
+ * the write: the file is already changed.
+ */
+async function writeAndCheck(ctx: ToolContext, abs: string, text: string): Promise<{ written: string; note: string }> {
+  const watch = ctx.problems?.(abs);
+  let written: string;
+  try {
+    written = await (ctx.files ?? diskFiles).writeText(abs, text);
+  } catch (e) {
+    watch?.cancel();
+    throw e;
+  }
+  let problems: FileProblem[] = [];
+  try {
+    problems = (await watch?.after(ctx.signal)) ?? [];
+  } catch {
+    // the editor could not tell; the change itself is fine
+  }
+  if (!problems.length) return { written, note: "" };
+  const lines = problems.slice(0, MAX_PROBLEMS).map((p) => {
+    const message = p.message.replace(/\s+/g, " ").trim();
+    return `- line ${p.line}: ${message.length > MAX_PROBLEM_CHARS ? `${message.slice(0, MAX_PROBLEM_CHARS)}...` : message}${p.source ? ` (${p.source})` : ""}`;
+  });
+  if (problems.length > MAX_PROBLEMS) lines.push(`... and ${problems.length - MAX_PROBLEMS} more`);
+  const count = `${problems.length} error${problems.length > 1 ? "s" : ""}`;
+  return { written, note: `\n\nThe editor now reports ${count} in this file (some may have been there before your change):\n${lines.join("\n")}` };
+}
+
 const accessOf = (ctx: ToolContext): AccessPolicy => ctx.access ?? createAccess(ctx.root);
 
 /**
@@ -378,9 +429,9 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     if (!ok) throw new Error("The user rejected this change.");
     // The path is checked again: a link could have been swapped while the user decided.
     resolvePath(access, str(input, "path"), "write");
-    const written = await files.writeText(abs, content);
+    const { written, note } = await writeAndCheck(ctx, abs, content);
     onFileChange?.({ path: abs, relPath, oldContent, newContent: written });
-    return `${oldContent === null ? "Created" : "Updated"} ${relPath} (${countLines(content)} lines).`;
+    return `${oldContent === null ? "Created" : "Updated"} ${relPath} (${countLines(content)} lines).${note}`;
   },
 
   async edit_file(input, ctx) {
@@ -416,9 +467,9 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     const ok = await gate.check({ kind: "write", path: abs, relPath, oldContent, newContent });
     if (!ok) throw new Error("The user rejected this change.");
     resolvePath(access, str(input, "path"), "write");
-    const written = await files.writeText(abs, newContent);
+    const { written, note } = await writeAndCheck(ctx, abs, newContent);
     onFileChange?.({ path: abs, relPath, oldContent, newContent: written });
-    return `Edited ${relPath} (${input.replace_all === true ? count : 1} replacement${count > 1 && input.replace_all === true ? "s" : ""}).`;
+    return `Edited ${relPath} (${input.replace_all === true ? count : 1} replacement${count > 1 && input.replace_all === true ? "s" : ""}).${note}`;
   },
 
   async run_command(input, ctx) {
