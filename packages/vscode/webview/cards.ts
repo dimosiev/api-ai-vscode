@@ -211,6 +211,42 @@ export function approvalFetchCard(id: string, url: string, host: string, post: P
   );
 }
 
+export function approvalImageCard(id: string, prompt: string, relPath: string, model: string, post: Post, price?: string, warning?: string): HTMLElement {
+  return h(
+    "div",
+    { class: `approval${warning ? " protected" : ""}`, "data-id": id },
+    h("div", { class: "approval-head" }, svg(ICONS.image, "approval-icon"), h("span", { class: "approval-title" }, "Создать картинку ", h("b", {}, relPath))),
+    warning && h("div", { class: "approval-warning" }, svg(ICONS.warn, "inline-icon"), h("span", {}, warning)),
+    h("pre", { class: "command" }, prompt),
+    h(
+      "div",
+      { class: "approval-note" },
+      `Платный запрос к модели ${model} через Polza AI${price ? `: одна картинка стоит ${price}` : ""}. Описание уйдёт сервису, файл сохранится в проект. Спрашивается каждый раз.`,
+    ),
+    approvalButtons(id, post, "Создать", undefined),
+  );
+}
+
+/** A picture the agent made: drawn once the extension sends its content. */
+export function pictureCard(relPath: string, post: Post): HTMLElement {
+  return h(
+    "div",
+    { class: "picture", "data-path": relPath },
+    h("div", { class: "picture-view" }, "Загружаю картинку…"),
+    h("button", { class: "change-path", title: "Открыть файл", onclick: () => post({ type: "open_file", relPath }) }, relPath),
+  );
+}
+
+export function showPicture(card: HTMLElement, src: string | null): void {
+  const view = card.querySelector(".picture-view");
+  if (!view) return;
+  if (!src) {
+    view.replaceChildren("Картинку не удалось показать (файл удалён или слишком большой). Нажмите на имя файла, чтобы открыть его.");
+    return;
+  }
+  view.replaceChildren(h("img", { src, alt: card.dataset.path ?? "" }));
+}
+
 /** Without `alwaysTitle` there is no "Always" button. */
 function approvalButtons(id: string, post: Post, allowLabel: string, alwaysTitle: string | undefined, extra?: HTMLElement, alwaysLabel = "Всегда"): HTMLElement {
   const send = (decision: "allow" | "deny" | "allow_always") => post({ type: "approval_response", id, decision });

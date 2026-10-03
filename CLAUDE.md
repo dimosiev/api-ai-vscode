@@ -5,9 +5,9 @@ dimosi — AI-агент для программирования: расшире
 ## Состояние (обновляй после каждого выпуска)
 
 - Версия **0.5.3**, выпущена 3 октября 2026 (первые находки обкатки: после выключения VPN запросы к сервису модели идут напрямую, в ошибке «Нет связи» видна причина). 0.5.2 — (решения владельца по аудиту: в режиме плана не выполняются никакие команды; «Документы» и `~/Library` целиком не открываются; на сайте с «Всегда» адрес с длинной частью после `?` спрашивается). 0.5.1 — исправления ошибок аудита О-1…О-9. Номер хранится в `package.json` всех пакетов, `npm run release` поднимает его сам.
-- 582 теста, CI: ubuntu-latest и macos-latest, включая проверку в настоящем VS Code.
+- 612 тестов, CI: ubuntu-latest и macos-latest, включая проверку в настоящем VS Code.
 - Аудит после 0.5.0 (`docs/AUDIT.md`) закрыт: открытых находок и тестов `bug(...)` нет. Идёт обкатка в обычной работе владельца; новое добавлять после неё.
-- Не выпущено (на `main` после 0.5.3): в списке моделей только разговорные и умеющие инструменты; понятные ошибки для рисующих моделей, модели без инструментов и пустого ответа.
+- Не выпущено (на `main` после 0.5.3): в списке моделей только разговорные и умеющие инструменты; понятные ошибки для рисующих моделей, модели без инструментов и пустого ответа; создание картинок через Polza AI (`generate_image`) — на живом ключе ещё не проверено.
 - Требования: VS Code 1.140+, Node.js 22.12+.
 - Владелец работает в основном через **Polza AI**, модель по умолчанию `anthropic/claude-opus-5.5` (у Anthropic напрямую — `claude-opus-5-5`).
 
@@ -52,7 +52,7 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
 
 ## Настройки расширения
 
-`dimosi.provider` (`anthropic` | `openai` | `polza` | `openrouter` | `deepseek` | `ollama` | `custom`, по умолчанию `anthropic`), `dimosi.model` (пусто — модель сервиса по умолчанию), `dimosi.customBaseUrl`, `dimosi.approvalMode` (`ask` | `auto`), `dimosi.maxSteps` (50), `dimosi.sandbox` (true), `dimosi.extraFolders` (`[{ "path", "access": "read" | "write" }]`, пусто), `dimosi.autoUpdate` (true). Все с `"scope": "application"`: действуют только из личных настроек, `.vscode/settings.json` проекта их не меняет. Ключи — в SecretStorage (Keychain), не в настройках. Новая настройка: рецепт в `docs/ARCHITECTURE.md`, раздел 6. Свой адрес сервиса — только для `custom`/`ollama` и только `https://` (http — для localhost), проверка в `checkBaseUrl` (`presets.ts`).
+`dimosi.provider` (`anthropic` | `openai` | `polza` | `openrouter` | `deepseek` | `ollama` | `custom`, по умолчанию `anthropic`), `dimosi.model` (пусто — модель сервиса по умолчанию), `dimosi.customBaseUrl`, `dimosi.approvalMode` (`ask` | `auto`), `dimosi.maxSteps` (50), `dimosi.sandbox` (true), `dimosi.imageModel` (модель Polza AI для картинок; пусто — `qwen/image-2`), `dimosi.extraFolders` (`[{ "path", "access": "read" | "write" }]`, пусто), `dimosi.autoUpdate` (true). Все с `"scope": "application"`: действуют только из личных настроек, `.vscode/settings.json` проекта их не меняет. Ключи — в SecretStorage (Keychain), не в настройках. Новая настройка: рецепт в `docs/ARCHITECTURE.md`, раздел 6. Свой адрес сервиса — только для `custom`/`ollama` и только `https://` (http — для localhost), проверка в `checkBaseUrl` (`presets.ts`).
 
 ## Устройство
 
@@ -65,10 +65,10 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
   - `access.ts` — единое правило доступа (`AccessPolicy`): проект плюс папки вне проекта. Им пользуются и инструменты (`resolvePath`), и песочница (`sandboxProfile`): менять доступ только здесь.
   - `permissions.ts` — подтверждения (`PermissionGate`), особо важные файлы (`protectedPathWarning`), опасные команды (`dangerousCommandWarning`): спрашиваются всегда, даже в `auto`.
   - `commandRules.ts` — что запоминает «Всегда» для команды (по началу или целиком).
-  - `tools/index.ts` — инструменты; `tools/sandbox.ts` — песочница macOS и окружение команд без ключей; `tools/workspace.ts` — обход файлов и `isSecretFile`; `tools/web.ts` — `fetch_page`.
+  - `tools/index.ts` — инструменты; `tools/sandbox.ts` — песочница macOS и окружение команд без ключей; `tools/workspace.ts` — обход файлов и `isSecretFile`; `tools/web.ts` — `fetch_page`; `tools/image.ts` — `generate_image` (картинки через Media API Polza AI, всегда с вопросом владельцу).
   - `prompt.ts` — системная инструкция; `rules.ts` — правила и доверие к ним; `providers/` — Anthropic SDK и OpenAI-совместимые сервисы, `presets.ts` — список сервисов.
   - `log.ts` — журнал с маскировкой ключей; `update.ts`, `update-key.ts` — подписанные обновления (Ed25519); `secrets.ts` — файл ключей.
-- `packages/vscode/src` — расширение: `extension.ts` (команды), `chatView.ts` (панель чата), `approval.ts` (карточки подтверждения), `editorFiles.ts` (правки через редактор), `problems.ts` (ошибки редактора после правки), `changes.ts` (откат), `chatStore.ts` (`chat.json`), `access.ts`, `commandRules.ts`, `ruleTrust.ts`, `updater.ts`, `vsixInstall.ts`, `report.ts`, `errorText.ts`, `directFetch.ts` (запрос напрямую, если прокси VS Code не отвечает). `protocol.ts` — сообщения между расширением и панелью.
+- `packages/vscode/src` — расширение: `extension.ts` (команды), `chatView.ts` (панель чата), `approval.ts` (карточки подтверждения), `editorFiles.ts` (правки через редактор), `problems.ts` (ошибки редактора после правки), `changes.ts` (откат), `chatStore.ts` (`chat.json`), `access.ts`, `commandRules.ts`, `ruleTrust.ts`, `updater.ts`, `vsixInstall.ts`, `report.ts`, `errorText.ts`, `directFetch.ts` (запрос напрямую, если прокси VS Code не отвечает), `pictures.ts` (картинка для панели). `protocol.ts` — сообщения между расширением и панелью.
 - `packages/vscode/webview` — интерфейс панели (браузерный код).
 - `packages/cli/src` — терминальная версия. Журнал: `~/.config/dimosi/dimosi.log`.
 - `scripts/` — выпуск, упаковка, ключ подписи.
@@ -131,5 +131,6 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
 
 - Windows в CI. Песочница для Windows и Linux.
 - Желательные пункты Ж-1 (вариант 2), Ж-2, Ж-3, Ж-5, Ж-6, Ж-8, Ж-10, Ж-11, Ж-13.
+- Медиа: видео, музыка и озвучка (тот же Media API Polza AI; видео готовится минутами — нужен показ хода); картинки через OpenRouter; правка картинки по образцу (`images` на вход); стоимость картинок в общем счётчике чата.
 - Экономия, следующие шаги: переключатель «усердия» модели (`output_config.effort`; через Polza — как передать, проверить); правила вне системной инструкции (дата уже берётся один раз на чат; правка `CLAUDE.md` или `.dimosi/` посреди чата всё ещё сбрасывает кэш); для прямого Anthropic — серверная очистка контекста вместо правки истории (новые модели привязывают размышления к неизменной истории).
 - План после 0.4.7 (по порядку): переключатель «усердия» (нужна проверка через Polza на живом ключе); правила вне системной инструкции (нужно решение владельца). Папки вне проекта, «Всегда» по началу команды, ошибки редактора, тест в настоящем VS Code, выпуск с зелёного CI, режим «Сначала план», чтение веб-страниц, Ж-9, Ж-1 (вариант 1), Ж-7 и дата один раз на чат сделаны.

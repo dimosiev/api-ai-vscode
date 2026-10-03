@@ -40,7 +40,8 @@ import {
 } from "./chatStore";
 import type { SecretKeyStore } from "./keyStore";
 import type { FromWebview, ToWebview } from "./protocol";
-import { buildProvider, MissingKeyError, readSettings } from "./settings";
+import { isPicturePath, pictureDataUrl } from "./pictures";
+import { buildImages, buildProvider, MissingKeyError, readSettings } from "./settings";
 
 const CONTEXT_WARNING_TOKENS = 150_000;
 /** Commands the panel's buttons run; the panel can ask for nothing else. */
@@ -245,7 +246,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       case "open_file": {
         const abs = this.inProject(msg.relPath);
-        if (abs) await vscode.window.showTextDocument(vscode.Uri.file(abs), { preview: true });
+        // A picture opens in VS Code's viewer, not as text.
+        if (abs && isPicturePath(abs)) await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(abs));
+        else if (abs) await vscode.window.showTextDocument(vscode.Uri.file(abs), { preview: true });
+        break;
+      }
+      case "load_picture": {
+        const abs = this.inProject(msg.relPath);
+        this.post({ type: "picture_data", relPath: msg.relPath, src: (abs && (await pictureDataUrl(abs))) ?? null });
         break;
       }
       case "revert":
@@ -420,6 +428,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     agent.sandbox = settings.sandbox;
     agent.extraFolders = settings.extraFolders;
     agent.planFirst = this.planFirst;
+    agent.images = await buildImages(settings, this.keys).catch(() => undefined);
     const planning = this.planFirst;
     let finished = false;
     agent.contextWindow = getPreset(settings.provider).contextWindow ?? DEFAULT_CONTEXT_WINDOW;
@@ -496,6 +505,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             break;
           case "file_changed":
             tracker.record(ev.change);
+            break;
+          case "image":
+            this.post({ type: "picture", relPath: ev.relPath });
             break;
           case "usage":
             usage.add(ev.usage);

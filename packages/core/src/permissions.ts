@@ -33,6 +33,18 @@ export type ApprovalRequest =
       /** The site, e.g. "docs.python.org". */
       host: string;
       warning?: string;
+    }
+  | {
+      /** A picture made by a paid request to an image model. Always asked about; there is no "Always". */
+      kind: "image";
+      prompt: string;
+      /** Absolute path of the new file. */
+      path: string;
+      relPath: string;
+      model: string;
+      /** The price of one picture as the service lists it, e.g. "4 ₽". */
+      price?: string;
+      warning?: string;
     };
 
 export type ApprovalDecision = "allow" | "deny" | "allow_always";
@@ -109,6 +121,8 @@ function hiddenCharsWarning(req: ApprovalRequest): string | undefined {
     ? countHidden(req.url) > 0
     : req.kind === "command"
     ? countHidden(req.command) > 0
+    : req.kind === "image"
+    ? countHidden(req.prompt) + countHidden(req.relPath) > 0
     // In a file, only new ones count: a byte order mark at the start is common.
     : countHidden(req.relPath) > 0 || countHidden(req.newContent) > countHidden(req.oldContent);
   return found
@@ -207,9 +221,18 @@ export class PermissionGate {
   ) {}
 
   async check(req: ApprovalRequest): Promise<boolean> {
-    const own = req.kind === "write" ? protectedWriteWarning(req) : req.kind === "command" ? dangerousCommandWarning(req.command) : pageAddressWarning(req.url);
+    const own =
+      req.kind === "write" ? protectedWriteWarning(req)
+      : req.kind === "command" ? dangerousCommandWarning(req.command)
+      : req.kind === "fetch" ? pageAddressWarning(req.url)
+      : undefined;
     const warning = [req.warning, hiddenCharsWarning(req), own].filter(Boolean).join(" ") || undefined;
     if (req.kind === "fetch") return this.checkSite(req, warning);
+    if (req.kind === "image") {
+      // Every picture costs money: asked in any mode, and "Always" is not remembered.
+      if (this.planOnly) throw new Error(PLAN_MODE_REFUSAL);
+      return (await this.handler.approve({ ...req, warning })) !== "deny";
+    }
     const remembered = () => req.kind === "command" && [...(this.rules?.list() ?? []), ...this.sessionRules].some((rule) => ruleMatches(rule, req.command));
     if (this.planOnly) throw new Error(PLAN_MODE_REFUSAL);
     if (warning) return (await this.handler.approve({ ...req, warning })) !== "deny";

@@ -70,6 +70,8 @@ export class WebviewApproval implements ApprovalHandler {
           diff: buildDiffView(req.oldContent === null ? null : revealHidden(req.oldContent), revealHidden(req.newContent)),
           warning: req.warning,
         });
+      } else if (req.kind === "image") {
+        this.ui.post({ type: "approval_request", id, kind: "image", prompt: revealHidden(req.prompt), relPath: revealHidden(req.relPath), model: req.model, price: req.price, warning: req.warning });
       } else if (req.kind === "fetch") {
         this.ui.post({ type: "approval_request", id, kind: "fetch", url: revealHidden(req.url), host: req.host, warning: req.warning });
       } else {

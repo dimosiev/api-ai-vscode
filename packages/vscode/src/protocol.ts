@@ -96,7 +96,23 @@ export type ToWebview =
       /** Shown as a warning, and "Always" is not offered. */
       warning?: string;
     }
+  | {
+      type: "approval_request";
+      id: string;
+      /** A paid picture: asked every time, "Always" is not offered. */
+      kind: "image";
+      prompt: string;
+      relPath: string;
+      model: string;
+      /** The listed price of one picture, e.g. "4 ₽". */
+      price?: string;
+      warning?: string;
+    }
   | { type: "approval_resolved"; id: string; decision: "allow" | "deny" | "allow_always" }
+  /** A picture the agent made. The panel asks for its content with `load_picture`. */
+  | { type: "picture"; relPath: string }
+  /** `src` is a data: address, or null when the file is gone or too large to draw. */
+  | { type: "picture_data"; relPath: string; src: string | null }
   | { type: "changes"; turn: number; files: ChangedFileView[] }
   | {
       type: "usage";
@@ -129,6 +145,7 @@ export type FromWebview =
   | { type: "approval_response"; id: string; decision: "allow" | "deny" | "allow_always" }
   | { type: "open_diff"; id: string }
   | { type: "open_file"; relPath: string }
+  | { type: "load_picture"; relPath: string }
   | { type: "revert"; turn: number; relPath: string | null }
   | { type: "pick_files" }
   | { type: "attach_active_file" }

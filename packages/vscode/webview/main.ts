@@ -2,14 +2,17 @@ import type { FromWebview, ToWebview } from "../src/protocol";
 import {
   approvalCommandCard,
   approvalFetchCard,
+  approvalImageCard,
   approvalWriteCard,
   changesCard,
   chipEl,
   finishToolCard,
   planCard,
+  pictureCard,
   planReadyCard,
   renderPlan,
   resolveApproval,
+  showPicture,
   toolCard,
   welcomeCard,
 } from "./cards";
@@ -226,6 +229,8 @@ function handle(msg: ToWebview): void {
       const card =
         msg.kind === "write"
           ? approvalWriteCard(msg.id, msg.relPath, msg.created, msg.diff, post, msg.warning)
+          : msg.kind === "image"
+            ? approvalImageCard(msg.id, msg.prompt, msg.relPath, msg.model, post, msg.price, msg.warning)
           : msg.kind === "fetch"
             ? approvalFetchCard(msg.id, msg.url, msg.host, post, msg.warning)
             : approvalCommandCard(msg.id, msg.command, post, msg.warning, msg.always);
@@ -234,6 +239,17 @@ function handle(msg: ToWebview): void {
       activityText.textContent = "Ждёт вашего решения…";
       break;
     }
+    case "picture":
+      flushText();
+      textEl = null;
+      add(pictureCard(msg.relPath, post), currentTurn());
+      post({ type: "load_picture", relPath: msg.relPath });
+      break;
+    case "picture_data":
+      for (const card of log.querySelectorAll<HTMLElement>(".picture")) {
+        if (card.dataset.path === msg.relPath) showPicture(card, msg.src);
+      }
+      break;
     case "approval_resolved": {
       const card = approvals.get(msg.id);
       if (card) resolveApproval(card, msg.decision, post);

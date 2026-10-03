@@ -22,6 +22,7 @@ import {
   maskKey,
   modeLabel,
   parseExtraFolders,
+  polzaImages,
   PRESETS,
   ProjectCommandRules,
   rememberingTrust,
@@ -30,6 +31,7 @@ import {
   CUSTOM_URL_PRESETS,
   type ApprovalHandler,
   type ExtraFolder,
+  type ImageMaker,
   type Provider,
   type RuleFile,
 } from "@dimosi/core";
@@ -197,6 +199,12 @@ async function makeProvider(presetId: string, config: CliConfig, keys: Keys, int
     key = await keys.ask(presetId);
   }
   return createProvider({ presetId, apiKey: key, baseURL: config.baseUrls[presetId] });
+}
+
+/** Pictures need the Polza AI key; in the terminal they work while Polza AI is the chosen service. */
+async function imagesFor(presetId: string, keys: Keys): Promise<ImageMaker | undefined> {
+  const key = presetId === "polza" ? await keys.get("polza") : undefined;
+  return key ? polzaImages({ apiKey: key }) : undefined;
 }
 
 function modelFor(presetId: string, config: CliConfig): string {
@@ -405,6 +413,11 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         console.log(c.yellow(c.bold(req.oldContent === null ? `Создать файл ${relPath}` : `Изменить файл ${relPath}`)));
         if (warning) console.log(c.red(c.bold(`⚠ ${warning} Такой файл dimosi всегда показывает отдельно, даже без подтверждений.`)));
         console.log(renderDiff(relPath, req.oldContent === null ? null : revealHidden(req.oldContent), revealHidden(req.newContent)));
+      } else if (req.kind === "image") {
+        console.log(c.yellow(c.bold(`Создать картинку ${revealHidden(req.relPath)}:`)));
+        if (warning) console.log(c.red(c.bold(`⚠ ${warning}`)));
+        console.log(`  ${revealHidden(req.prompt)}`);
+        console.log(c.dim(`  Платный запрос к модели ${req.model} через Polza AI${req.price ? `: одна картинка стоит ${req.price}` : ""}. Спрашивается каждый раз.`));
       } else if (req.kind === "fetch") {
         console.log(c.yellow(c.bold("Прочитать страницу в интернете:")));
         if (warning) console.log(c.red(c.bold(`⚠ ${warning}`)));
@@ -415,7 +428,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         if (warning) console.log(c.red(c.bold(`⚠ ${warning} Такую команду dimosi всегда показывает отдельно, даже без подтверждений.`)));
         console.log(`  $ ${revealHidden(req.command)}`);
       }
-      const question = warning
+      const question = warning || req.kind === "image"
         ? "Разрешить? [y] да / [n] нет: "
         : req.kind === "write"
           ? "Разрешить? [y] да / [n] нет / [a] да, и не спрашивать про файлы до конца сессии: "
@@ -443,6 +456,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
     ruleTrust: rememberingTrust(await loadTrustDecisions(), (file) => askAboutRules(io, file)),
   });
   agent.planFirst = Boolean(flags.plan);
+  agent.images = await imagesFor(presetId, keys);
   log.info(`chat: provider ${presetId}, model ${agent.model}, approvals ${agent.gate.mode}, sandbox ${agent.sandbox ? "on" : "off"}, extra folders ${extraFolders.length}`);
 
   console.log(`${c.bold(c.blue("dimosi"))} ${c.dim(VERSION)}  ${getPreset(presetId).label} · ${c.cyan(agent.model)}`);
@@ -507,6 +521,10 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
           case "error":
             newline();
             console.log(c.red(ev.message));
+            break;
+          case "image":
+            newline();
+            console.log(c.green(`Картинка сохранена: ${ev.relPath}`));
             break;
           case "file_changed":
           case "done":
@@ -632,6 +650,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
           getPreset(arg);
           agent.provider = await makeProvider(arg, config, keys, true);
           presetId = arg;
+          agent.images = await imagesFor(arg, keys);
           agent.contextWindow = getPreset(arg).contextWindow ?? DEFAULT_CONTEXT_WINDOW;
           agent.model = modelFor(arg, config);
           config.provider = arg;
@@ -645,6 +664,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
       case "key":
         await keys.ask(presetId);
         agent.provider = await makeProvider(presetId, config, keys, true);
+        agent.images = await imagesFor(presetId, keys);
         break;
       default:
         console.log(c.red(`Неизвестная команда /${cmd}. /help — список команд.`));

@@ -639,3 +639,99 @@ describe("web pages", () => {
     expect(commandRuleStore(context as never, root).sites()).toEqual([]);
   });
 });
+
+describe("pictures (generate_image through Polza AI)", () => {
+  const POLZA_KEY = "pz-e2e-abcdefghij0123456789";
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+  const realFetch = globalThis.fetch;
+  let polza: Array<{ url: string; method: string; auth: string | null }>;
+
+  /** Polza AI is answered here; everything else (the fake model server) goes on as usual. */
+  beforeEach(() => {
+    polza = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (!/^https:\/\/([a-z0-9]+\.)?polza\.ai\//.test(url)) return realFetch(input, init);
+      polza.push({ url, method: init.method ?? "GET", auth: new Headers(init.headers).get("authorization") });
+      const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+      if (url.endsWith("/models")) return json({ data: [{ id: "qwen/image-2", top_provider: { pricing: { per_request: "4.00", currency: "RUB" } } }] });
+      if (url.endsWith("/media")) return json({ id: "aig_1", status: "completed", data: { url: "https://s3.polza.ai/f/aig_1.png" }, usage: { cost_rub: 4 } });
+      if (url === "https://s3.polza.ai/f/aig_1.png") return new Response(PNG);
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const script = () => [{ toolCalls: [{ name: "generate_image", args: { prompt: "баннер о погоде", path: "img/weather.png", aspect_ratio: "16:9" } }] }, { text: "Готово." }];
+
+  it("the picture is asked about even with approvals off, saved into the project and shown in the chat", async () => {
+    await context.secrets.store("dimosi.key.polza", POLZA_KEY);
+    const panel = await setup(script(), "auto");
+    const events = await panel.task("нарисуй баннер о погоде");
+
+    expect(events.find(isType("approval_request"))).toMatchObject({ kind: "image", prompt: "баннер о погоде", relPath: "img/weather.png", model: "qwen/image-2", price: "4 ₽" });
+    expect(events.find(isType("tool_start"))?.title).toBe("Картинка img/weather.png");
+    expect(events.find(isType("tool_end"))).toMatchObject({ isError: false, result: expect.stringMatching(/^Saved the picture to img\/weather\.png .*cost 4 ₽/) });
+    expect(events.find(isType("picture"))).toEqual({ type: "picture", relPath: "img/weather.png" });
+    expect(readFileSync(path.join(root, "img/weather.png")).equals(PNG)).toBe(true);
+
+    // The key of Polza AI goes to Polza AI only, and not to its file storage; the chat key never goes there.
+    expect(polza.map((r) => `${r.method} ${r.url} ${r.auth === `Bearer ${POLZA_KEY}` ? "key" : r.auth === null ? "no key" : "WRONG KEY"}`)).toEqual([
+      "GET https://polza.ai/api/v1/models key",
+      "POST https://polza.ai/api/v1/media key",
+      "GET https://s3.polza.ai/f/aig_1.png no key",
+    ]);
+    expect(JSON.stringify(panel.posted)).not.toContain(POLZA_KEY);
+    expect(JSON.stringify(server!.requests)).not.toContain(POLZA_KEY);
+
+    // The panel asks for the content of the picture.
+    const from = panel.posted.length;
+    panel.send({ type: "load_picture", relPath: "img/weather.png" });
+    expect(await panel.waitFor(isType("picture_data"), from)).toEqual({ type: "picture_data", relPath: "img/weather.png", src: `data:image/png;base64,${PNG.toString("base64")}` });
+
+    // Its name opens the file in VS Code's viewer, not as text.
+    panel.send({ type: "open_file", relPath: "img/weather.png" });
+    expect(await eventually(() => stub.executed.some((c) => c.id === "vscode.open"))).toBe(true);
+
+    // After a window reload the picture is in the chat again.
+    await eventually(() => existsSync(path.join(storage, "chat.json")));
+    panel.close();
+    const again = new Panel(context);
+    again.send({ type: "ready" });
+    const restored = await again.waitFor(isType("restore"));
+    expect(restored.items.find(isType("picture"))).toEqual({ type: "picture", relPath: "img/weather.png" });
+  });
+
+  it("a refused picture is not requested and not paid for", async () => {
+    await context.secrets.store("dimosi.key.polza", POLZA_KEY);
+    const panel = await setup(script(), "auto");
+    const events = await panel.task("нарисуй баннер", () => "deny");
+    expect(events.find(isType("tool_end"))).toMatchObject({ isError: true, result: "The user did not allow making this picture." });
+    expect(polza.filter((r) => r.method === "POST")).toEqual([]);
+    expect(existsSync(path.join(root, "img"))).toBe(false);
+    expect(events.find(isType("picture"))).toBeUndefined();
+  });
+
+  it("without a Polza AI key the agent is told what is missing, and nothing is requested", async () => {
+    const panel = await setup(script(), "auto");
+    const events = await panel.task("нарисуй баннер");
+    expect(events.find(isType("approval_request"))).toBeUndefined();
+    expect(events.find(isType("tool_end"))).toMatchObject({ isError: true, result: expect.stringMatching(/need its API key/) });
+    expect(polza).toEqual([]);
+  });
+
+  it("the panel gets the content of real pictures only", async () => {
+    const panel = await setup([{ text: "ок" }]);
+    await fs.writeFile(path.join(root, ".env"), "PASSWORD=1");
+    await fs.writeFile(path.join(root, "notes.png"), "PASSWORD=1, not a picture");
+    await fs.writeFile(path.join(root, "notes.txt"), PNG);
+    await fs.writeFile(path.join(root, "..", `${path.basename(root)}-outside.png`), PNG);
+    for (const relPath of [".env", "notes.png", "notes.txt", `../${path.basename(root)}-outside.png`, "missing.png"]) {
+      const from = panel.posted.length;
+      panel.send({ type: "load_picture", relPath });
+      expect(await panel.waitFor(isType("picture_data"), from)).toEqual({ type: "picture_data", relPath, src: null });
+    }
+  });
+});

@@ -166,6 +166,31 @@ describe("chat webview", () => {
     expect(card.querySelector(".approval-result")?.textContent).toContain("Больше не спрашиваю во всех проектах про страницы сайта docs.example.com");
   });
 
+  it("a picture card shows the description, the model and the price, without an Always button; the picture is drawn when its content arrives", () => {
+    send({ type: "approval_request", id: "img1", kind: "image", prompt: "баннер о погоде", relPath: "img/weather.png", model: "qwen/image-2", price: "4 ₽" });
+    const card = $('.approval[data-id="img1"]')!;
+    expect(card.querySelector(".approval-title")?.textContent).toBe("Создать картинку img/weather.png");
+    expect(card.querySelector(".command")?.textContent).toBe("баннер о погоде");
+    expect(card.querySelector(".approval-note")?.textContent).toContain("Платный запрос к модели qwen/image-2 через Polza AI: одна картинка стоит 4 ₽");
+    expect([...card.querySelectorAll(".approval-actions .btn")].map((b) => b.textContent)).toEqual(["Создать", "Отклонить"]);
+    (card.querySelector(".btn.primary") as HTMLElement).click();
+    expect(posted.at(-1)).toEqual({ type: "approval_response", id: "img1", decision: "allow" });
+    send({ type: "approval_resolved", id: "img1", decision: "allow" });
+
+    send({ type: "picture", relPath: "img/weather.png" });
+    expect(posted.at(-1)).toEqual({ type: "load_picture", relPath: "img/weather.png" });
+    const picture = $('.picture[data-path="img/weather.png"]')!;
+    expect(picture.querySelector("img")).toBeNull();
+    send({ type: "picture_data", relPath: "img/weather.png", src: "data:image/png;base64,AAAA" });
+    expect(picture.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,AAAA");
+    (picture.querySelector(".change-path") as HTMLElement).click();
+    expect(posted.at(-1)).toEqual({ type: "open_file", relPath: "img/weather.png" });
+
+    send({ type: "picture", relPath: "img/gone.png" });
+    send({ type: "picture_data", relPath: "img/gone.png", src: null });
+    expect($('.picture[data-path="img/gone.png"]')?.textContent).toContain("не удалось показать");
+  });
+
   it("the plan toggle shows its state; a ready plan offers to run it once", () => {
     const status = { type: "status", provider: "Polza AI", model: "m", approval: "ask", needsSetup: false, hasFolder: true, access: "проект", accessDetail: "" } as const;
     send({ ...status, planFirst: false });

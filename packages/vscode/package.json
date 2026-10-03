@@ -304,6 +304,12 @@
           "minimum": 1,
           "description": "Сколько шагов (вызовов модели) агент может сделать на одну задачу."
         },
+        "dimosi.imageModel": {
+          "scope": "application",
+          "type": "string",
+          "default": "",
+          "description": "Модель Polza AI, которая рисует картинки по просьбе агента. Пусто — qwen/image-2. Нужен ключ Polza AI; каждая картинка платная и подтверждается отдельно."
+        },
         "dimosi.sandbox": {
           "scope": "application",
           "type": "boolean",

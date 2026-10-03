@@ -22,6 +22,7 @@ export {
   type PlanStatus,
 } from "./tools";
 export { isSecretFile } from "./tools/workspace";
+export { polzaImages, imageFormat, DEFAULT_POLZA_IMAGE_MODEL, IMAGE_EXTENSIONS, MAX_IMAGE_BYTES, type ImageMaker, type GeneratedImage } from "./tools/image";
 export * from "./access";
 export { PRESETS, CUSTOM_URL_PRESETS, checkBaseUrl, getPreset, createProvider, type ProviderPreset } from "./providers/presets";
 export { AnthropicProvider, toAnthropicMessages } from "./providers/anthropic";

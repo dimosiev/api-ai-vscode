@@ -33,6 +33,7 @@ const RECORDED = new Set<ToWebview["type"]>([
   "approval_request",
   "approval_resolved",
   "changes",
+  "picture",
   "error",
   "plan_ready",
 ]);

@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { createProvider, getPreset, parseExtraFolders, type ExtraFolder, type Provider } from "@dimosi/core";
+import { createProvider, getPreset, parseExtraFolders, polzaImages, type ExtraFolder, type ImageMaker, type Provider } from "@dimosi/core";
 import type { SecretKeyStore } from "./keyStore";
 import { fetchWithDirectFallback, vscodeOriginalFetch } from "./directFetch";
 import { log } from "./log";
@@ -13,6 +13,8 @@ export interface Settings {
   sandbox: boolean;
   /** Folders outside the project opened to the agent, as written in the settings. */
   extraFolders: ExtraFolder[];
+  /** The Polza AI model that draws pictures; empty: the default one. */
+  imageModel: string;
 }
 
 export function readSettings(): Settings {
@@ -26,6 +28,7 @@ export function readSettings(): Settings {
     maxSteps: cfg.get<number>("maxSteps", 50),
     sandbox: cfg.get<boolean>("sandbox", true),
     extraFolders: parseExtraFolders(cfg.get<unknown>("extraFolders", [])),
+    imageModel: cfg.get<string>("imageModel", "").trim(),
   };
 }
 
@@ -34,6 +37,22 @@ export async function updateSetting(key: string, value: unknown) {
 }
 
 export class MissingKeyError extends Error {}
+
+/** Requests to the services: VS Code's fetch, and the direct way when its remembered proxy is gone. */
+const serviceFetch = (): typeof fetch =>
+  fetchWithDirectFallback({
+    primary: (input, init) => fetch(input, init),
+    direct: vscodeOriginalFetch,
+    onFallback: (reason) => log.warn(`request sent without VS Code's proxy: through it ${reason}`),
+  });
+
+/** Pictures are made through Polza AI with its key, whatever service the chat model comes from. */
+export async function buildImages(settings: Settings, keys: SecretKeyStore): Promise<ImageMaker | undefined> {
+  const apiKey = await keys.get("polza");
+  if (!apiKey) return undefined;
+  log.addSecret(apiKey);
+  return polzaImages({ apiKey, model: settings.imageModel, fetch: serviceFetch() });
+}
 
 export async function buildProvider(settings: Settings, keys: SecretKeyStore, presetId = settings.provider): Promise<Provider> {
   const preset = getPreset(presetId);
@@ -46,10 +65,6 @@ export async function buildProvider(settings: Settings, keys: SecretKeyStore, pr
     presetId,
     apiKey,
     baseURL: presetId === "custom" ? settings.customBaseUrl : undefined,
-    fetch: fetchWithDirectFallback({
-      primary: (input, init) => fetch(input, init),
-      direct: vscodeOriginalFetch,
-      onFallback: (reason) => log.warn(`request sent without VS Code's proxy: through it ${reason}`),
-    }),
+    fetch: serviceFetch(),
   });
 }

@@ -39,7 +39,7 @@ describe("a reply with nothing to show", () => {
   it("says that the model answered with a picture dimosi cannot show: the request was paid", async () => {
     const { events } = await run({ droppedImages: 1 });
     expect(events).toEqual([
-      { type: "error", message: expect.stringMatching(/^Модель ответила картинкой, но dimosi пока не умеет показывать и сохранять картинки.*оплачен/) },
+      { type: "error", message: expect.stringMatching(/^Модель ответила картинкой прямо в разговоре.*оплачен.*Polza AI/) },
       { type: "done", stopReason: "end_turn" },
     ]);
   });

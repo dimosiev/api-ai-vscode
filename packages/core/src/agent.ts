@@ -5,6 +5,7 @@ import type { Log } from "./log";
 import { buildSystemPrompt, snapshotLayout, today } from "./prompt";
 import { isProjectRulesFile, loadRules, type RuleSource, type RuleTrust } from "./rules";
 import { IncompleteResponseError } from "./providers/openai";
+import type { ImageMaker } from "./tools/image";
 import { executeTool, TOOL_DEFINITIONS, type FileAccess, type FileChange, type PlanItem, type ProblemWatcher } from "./tools";
 import type {
   ImagePart,
@@ -39,6 +40,8 @@ export interface AgentOptions {
   problems?: ProblemWatcher;
   /** Folders outside the project that the user opened to the agent. */
   extraFolders?: ExtraFolder[];
+  /** Makes pictures for generate_image (a paid image model). */
+  images?: ImageMaker;
   /** Keeps the commands allowed with "Always" between sessions; without it they last until the new chat. */
   commandRules?: CommandRuleStore;
   /** Diagnostic journal: request and tool metadata only, never content. */
@@ -54,6 +57,8 @@ export type AgentEvent =
   | { type: "tool_end"; call: ToolCallPart; result: string; isError: boolean }
   | { type: "plan"; items: PlanItem[] }
   | { type: "file_changed"; change: FileChange }
+  /** A picture made by generate_image and saved to the disk. */
+  | { type: "image"; path: string; relPath: string }
   | { type: "usage"; usage: Usage }
   | { type: "done"; stopReason: StopReason }
   | { type: "error"; message: string };
@@ -95,6 +100,8 @@ export class Agent {
   private globalRulesPath?: string;
   private files?: FileAccess;
   private problems?: ProblemWatcher;
+  /** Set by the host before a turn: the key may be added or removed between turns. */
+  images?: ImageMaker;
   private log?: Log;
   private ruleTrust?: RuleTrust;
   private layout?: string;
@@ -115,6 +122,7 @@ export class Agent {
     this.globalRulesPath = opts.globalRulesPath;
     this.files = opts.files;
     this.problems = opts.problems;
+    this.images = opts.images;
     this.extraFolders = opts.extraFolders ?? [];
     this.log = opts.log;
     this.ruleTrust = opts.ruleTrust;
@@ -215,7 +223,7 @@ export class Agent {
             yield {
               type: "error",
               message:
-                "Модель ответила картинкой, но dimosi пока не умеет показывать и сохранять картинки от модели. Запрос при этом оплачен. Для работы с проектом выберите обычную разговорную модель.",
+                "Модель ответила картинкой прямо в разговоре, а такие картинки dimosi не сохраняет и не показывает. Запрос при этом оплачен. Выберите обычную разговорную модель и попросите её создать картинку: она сделает это отдельным инструментом через Polza AI.",
             };
           } else if (!done.message.parts.length && done.stopReason !== "max_tokens") {
             this.log?.warn("the model answered nothing");
@@ -246,6 +254,8 @@ export class Agent {
                 problems: this.problems,
                 sandbox: this.sandbox,
                 signal,
+                images: this.images,
+                onImage: (image) => pending.push({ type: "image", ...image }),
                 onFileChange: (change) => pending.push({ type: "file_changed", change }),
                 onPlan: (items) => pending.push({ type: "plan", items }),
               });
