@@ -161,3 +161,55 @@ describe("the editor's errors in the result of a change", () => {
     expect(watched).toBe(0);
   });
 });
+
+describe("writing a file: the whole file or nothing", () => {
+  const leftovers = async (dir = root) => (await fs.readdir(dir)).filter((f) => f.endsWith(".tmp"));
+
+  it("replaces the content, keeps the file's permissions and leaves no temporary files", async () => {
+    const script = path.join(root, "run.sh");
+    await fs.writeFile(script, "#!/bin/sh\necho old\n", { mode: 0o755 });
+    await fs.chmod(script, 0o755);
+    expect((await call("write_file", { path: "run.sh", content: "#!/bin/sh\necho new\n" })).isError).toBe(false);
+    expect(await fs.readFile(script, "utf8")).toBe("#!/bin/sh\necho new\n");
+    if (process.platform !== "win32") expect((await fs.stat(script)).mode & 0o777).toBe(0o755);
+    await call("edit_file", { path: "a.txt", old_string: "one", new_string: "1" });
+    await call("write_file", { path: "deep/new/file.txt", content: "x" });
+    expect(await leftovers()).toEqual([]);
+    expect(await leftovers(path.join(root, "deep/new"))).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")("a link stays a link: its target gets the new content", async () => {
+    await fs.mkdir(path.join(root, "real"));
+    await fs.writeFile(path.join(root, "real/config.txt"), "old");
+    symlinkSync(path.join(root, "real/config.txt"), path.join(root, "config.txt"));
+    await call("write_file", { path: "config.txt", content: "new" });
+    expect((await fs.lstat(path.join(root, "config.txt"))).isSymbolicLink()).toBe(true);
+    expect(await fs.readFile(path.join(root, "real/config.txt"), "utf8")).toBe("new");
+    expect(await leftovers(path.join(root, "real"))).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")("a folder that takes no new files is still written in place", async () => {
+    const dir = path.join(root, "locked");
+    await fs.mkdir(dir);
+    await fs.writeFile(path.join(dir, "note.txt"), "old");
+    await fs.chmod(dir, 0o555);
+    try {
+      const r = await call("write_file", { path: "locked/note.txt", content: "new" });
+      // root (in some containers) may write anyway; either way the content is there.
+      expect(r.isError).toBe(false);
+      expect(await fs.readFile(path.join(dir, "note.txt"), "utf8")).toBe("new");
+    } finally {
+      await fs.chmod(dir, 0o755);
+    }
+  });
+
+  it("when the write fails, the old file is untouched and nothing is left behind", async () => {
+    // A folder in the file's place: the rename over it fails.
+    await fs.mkdir(path.join(root, "taken"));
+    await fs.writeFile(path.join(root, "taken/keep.txt"), "keep");
+    const { diskFiles } = await import("../src");
+    await expect(diskFiles.writeText(path.join(root, "taken"), "x")).rejects.toThrow();
+    expect(await fs.readFile(path.join(root, "taken/keep.txt"), "utf8")).toBe("keep");
+    expect(await leftovers()).toEqual([]);
+  });
+});

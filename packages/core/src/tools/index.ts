@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -62,7 +63,28 @@ export const diskFiles: FileAccess = {
   },
   async writeText(abs, text) {
     await fs.mkdir(path.dirname(abs), { recursive: true });
-    await fs.writeFile(abs, text, "utf8");
+    // The whole file or nothing: written next to the file and renamed over it,
+    // so a crash in the middle can't leave half a file. A link stays a link
+    // (its target is replaced), and the file keeps its permissions.
+    let target = abs;
+    let mode: number | undefined;
+    try {
+      target = await fs.realpath(abs);
+      mode = (await fs.stat(target)).mode & 0o7777;
+    } catch {
+      // a new file
+    }
+    const tmp = path.join(path.dirname(target), `.${path.basename(target)}.${randomBytes(4).toString("hex")}.tmp`);
+    try {
+      await fs.writeFile(tmp, text, { encoding: "utf8", flag: "wx" });
+      if (mode !== undefined) await fs.chmod(tmp, mode);
+      await fs.rename(tmp, target);
+    } catch (e) {
+      await fs.rm(tmp, { force: true }).catch(() => undefined);
+      // The folder does not take new files or a rename (permissions, a locked file on Windows): write in place.
+      if (!["EACCES", "EPERM", "EBUSY", "EXDEV", "EROFS"].includes((e as NodeJS.ErrnoException).code ?? "")) throw e;
+      await fs.writeFile(abs, text, "utf8");
+    }
     return text;
   },
 };
