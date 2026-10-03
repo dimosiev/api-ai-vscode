@@ -17,6 +17,7 @@ import {
   rememberingTrust,
 } from "@dimosi/core";
 import { editAccess } from "./access";
+import { showCommandRules } from "./commandRules";
 import { errorText } from "./errorText";
 import { PROPOSED_SCHEME, ProposedContentProvider, WebviewApproval } from "./approval";
 import { selectionAttachment } from "./attachments";
@@ -114,6 +115,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     command("dimosi.editAccess", () => editAccess(root())),
+    command("dimosi.showCommandRules", () => showCommandRules(context, root())),
 
     // Rules
     command("dimosi.showRules", () => showRules(context, root())),

@@ -1,3 +1,4 @@
+import { commandRule, ruleMatches, type CommandRule, type CommandRuleStore } from "./commandRules";
 import { isSecretFile } from "./tools/workspace";
 
 export type ApprovalRequest =
@@ -19,6 +20,8 @@ export type ApprovalRequest =
       cwd: string;
       /** Set for commands that can't be undone or reach outside; such commands are always asked about. */
       warning?: string;
+      /** What "Always" would remember, set by the gate. Absent when "Always" is not offered. */
+      always?: CommandRule;
     };
 
 export type ApprovalDecision = "allow" | "deny" | "allow_always";
@@ -131,32 +134,50 @@ export function dangerousCommandWarning(command: string): string | undefined {
 }
 
 /**
- * "Always" covers all file writes, but only the exact command that was
- * approved: allowing `npm test` must not allow `rm -rf` later.
+ * "Always" covers all file writes until the new chat. For a command it
+ * remembers a rule (see commandRule): allowing `npm test` must not allow
+ * `rm -rf` later. With a store the rules outlive the session.
  */
-function approvalKey(req: ApprovalRequest): string {
-  return req.kind === "write" ? "write" : `command:${req.command.trim()}`;
-}
-
 export class PermissionGate {
-  private alwaysAllowed = new Set<string>();
+  private writesAllowed = false;
+  /** Rules of this chat: all of them without a store, or those the store could not save. */
+  private sessionRules: CommandRule[] = [];
 
   constructor(
     private handler: ApprovalHandler,
     public mode: ApprovalMode = "ask",
+    private rules?: CommandRuleStore,
   ) {}
 
   async check(req: ApprovalRequest): Promise<boolean> {
     const own = req.kind === "write" ? protectedPathWarning(req.relPath) : dangerousCommandWarning(req.command);
     const warning = [req.warning, hiddenCharsWarning(req), own].filter(Boolean).join(" ") || undefined;
     if (warning) return (await this.handler.approve({ ...req, warning })) !== "deny";
-    if (this.mode === "auto" || this.alwaysAllowed.has(approvalKey(req))) return true;
-    const decision = await this.handler.approve(req);
-    if (decision === "allow_always") this.alwaysAllowed.add(approvalKey(req));
+    if (this.mode === "auto") return true;
+    if (req.kind === "write") {
+      if (this.writesAllowed) return true;
+      const decision = await this.handler.approve(req);
+      if (decision === "allow_always") this.writesAllowed = true;
+      return decision !== "deny";
+    }
+    // The saved list is read every time: a rule the user removed stops working at once.
+    if ([...(this.rules?.list() ?? []), ...this.sessionRules].some((rule) => ruleMatches(rule, req.command))) return true;
+    const always = commandRule(req.command);
+    const decision = await this.handler.approve({ ...req, always });
+    if (decision === "allow_always") {
+      try {
+        if (!this.rules) throw new Error("no store");
+        await this.rules.add(always);
+      } catch {
+        this.sessionRules.push(always);
+      }
+    }
     return decision !== "deny";
   }
 
+  /** New chat: "Always" for file writes is forgotten; saved command rules stay. */
   resetSessionApprovals(): void {
-    this.alwaysAllowed.clear();
+    this.writesAllowed = false;
+    this.sessionRules = [];
   }
 }

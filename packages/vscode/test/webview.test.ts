@@ -115,6 +115,34 @@ describe("chat webview", () => {
     send({ type: "approval_resolved", id: "c9", decision: "deny" });
   });
 
+  it("an ordinary command says what Always will remember, and afterwards links to the list", () => {
+    send({ type: "approval_request", id: "c10", kind: "command", command: "npm test -- --watch", always: { kind: "prefix", text: "npm test" } });
+    const card = $$(".approval").at(-1)!;
+    const always = [...card.querySelectorAll(".approval-actions .btn")].find((b) => b.textContent?.startsWith("Всегда")) as HTMLElement;
+    expect(always.textContent).toBe("Всегда для «npm test …»");
+    expect(always.title).toContain("начинаются с «npm test»");
+    always.click();
+    expect(posted.at(-1)).toEqual({ type: "approval_response", id: "c10", decision: "allow_always" });
+    send({ type: "approval_resolved", id: "c10", decision: "allow_always" });
+    expect(card.querySelector(".approval-result")?.textContent).toContain("Больше не спрашиваю в этом проекте про команды, которые начинаются с «npm test»");
+    (card.querySelector(".approval-result .btn") as HTMLElement).click();
+    expect(posted.at(-1)).toEqual({ type: "command", command: "dimosi.showCommandRules" });
+
+    send({ type: "approval_request", id: "c11", kind: "command", command: "npm test && npm run build", always: { kind: "exact", text: "npm test && npm run build" } });
+    const exact = $$(".approval").at(-1)!;
+    expect([...exact.querySelectorAll(".approval-actions .btn")].map((b) => b.textContent)).toContain("Всегда для этой команды");
+    send({ type: "approval_resolved", id: "c11", decision: "allow" });
+    expect(exact.querySelector(".approval-result")?.textContent).toBe("Разрешено");
+  });
+
+  it("the access line shows what the agent can reach, and Change opens the list", () => {
+    send({ type: "status", provider: "Polza AI", model: "m", approval: "ask", needsSetup: false, hasFolder: true, access: "проект + 2 папки", accessDetail: "/p — проект\n/notes — только чтение" });
+    expect($(".access-text")?.textContent).toBe("Доступ: проект + 2 папки");
+    expect($(".access-text")?.title).toContain("/notes — только чтение");
+    ($(".access .link") as HTMLElement).click();
+    expect(posted.at(-1)).toEqual({ type: "command", command: "dimosi.editAccess" });
+  });
+
   it("the rules chip counts untrusted files separately", () => {
     send({
       type: "rules",

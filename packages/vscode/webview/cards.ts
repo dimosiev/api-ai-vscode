@@ -168,36 +168,67 @@ export function approvalWriteCard(id: string, relPath: string, created: boolean,
   );
 }
 
-export function approvalCommandCard(id: string, command: string, post: Post, warning?: string): HTMLElement {
+type Always = { kind: "prefix" | "exact"; text: string };
+
+const short = (text: string) => (text.length > 40 ? `${text.slice(0, 40)}…` : text);
+
+export function approvalCommandCard(id: string, command: string, post: Post, warning?: string, always?: Always): HTMLElement {
+  // Without `always` (a dangerous command) nothing is remembered and there is no "Always" button.
+  const remembered = !always ? undefined : always.kind === "prefix" ? `команды, которые начинаются с «${always.text}»` : "эту же команду";
   return h(
     "div",
-    { class: `approval${warning ? " protected" : ""}`, "data-id": id },
+    { class: `approval${warning ? " protected" : ""}`, "data-id": id, "data-remembered": remembered },
     h("div", { class: "approval-head" }, svg(ICONS.terminal, "approval-icon"), h("span", { class: "approval-title" }, "Выполнить команду")),
     warning && h("div", { class: "approval-warning" }, svg(ICONS.warn, "inline-icon"), h("span", {}, `${warning} Такую команду dimosi всегда показывает отдельно, даже без подтверждений. Выполняйте, только если понимаете, что она сделает.`)),
     h("pre", { class: "command" }, `$ ${command}`),
-    approvalButtons(id, post, "Выполнить", warning ? undefined : "Больше не спрашивать про эту же команду до конца чата"),
+    approvalButtons(
+      id,
+      post,
+      "Выполнить",
+      warning || !remembered ? undefined : `Больше не спрашивать в этом проекте про ${remembered}. Запоминается и после перезапуска; посмотреть и убрать: меню «…» панели → «Запомненные команды».`,
+      undefined,
+      always?.kind === "prefix" ? `Всегда для «${short(always.text)} …»` : "Всегда для этой команды",
+    ),
   );
 }
 
 /** Without `alwaysTitle` there is no "Always" button. */
-function approvalButtons(id: string, post: Post, allowLabel: string, alwaysTitle: string | undefined, extra?: HTMLElement): HTMLElement {
+function approvalButtons(id: string, post: Post, allowLabel: string, alwaysTitle: string | undefined, extra?: HTMLElement, alwaysLabel = "Всегда"): HTMLElement {
   const send = (decision: "allow" | "deny" | "allow_always") => post({ type: "approval_response", id, decision });
   return h(
     "div",
     { class: "approval-actions" },
     h("button", { class: "btn primary", onclick: () => send("allow") }, allowLabel),
     h("button", { class: "btn", onclick: () => send("deny") }, "Отклонить"),
-    alwaysTitle && h("button", { class: "btn subtle", title: alwaysTitle, onclick: () => send("allow_always") }, "Всегда"),
+    alwaysTitle && h("button", { class: "btn subtle", title: alwaysTitle, onclick: () => send("allow_always") }, alwaysLabel),
     extra && h("span", { class: "spacer" }),
     extra,
   );
 }
 
-export function resolveApproval(card: HTMLElement, decision: "allow" | "deny" | "allow_always"): void {
+export function resolveApproval(card: HTMLElement, decision: "allow" | "deny" | "allow_always", post?: Post): void {
   card.classList.add("resolved", decision === "deny" ? "denied" : "allowed");
   const actions = card.querySelector(".approval-actions");
-  const text = decision === "deny" ? "Отклонено" : decision === "allow_always" ? "Разрешено (больше не спрашивать)" : "Разрешено";
-  actions?.replaceWith(h("div", { class: "approval-result" }, svg(decision === "deny" ? ICONS.cross : ICONS.check, "inline-icon"), text));
+  const remembered = card.getAttribute("data-remembered");
+  const text =
+    decision === "deny"
+      ? "Отклонено"
+      : decision !== "allow_always"
+        ? "Разрешено"
+        : remembered
+          ? `Разрешено. Больше не спрашиваю в этом проекте про ${remembered}.`
+          : "Разрешено (больше не спрашивать до конца чата)";
+  actions?.replaceWith(
+    h(
+      "div",
+      { class: "approval-result" },
+      svg(decision === "deny" ? ICONS.cross : ICONS.check, "inline-icon"),
+      h("span", {}, text),
+      decision === "allow_always" && remembered && post
+        ? h("button", { class: "btn link", onclick: () => post({ type: "command", command: "dimosi.showCommandRules" }) }, "Запомненные команды")
+        : null,
+    ),
+  );
   card.querySelector(".diff")?.classList.add("collapsed");
   card.querySelector(".diff-more")?.remove();
 }

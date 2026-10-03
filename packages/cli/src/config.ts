@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -27,7 +27,7 @@ export function configDir(): string {
 
 const POSIX = process.platform !== "win32";
 /** Everything dimosi keeps in its folder; all of it is private. */
-const OWN_FILES = ["config.json", "trusted-rules.json", "update-check.json", "keys.aienc", "dimosi.log", "dimosi.log.1", "rules.md"];
+const OWN_FILES = ["config.json", "trusted-rules.json", "allowed-commands.json", "update-check.json", "keys.aienc", "dimosi.log", "dimosi.log.1", "rules.md"];
 
 /** Creates the folder readable by the owner only (0700) and fixes an existing one. */
 export async function ensureConfigDir(): Promise<string> {
@@ -113,6 +113,20 @@ export async function loadTrustDecisions(): Promise<{ get(hash: string): boolean
     },
   };
 }
+
+const commandRulesPath = () => path.join(configDir(), "allowed-commands.json");
+
+/** Commands allowed with "Always", for all projects (see ProjectCommandRules). Kept here, outside any project. */
+export const commandRulesStorage = {
+  load(): unknown {
+    try {
+      return JSON.parse(readFileSync(commandRulesPath(), "utf8"));
+    } catch {
+      return undefined; // none yet, or damaged: no rules
+    }
+  },
+  save: (all: unknown) => writePrivateFile(commandRulesPath(), JSON.stringify(all, null, 2) + "\n"),
+};
 
 export async function saveConfig(config: CliConfig): Promise<void> {
   await writePrivateFile(configPath(), JSON.stringify(config, null, 2) + "\n");

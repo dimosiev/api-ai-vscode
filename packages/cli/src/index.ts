@@ -9,6 +9,7 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   loadRules,
   decryptKeys,
+  describeRule,
   describeToolCall,
   formatCost,
   formatTokens,
@@ -22,6 +23,7 @@ import {
   modeLabel,
   parseExtraFolders,
   PRESETS,
+  ProjectCommandRules,
   rememberingTrust,
   revealHidden,
   checkBaseUrl,
@@ -31,7 +33,7 @@ import {
   type Provider,
   type RuleFile,
 } from "@dimosi/core";
-import { configDir, loadConfig, loadTrustDecisions, migrateLegacyConfig, saveConfig, secureConfigDir, writePrivateFile, type CliConfig } from "./config";
+import { commandRulesStorage, configDir, loadConfig, loadTrustDecisions, migrateLegacyConfig, saveConfig, secureConfigDir, writePrivateFile, type CliConfig } from "./config";
 import { EncryptedFileKeyStore, keyFileExists, keyFilePath } from "./keystore";
 import { fileSink, log, logFilePath } from "./log";
 import { c, Prompter, renderDiff } from "./ui";
@@ -76,7 +78,7 @@ ${c.bold("Обновление")}:
 ${c.bold("Журнал")} (для разбора проблем, без ключей и текста переписки):
   dimosi log                       показать, где лежит журнал, и его последние строки
 
-${c.bold("Команды внутри чата")}: /help /model /models /provider /key /rules /folders /auto /ask /clear /exit
+${c.bold("Команды внутри чата")}: /help /model /models /provider /key /rules /folders /allowed /auto /ask /clear /exit
 `;
 
 const CHAT_HELP = `${c.bold("Команды:")}
@@ -84,6 +86,7 @@ const CHAT_HELP = `${c.bold("Команды:")}
   /provider ИМЯ     сменить провайдера      /key               ввести ключ текущего провайдера
   /auto             работать без подтверждений   /ask   снова спрашивать подтверждения
   /rules            какие правила действуют     /folders           какие папки открыты агенту
+  /allowed          команды, запомненные ответом [a] («всегда»); /allowed remove N, /allowed clear
   /clear            начать новый диалог     /exit              выйти (или Ctrl+D)
   Ctrl+C во время работы агента — остановить его.`;
 
@@ -376,6 +379,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
   const root = path.resolve(flags.dir ?? process.cwd());
   const keys = new Keys(io);
   let controller: AbortController | undefined;
+  const commandRules = new ProjectCommandRules(root, commandRulesStorage);
   // This run's flags first: the same folder in config.json does not override them.
   const extraFolders = [...flags.folders, ...parseExtraFolders(config.extraFolders)];
   const printAccess = () => {
@@ -405,7 +409,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         ? "Разрешить? [y] да / [n] нет: "
         : req.kind === "write"
           ? "Разрешить? [y] да / [n] нет / [a] да, и не спрашивать про файлы до конца сессии: "
-          : "Разрешить? [y] да / [n] нет / [a] да, и не спрашивать про эту же команду: ";
+          : `Разрешить? [y] да / [n] нет / [a] да, и больше не спрашивать в этом проекте про ${req.always?.kind === "prefix" ? `команды «${req.always.text} …»` : "эту же команду"}: `;
       const answer = ((await io.ask(c.yellow(question), { signal: controller?.signal })) ?? "").toLowerCase();
       if (["a", "а", "always", "всегда", "в"].includes(answer)) return warning ? "allow" : "allow_always";
       if (["y", "yes", "д", "да"].includes(answer)) return "allow";
@@ -420,6 +424,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
     approval,
     mode: flags.auto ? "auto" : config.mode,
     sandbox: !flags.noSandbox,
+    commandRules,
     extraFolders,
     contextWindow: getPreset(presetId).contextWindow,
     log,
@@ -529,6 +534,29 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
       case "folders":
         printAccess();
         break;
+      case "allowed": {
+        const rules = commandRules.list();
+        const [action, n] = rest;
+        if (action === "clear") {
+          await commandRules.clear();
+          console.log(c.dim("Запомненных команд больше нет: агент снова спросит про каждую."));
+        } else if (action === "remove") {
+          const rule = rules[Number(n) - 1];
+          if (!rule) {
+            console.log(c.red("Укажите номер из списка: /allowed remove 1"));
+            break;
+          }
+          await commandRules.remove(rule);
+          console.log(c.dim(`Убрано: ${describeRule(rule)}.`));
+        } else if (!rules.length) {
+          console.log("Запомненных команд в этом проекте нет. Они появляются после ответа [a] на вопрос о команде.");
+        } else {
+          console.log(c.bold("Без вопроса в этом проекте выполняются:"));
+          rules.forEach((rule, i) => console.log(`  ${i + 1}. ${describeRule(rule)}`));
+          console.log(c.dim("Убрать одну: /allowed remove НОМЕР. Убрать все: /allowed clear"));
+        }
+        break;
+      }
       case "clear":
         agent.reset();
         lastRulesKey = "";

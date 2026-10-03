@@ -71,7 +71,7 @@ export class WebviewApproval implements ApprovalHandler {
           warning: req.warning,
         });
       } else {
-        this.ui.post({ type: "approval_request", id, kind: "command", command: revealHidden(req.command), warning: req.warning });
+        this.ui.post({ type: "approval_request", id, kind: "command", command: revealHidden(req.command), warning: req.warning, always: req.always });
       }
       this.ui.reveal();
     });

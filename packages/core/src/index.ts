@@ -1,6 +1,7 @@
 export * from "./types";
 export * from "./agent";
 export * from "./permissions";
+export * from "./commandRules";
 export * from "./secrets";
 export * from "./rules";
 export * from "./usage";

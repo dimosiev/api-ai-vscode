@@ -212,7 +212,7 @@ function handle(msg: ToWebview): void {
       const card =
         msg.kind === "write"
           ? approvalWriteCard(msg.id, msg.relPath, msg.created, msg.diff, post, msg.warning)
-          : approvalCommandCard(msg.id, msg.command, post, msg.warning);
+          : approvalCommandCard(msg.id, msg.command, post, msg.warning, msg.always);
       approvals.set(msg.id, add(card, currentTurn()));
       card.scrollIntoView({ block: "nearest", behavior: "smooth" });
       activityText.textContent = "Ждёт вашего решения…";
@@ -220,7 +220,7 @@ function handle(msg: ToWebview): void {
     }
     case "approval_resolved": {
       const card = approvals.get(msg.id);
-      if (card) resolveApproval(card, msg.decision);
+      if (card) resolveApproval(card, msg.decision, post);
       approvals.delete(msg.id);
       break;
     }

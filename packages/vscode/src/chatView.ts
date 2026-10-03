@@ -23,6 +23,7 @@ import { accessStatus } from "./access";
 import { WebviewApproval } from "./approval";
 import { fileAttachment, imageAttachment, isSecretPath, type Attachment } from "./attachments";
 import { ChangeTracker } from "./changes";
+import { commandRuleStore } from "./commandRules";
 import { editorFiles } from "./editorFiles";
 import { log } from "./log";
 import { vscodeRuleTrust } from "./ruleTrust";
@@ -49,6 +50,7 @@ const PANEL_COMMANDS = new Set([
   "dimosi.showRules",
   "dimosi.setApiKey",
   "dimosi.editAccess",
+  "dimosi.showCommandRules",
   "workbench.action.files.openFolder",
 ]);
 const DECISIONS = new Set<string>(["allow", "deny", "allow_always"]);
@@ -384,6 +386,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         root,
         approval: this.approval,
         files: editorFiles,
+        commandRules: commandRuleStore(this.context, root),
         log,
         ruleTrust: vscodeRuleTrust(this.context),
       });

@@ -112,6 +112,35 @@ describe("CLI, end to end", () => {
     expect(results[2]).toMatch(/reading only/);
   }, 30_000);
 
+  it("«always» for a command is kept for the project between runs, outside the project, and /allowed takes it back", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-root-"));
+    const home = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-home-"));
+    const args = (task: string) => ["--provider", "custom", "--base-url", server!.url, "--model", "fake-model", "--no-sandbox", task];
+    const command = (c: string) => [{ toolCalls: [{ name: "run_command", args: { command: c } }] }, { text: "Готово." }];
+
+    server = await startFakeServer(command("echo hello one"));
+    const first = await runCli(args("скажи привет"), root, home, "a\n");
+    expect(first.out).toContain("больше не спрашивать в этом проекте про команды «echo hello …»");
+    const file = path.join(home, "allowed-commands.json");
+    expect(await fs.readFile(file, "utf8")).toContain("echo hello");
+    if (process.platform !== "win32") expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
+    expect(existsSync(path.join(root, ".dimosi"))).toBe(false);
+    await server.close();
+
+    // A new run: the same beginning is not asked about, a chain is.
+    server = await startFakeServer([...command("echo hello two"), ...command("echo hello three && echo more")]);
+    const second = await runCli(args("ещё раз"), root, home, "и ещё\nn\n/allowed\n/allowed remove 1\n/allowed\n");
+    expect(second.out.match(/Выполнить команду:/g)).toHaveLength(1);
+    expect(second.out).toContain("$ echo hello three && echo more");
+    expect(second.out).toContain("1. команды, которые начинаются с «echo hello»");
+    expect(second.out).toContain("Запомненных команд в этом проекте нет");
+    await server.close();
+
+    server = await startFakeServer(command("echo hello four"));
+    const third = await runCli(args("снова"), root, home, "y\n");
+    expect(third.out).toContain("Выполнить команду:");
+  }, 60_000);
+
   it("a denied change is not written, and the model is told", async () => {
     server = await startFakeServer([
       { toolCalls: [{ name: "write_file", args: { path: "package.json", content: "{}" } }] },

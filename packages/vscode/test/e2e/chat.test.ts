@@ -505,3 +505,54 @@ describe("extra folders", () => {
     expect(stub.config["dimosi.extraFolders"]).toBeUndefined();
   });
 });
+
+describe("«Always» for a command", () => {
+  const always = () => "allow_always" as never;
+
+  it("is remembered by the beginning of the command, survives a window reload, and can be taken back", async () => {
+    const script: Parameters<typeof startFakeServer>[0] = [
+      { toolCalls: [{ name: "run_command", args: { command: "echo hello one" } }] },
+      { text: "Готово." },
+      { toolCalls: [{ name: "run_command", args: { command: "echo hello two" } }, { name: "run_command", args: { command: "echo hello three && echo more" } }] },
+      { text: "Готово." },
+      { toolCalls: [{ name: "run_command", args: { command: "echo hello four" } }] },
+      { text: "Готово." },
+    ];
+    let panel = await setup(script);
+    const first = await panel.task("скажи привет", always);
+    expect(first.find(isType("approval_request"))).toMatchObject({ kind: "command", always: { kind: "prefix", text: "echo hello" } });
+    // Kept in VS Code's storage, not in the project.
+    expect(existsSync(path.join(root, ".dimosi"))).toBe(false);
+    expect(JSON.stringify(context.globalState.get("dimosi.commandRules"))).toContain("echo hello");
+
+    // The window is reloaded: a new panel, the same storage.
+    panel.close();
+    panel = new Panel(context);
+    panel.send({ type: "ready" });
+    await panel.waitFor(isType("status"));
+    const second = await panel.task("ещё раз");
+    // Only the chained command is asked about.
+    expect(second.filter(isType("approval_request")).map((r) => r.kind === "command" && r.command)).toEqual(["echo hello three && echo more"]);
+    expect(second.filter(isType("tool_end")).map((r) => r.isError)).toEqual([false, false]);
+
+    // The user takes the permission back.
+    const { showCommandRules } = await import("../../src/commandRules");
+    let picked = false;
+    stub.pick = (items) => (picked ? undefined : ((picked = true), items.find((i) => i.label.includes("echo hello"))));
+    stub.answer = (_msg, items) => items.find((i) => i === "Забыть");
+    await showCommandRules(context as never, root);
+    expect(stub.messages.some((m) => m.includes("начинаются с «echo hello»"))).toBe(true);
+    const third = await panel.task("и ещё");
+    expect(third.filter(isType("approval_request"))).toHaveLength(1);
+  }, 30_000);
+
+  it("the list of remembered commands opens from the panel, and says so when it is empty", async () => {
+    const { activate } = await import("../../src/extension");
+    context.globalState.update("dimosi.welcomed", true);
+    activate(context as never);
+    const panel = await setup([]);
+    panel.send({ type: "command", command: "dimosi.showCommandRules" });
+    expect(await eventually(() => stub.messages.some((m) => m.includes("нет запомненных команд")))).toBe(true);
+    for (const d of context.subscriptions) d.dispose();
+  });
+});
