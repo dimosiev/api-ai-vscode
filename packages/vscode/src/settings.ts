@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { createProvider, getPreset, parseExtraFolders, type ExtraFolder, type Provider } from "@dimosi/core";
 import type { SecretKeyStore } from "./keyStore";
+import { fetchWithDirectFallback, vscodeOriginalFetch } from "./directFetch";
 import { log } from "./log";
 
 export interface Settings {
@@ -45,5 +46,10 @@ export async function buildProvider(settings: Settings, keys: SecretKeyStore, pr
     presetId,
     apiKey,
     baseURL: presetId === "custom" ? settings.customBaseUrl : undefined,
+    fetch: fetchWithDirectFallback({
+      primary: (input, init) => fetch(input, init),
+      direct: vscodeOriginalFetch,
+      onFallback: (reason) => log.warn(`request sent without VS Code's proxy: through it ${reason}`),
+    }),
   });
 }

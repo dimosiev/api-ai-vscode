@@ -3,8 +3,12 @@
 // model server on 127.0.0.1. Not a vitest file: VS Code loads it and calls run().
 import * as assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
+import * as http from "node:http";
+import type { AddressInfo } from "node:net";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { fetchWithDirectFallback, vscodeOriginalFetch } from "../../src/directFetch";
 import { startFakeServer } from "../e2e/fakeServer";
 
 /** Polls a condition: a busy machine (CI) is slower. */
@@ -99,5 +103,50 @@ export async function run(): Promise<void> {
     step("the user's tab stays in front and no tabs are left behind");
   } finally {
     await server.close();
+  }
+
+  await deadProxy();
+}
+
+/**
+ * A proxy that is gone (a VPN switched off): VS Code's fetch fails, dimosi's goes directly.
+ * VS Code never uses a proxy for 127.0.0.1, so the server is asked by the machine's own address.
+ */
+async function deadProxy(): Promise<void> {
+  assert.equal(typeof vscodeOriginalFetch(), "function", "VS Code keeps its unpatched fetch in __vscodeOriginalFetch");
+  const own = Object.values(os.networkInterfaces())
+    .flat()
+    .find((a) => a && a.family === "IPv4" && !a.internal)?.address;
+  if (!own) {
+    console.log("  - no network address besides 127.0.0.1: the dead proxy check is skipped");
+    return;
+  }
+  const listen = (host: string) =>
+    new Promise<http.Server>((resolve) => {
+      const s = http.createServer((_req, res) => res.end("direct"));
+      s.listen(0, host, () => resolve(s));
+    });
+  const closed = await listen("127.0.0.1");
+  const proxy = `http://127.0.0.1:${(closed.address() as AddressInfo).port}`;
+  await new Promise((r) => closed.close(r));
+  const target = await listen("0.0.0.0");
+  const url = `http://${own}:${(target.address() as AddressInfo).port}/`;
+  const httpConfig = vscode.workspace.getConfiguration("http");
+  await httpConfig.update("proxy", proxy, vscode.ConfigurationTarget.Global);
+  try {
+    const failure = await eventually("VS Code sends the request to the dead proxy", () =>
+      fetch(url).then(
+        () => false as const,
+        (e: Error) => e,
+      ),
+    );
+    const notes: string[] = [];
+    const res = await fetchWithDirectFallback({ primary: (input, init) => fetch(input, init), direct: vscodeOriginalFetch, onFallback: (r) => notes.push(r) })(url);
+    assert.equal(await res.text(), "direct");
+    assert.equal(notes.length, 1);
+    step(`with a dead proxy VS Code's fetch fails (${failure.message}: ${notes[0]}), dimosi's goes directly`);
+  } finally {
+    await httpConfig.update("proxy", undefined, vscode.ConfigurationTarget.Global);
+    await new Promise((r) => target.close(r));
   }
 }

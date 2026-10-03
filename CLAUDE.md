@@ -5,7 +5,7 @@ dimosi — AI-агент для программирования: расшире
 ## Состояние (обновляй после каждого выпуска)
 
 - Версия **0.5.2**, выпущена 3 октября 2026 (решения владельца по аудиту: в режиме плана не выполняются никакие команды; «Документы» и `~/Library` целиком не открываются; на сайте с «Всегда» адрес с длинной частью после `?` спрашивается). 0.5.1 — исправления ошибок аудита О-1…О-9. Номер хранится в `package.json` всех пакетов, `npm run release` поднимает его сам.
-- 565 тестов, CI: ubuntu-latest и macos-latest, включая проверку в настоящем VS Code.
+- 571 тест, CI: ubuntu-latest и macos-latest, включая проверку в настоящем VS Code.
 - Аудит после 0.5.0 (`docs/AUDIT.md`) закрыт: открытых находок и тестов `bug(...)` нет. Идёт обкатка в обычной работе владельца; новое добавлять после неё.
 - Требования: VS Code 1.140+, Node.js 22.12+.
 - Владелец работает в основном через **Polza AI**, модель по умолчанию `anthropic/claude-opus-5.5` (у Anthropic напрямую — `claude-opus-5-5`).
@@ -67,7 +67,7 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
   - `tools/index.ts` — инструменты; `tools/sandbox.ts` — песочница macOS и окружение команд без ключей; `tools/workspace.ts` — обход файлов и `isSecretFile`; `tools/web.ts` — `fetch_page`.
   - `prompt.ts` — системная инструкция; `rules.ts` — правила и доверие к ним; `providers/` — Anthropic SDK и OpenAI-совместимые сервисы, `presets.ts` — список сервисов.
   - `log.ts` — журнал с маскировкой ключей; `update.ts`, `update-key.ts` — подписанные обновления (Ed25519); `secrets.ts` — файл ключей.
-- `packages/vscode/src` — расширение: `extension.ts` (команды), `chatView.ts` (панель чата), `approval.ts` (карточки подтверждения), `editorFiles.ts` (правки через редактор), `problems.ts` (ошибки редактора после правки), `changes.ts` (откат), `chatStore.ts` (`chat.json`), `access.ts`, `commandRules.ts`, `ruleTrust.ts`, `updater.ts`, `vsixInstall.ts`, `report.ts`, `errorText.ts`. `protocol.ts` — сообщения между расширением и панелью.
+- `packages/vscode/src` — расширение: `extension.ts` (команды), `chatView.ts` (панель чата), `approval.ts` (карточки подтверждения), `editorFiles.ts` (правки через редактор), `problems.ts` (ошибки редактора после правки), `changes.ts` (откат), `chatStore.ts` (`chat.json`), `access.ts`, `commandRules.ts`, `ruleTrust.ts`, `updater.ts`, `vsixInstall.ts`, `report.ts`, `errorText.ts`, `directFetch.ts` (запрос напрямую, если прокси VS Code не отвечает). `protocol.ts` — сообщения между расширением и панелью.
 - `packages/vscode/webview` — интерфейс панели (браузерный код).
 - `packages/cli/src` — терминальная версия. Журнал: `~/.config/dimosi/dimosi.log`.
 - `scripts/` — выпуск, упаковка, ключ подписи.
@@ -115,6 +115,7 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
 
 - `npm run test:vscode` из терминала VS Code или из расширения: скрипт сам убирает переменные `ELECTRON_RUN_AS_NODE` и `VSCODE_*`, иначе новый VS Code запускается как обычный Node. На Linux без экрана нужен `xvfb-run -a`.
 - На компьютере владельца VPN подменяет адреса всех сайтов на 198.18.x.x. Поэтому `isPublicAddress` считает этот диапазон публичным; не «чини» это без проверки на настоящем сайте.
+- VS Code шлёт запросы расширений через системный прокси и помнит его для каждого сайта до 5 минут. У владельца прокси — это VPN (`127.0.0.1:1082`): после его выключения запросы уходили в никуда. Поэтому сервисы моделей вызываются через `directFetch.ts`. Обновления (`updater.ts`) и `fetch_page` пока идут обычным `fetch`.
 - `gh` не установлен. Статус CI смотри через публичный API: `curl -s "https://api.github.com/repos/dimosiev/api-ai-vscode/actions/runs?head_sha=$(git rev-parse HEAD)"`. Ошибки упавшего job: `.../check-runs/<job_id>/annotations`. Полные журналы без входа недоступны.
 - Для пуша файлов `.github/workflows/` токену GitHub нужно право `workflow`. Владелец уже выдал новый токен; если пуш снова отклонят с этой ошибкой, объясни владельцу, как выпустить токен заново.
 - VS Code 1.140 бывало отклонял `workbench.extensions.installExtension` значением без текста. Поэтому есть запасная установка через CLI, а ошибки выводятся через `errorText()`, никогда через `(e as Error).message`.
