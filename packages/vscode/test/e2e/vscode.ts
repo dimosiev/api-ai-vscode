@@ -221,10 +221,10 @@ export const stub = {
   check: undefined as ((doc: TextDocument) => Diagnostic[]) | undefined,
   /** How long the language service thinks. */
   checkDelayMs: 5,
-  /** The user opens a file in a normal tab and looks at it. */
-  async showFile(uri: Uri): Promise<TextDocument> {
+  /** The user opens a file in a tab and looks at it; `preview` is a single click in the Explorer (the name in italics). */
+  async showFile(uri: Uri, options: { preview?: boolean } = {}): Promise<TextDocument> {
     const doc = await workspace.openTextDocument(uri);
-    openTab(uri);
+    openTab(uri, options);
     return doc;
   },
   /** Tabs as "name", "name*" (in front), "name(p)" (preview). */
