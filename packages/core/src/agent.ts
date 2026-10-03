@@ -2,7 +2,7 @@ import { createAccess, type AccessPolicy, type ExtraFolder } from "./access";
 import type { CommandRuleStore } from "./commandRules";
 import { PermissionGate, type ApprovalHandler, type ApprovalMode } from "./permissions";
 import type { Log } from "./log";
-import { buildSystemPrompt, snapshotLayout } from "./prompt";
+import { buildSystemPrompt, snapshotLayout, today } from "./prompt";
 import { isProjectRulesFile, loadRules, type RuleSource, type RuleTrust } from "./rules";
 import { IncompleteResponseError } from "./providers/openai";
 import { executeTool, TOOL_DEFINITIONS, type FileAccess, type FileChange, type PlanItem, type ProblemWatcher } from "./tools";
@@ -72,6 +72,7 @@ const PLAN_NOTE =
 const EXECUTE_NOTE = "[dimosi: plan mode is off now. Unless the user asks for something else, carry out the plan.]";
 /** Pauses before retrying a failed request (network drop, overload, 5xx). */
 const RETRY_DELAYS_MS = [2000, 5000];
+const MAX_STOPPED_CHARS = 8000;
 const TRIMMED_RESULT = "[Output removed to free context space. Run the tool again if you still need it.]";
 
 export class Agent {
@@ -97,6 +98,9 @@ export class Agent {
   private log?: Log;
   private ruleTrust?: RuleTrust;
   private layout?: string;
+  private date?: string;
+  /** What the user saw of a reply they stopped; told to the model with the next message. */
+  private streamed = "";
   private access?: { key: string; policy: AccessPolicy };
   private running = false;
 
@@ -120,6 +124,7 @@ export class Agent {
   reset(): void {
     this.messages = [];
     this.layout = undefined;
+    this.date = undefined;
     this.access = undefined;
     this.planned = false;
     this.gate.resetSessionApprovals();
@@ -182,7 +187,8 @@ export class Agent {
       yield { type: "rules", sources: rules.sources };
       this.layout ??= await snapshotLayout(this.root);
       const access = this.accessPolicy();
-      const system = buildSystemPrompt({ root: this.root, layout: this.layout, rules, folders: access.folders });
+      this.date ??= today();
+      const system = buildSystemPrompt({ root: this.root, layout: this.layout, rules, folders: access.folders, date: this.date });
 
       for (let step = 0; step < this.maxSteps; step++) {
         // Trim rarely and in one go: every trim invalidates the prompt cache once.
@@ -255,6 +261,7 @@ export class Agent {
     } catch (e) {
       this.closeDanglingToolCalls("Cancelled by the user.");
       if (signal?.aborted) {
+        this.noteStoppedReply();
         this.log?.info("stopped by the user");
         yield { type: "error", message: "Остановлено." };
         return;
@@ -269,6 +276,7 @@ export class Agent {
     let trimmedForOverflow = false;
     for (let attempt = 0; ; attempt++) {
       let started = false;
+      this.streamed = "";
       const at = Date.now();
       const what = `request ${this.provider.id}/${this.model} (${this.messages.length} messages, ≈${estimateTokens(this.messages) + Math.ceil(system.length / 3)} tok${attempt ? `, attempt ${attempt + 1}` : ""})`;
       try {
@@ -283,6 +291,7 @@ export class Agent {
         })) {
           if (ev.type === "text_delta") {
             started = true;
+            this.streamed += ev.text;
             yield { type: "text", text: ev.text };
           } else done = ev;
         }
@@ -329,6 +338,21 @@ export class Agent {
       ? "arguments were not valid JSON"
       : this.log.redact(result.content.split("\n")[0]).slice(0, 160);
     this.log.warn(`tool ${name}: failed in ${ms} ms — ${reason}`);
+  }
+
+  /**
+   * A reply cut off by Stop never reaches the history (it is not a complete
+   * answer of the model), but the user has read it. It is passed on as a note
+   * in the user's message, so that "continue" does not start from scratch.
+   */
+  private noteStoppedReply(): void {
+    const text = this.streamed.trim();
+    this.streamed = "";
+    if (!text) return;
+    const seen = text.length > MAX_STOPPED_CHARS ? `${text.slice(0, MAX_STOPPED_CHARS / 2)}\n[...]\n${text.slice(-MAX_STOPPED_CHARS / 2)}` : text;
+    this.appendUserParts([
+      { type: "text", text: `[dimosi: the user stopped your previous reply. They saw this much of it:\n"""\n${seen}\n"""\nIf asked to continue, go on from there instead of starting again.]` },
+    ]);
   }
 
   private appendUserParts(parts: Part[]): void {

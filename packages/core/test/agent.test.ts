@@ -1,7 +1,7 @@
 import { mkdtempSync, promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Agent, type AgentEvent, type ChatRequest, type Message, type Provider, type StreamEvent } from "../src";
 
 /** Replays scripted assistant turns and records what it was sent. */
@@ -245,5 +245,84 @@ describe("plan first", () => {
     expect(planning.some((e) => e.type === "file_changed")).toBe(false);
     expect(asked).toBe(1);
     expect(await fs.readFile(path.join(root, "a.txt"), "utf8")).toBe("x");
+  });
+});
+
+describe("a stable start of every request", () => {
+  it("the date in the system prompt is taken once per chat, so midnight does not reset the cache", async () => {
+    const systems: string[] = [];
+    const provider = new FakeProvider(Array.from({ length: 3 }, () => (req: ChatRequest): StreamEvent[] => {
+      systems.push(req.system);
+      return [{ type: "done", stopReason: "end_turn", message: { role: "assistant", parts: [{ type: "text", text: "ok" }] } }];
+    }));
+    const agent = new Agent({ provider, model: "m", root: tmp(), approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-03T23:59:00Z"));
+      await collect(agent.run("вечером"));
+      vi.setSystemTime(new Date("2026-10-04T00:01:00Z"));
+      await collect(agent.run("после полуночи"));
+      expect(systems[0]).toContain("Date: 2026-10-03");
+      expect(systems[1]).toBe(systems[0]);
+      // A new chat takes the new date.
+      agent.reset();
+      await collect(agent.run("новый чат"));
+      expect(systems[2]).toContain("Date: 2026-10-04");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("a reply stopped by the user", () => {
+  it("is told to the model with the next message, without touching the model's own messages", async () => {
+    const controller = new AbortController();
+    const provider = new FakeProvider([]);
+    let call = 0;
+    provider.stream = async function* (req: ChatRequest): AsyncIterable<StreamEvent> {
+      provider.requests.push(structuredClone(req.messages));
+      if (call++ === 0) {
+        yield { type: "text_delta", text: "Шаг 1: открыть файл. " };
+        yield { type: "text_delta", text: "Шаг 2: " };
+        // The user presses Stop in the middle of the reply.
+        controller.abort();
+        throw new Error("aborted");
+      }
+      yield { type: "done", stopReason: "end_turn", message: { role: "assistant", parts: [{ type: "text", text: "поправить строку." }] } };
+    };
+    const agent = new Agent({ provider, model: "m", root: tmp(), approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL });
+    const stopped = await collect(agent.run("объясни по шагам", controller.signal));
+    expect(stopped.at(-1)).toEqual({ type: "error", message: "Остановлено." });
+    await collect(agent.run("продолжай"));
+
+    const second = provider.requests[1];
+    // Still one user message (no assistant reply came), now with the note and the new text.
+    expect(second.map((m) => m.role)).toEqual(["user"]);
+    const texts = second[0].parts.flatMap((p) => (p.type === "text" ? [p.text] : []));
+    expect(texts[0]).toBe("объясни по шагам");
+    expect(texts[1]).toMatch(/the user stopped your previous reply/);
+    expect(texts[1]).toContain("Шаг 1: открыть файл. Шаг 2:");
+    expect(texts[2]).toBe("продолжай");
+  });
+
+  it("nothing is added when the stop came before any text, and a very long reply is shortened", async () => {
+    for (const [length, expectNote] of [[0, false], [50_000, true]] as const) {
+      const controller = new AbortController();
+      const provider = new FakeProvider([]);
+      provider.stream = async function* (): AsyncIterable<StreamEvent> {
+        if (length) yield { type: "text_delta", text: `START ${"x".repeat(length)} END` };
+        controller.abort();
+        throw new Error("aborted");
+      };
+      const agent = new Agent({ provider, model: "m", root: tmp(), approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL });
+      await collect(agent.run("задача", controller.signal));
+      const note = agent.messages[0].parts.flatMap((p) => (p.type === "text" ? [p.text] : []))[1];
+      expect(Boolean(note)).toBe(expectNote);
+      if (note) {
+        expect(note.length).toBeLessThan(9000);
+        expect(note).toContain("START");
+        expect(note).toContain("END");
+      }
+    }
   });
 });

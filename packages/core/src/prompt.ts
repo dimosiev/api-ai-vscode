@@ -19,9 +19,13 @@ export interface PromptInput {
   rules: LoadedRules;
   /** Folders outside the project that the user opened (already checked). */
   folders?: ExtraFolder[];
+  /** Taken once per chat (see today): a prompt that changes at midnight would lose the cache. */
+  date?: string;
 }
 
-export function buildSystemPrompt({ root, layout, rules, folders = [] }: PromptInput): string {
+export const today = (): string => new Date().toISOString().slice(0, 10);
+
+export function buildSystemPrompt({ root, layout, rules, folders = [], date = today() }: PromptInput): string {
   const paths = folders.length
     ? "- Paths are relative to the project root. Outside the project you can reach only the extra folders listed under Environment: use full paths for them. A folder marked \"read only\" must not be changed, by commands either. Everything else is closed."
     : "- All paths are relative to the project root. You cannot access files outside it.";
@@ -55,7 +59,7 @@ ${paths}
 - Project root: ${root}${foldersBlock}
 - OS: ${os.type()} ${os.release()} (${process.platform})
 - Shell commands run with: ${process.platform === "win32" ? "cmd.exe" : "/bin/sh"}
-- Date: ${new Date().toISOString().slice(0, 10)}
+- Date: ${date} (when this chat started)
 
 # Project layout (top two levels, at the start of this chat)
 ${layout}${rulesBlock}`;
