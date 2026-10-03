@@ -34,7 +34,7 @@ describe("О-1: a paid picture must not be thrown away", () => {
   // The owner's own first picture came back as JPEG. The model asks for banner.png again
   // (there is no such file: the first one was saved as banner.jpg), the request is paid,
   // and only then the tool finds banner.jpg taken and drops the picture.
-  bug("the service sends another format and the file with that ending already exists", async () => {
+  it("the service sends another format and the file with that ending already exists", async () => {
     const { root, counts, run } = imageTool({ bytes: JPEG });
     const first = await run({ prompt: "баннер", path: "banner.png" });
     expect(first.isError).toBe(false);
@@ -46,7 +46,28 @@ describe("О-1: a paid picture must not be thrown away", () => {
     expect({ paid: counts.paid, pictures, error: second.isError }).toSatisfy((r: { paid: number; pictures: number }) => r.paid === r.pictures);
   });
 
-  it("(for comparison) the same name with the same format is refused before paying", async () => {
+  it("a name that got taken while the picture was being made: the paid picture is kept under a free name", async () => {
+    const root = tmp();
+    const gate = new PermissionGate({ approve: async () => "allow" }, "ask");
+    const shown: string[] = [];
+    const images: ImageMaker = {
+      model: "m",
+      generate: async () => {
+        await fs.writeFile(path.join(root, "banner.jpg"), "someone else's file");
+        return { bytes: JPEG };
+      },
+    };
+    const result = await executeTool(
+      { type: "tool_call", id: "c", name: "generate_image", input: { prompt: "баннер", path: "banner.png" } },
+      { root, gate, images, onImage: (i) => shown.push(i.relPath) },
+    );
+    expect(result).toMatchObject({ isError: false, content: expect.stringContaining("Saved the picture to banner-2.jpg") });
+    expect(shown).toEqual(["banner-2.jpg"]);
+    expect(await fs.readFile(path.join(root, "banner.jpg"), "utf8")).toBe("someone else's file");
+    expect([...(await fs.readFile(path.join(root, "banner-2.jpg")))]).toEqual([...JPEG]);
+  });
+
+  it("the same name with the same format is refused before paying", async () => {
     const { counts, run } = imageTool({ bytes: PNG });
     await run({ prompt: "баннер", path: "banner.png" });
     const second = await run({ prompt: "баннер", path: "banner.png" });

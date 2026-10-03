@@ -571,15 +571,22 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     const asked = str(input, "path");
     const ext = path.extname(asked).slice(1).toLowerCase();
     if (!(IMAGE_EXTENSIONS as readonly string[]).includes(ext)) throw new Error('"path" must end in .png, .jpg or .webp.');
-    /** The checked place for the picture; refuses to replace a file: a picture cannot be reverted. */
-    const place = async (target: string) => {
+    /** The checked place for the picture. */
+    const place = (target: string) => {
       const abs = resolvePath(access, target, "write");
       assertWritable(access, abs);
       assertNotSecret(access, abs, "changed");
-      if (await fs.stat(abs).then(() => true, () => false)) throw new Error(`${showPath(access, abs)} already exists. Choose another file name.`);
       return abs;
     };
-    const abs = await place(asked);
+    const taken = (abs: string) => fs.lstat(abs).then(() => true, () => false);
+    // A file is never replaced: a picture cannot be reverted. The service chooses the format,
+    // so the name must be free with every ending, before the picture is paid for.
+    const stem = asked.slice(0, -ext.length);
+    const abs = place(asked);
+    for (const target of [asked, ...IMAGE_EXTENSIONS.map((e) => `${stem}${e}`)]) {
+      const other = place(target);
+      if (await taken(other)) throw new Error(`${showPath(access, other)} already exists. Choose another file name.`);
+    }
     if (!images) {
       throw new Error(
         "Pictures are not set up: they are made through Polza AI and need its API key. Tell the user to add the key for Polza AI (the chat model may stay any).",
@@ -593,9 +600,18 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     if (!format) throw new Error("The image service sent something that is not a PNG, JPEG or WebP picture. Nothing was saved.");
     // The ending follows the real format; the path is checked again: a link could have been swapped while the user decided.
     const sameFormat = format === ext || (format === "jpg" && ext === "jpeg");
-    const saved = await place(sameFormat ? asked : `${asked.slice(0, -ext.length)}${format}`);
-    await fs.mkdir(path.dirname(saved), { recursive: true });
-    await fs.writeFile(saved, bytes, { flag: "wx" });
+    // The picture is paid for: if the name got taken meanwhile, it is kept under a free one.
+    let saved = "";
+    for (let n = 1; !saved; n++) {
+      const target = place(n > 1 ? `${stem.slice(0, -1)}-${n}.${format}` : sameFormat ? asked : `${stem}${format}`);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      try {
+        await fs.writeFile(target, bytes, { flag: "wx" });
+        saved = target;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST" || n >= 100) throw e;
+      }
+    }
     const relPath = showPath(access, saved);
     onImage?.({ path: saved, relPath });
     return `Saved the picture to ${relPath} (${Math.max(1, Math.round(bytes.length / 1024))} KB, model ${images.model}${cost ? `, cost ${cost}` : ""}). The user sees it in the chat.`;
