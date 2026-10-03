@@ -86,6 +86,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     command("dimosi.newChat", () => chat.newChat()),
+    command("dimosi.showChats", () => chat.showChats()),
     command("dimosi.reportProblem", () => reportProblem(context, keys)),
     command("dimosi.setApiKey", async () => {
       const presetId = await pickProvider(keys, "Для какого сервиса ввести ключ?", (p) => p.requiresKey || p.id === "custom");

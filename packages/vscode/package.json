@@ -56,6 +56,12 @@
         "icon": "$(add)"
       },
       {
+        "command": "dimosi.showChats",
+        "title": "Прошлые чаты…",
+        "category": "dimosi",
+        "icon": "$(history)"
+      },
+      {
         "command": "dimosi.selectModel",
         "title": "Выбрать сервис и модель",
         "category": "dimosi",
@@ -175,19 +181,24 @@
           "group": "navigation@1"
         },
         {
-          "command": "dimosi.showRules",
+          "command": "dimosi.showChats",
           "when": "view == dimosi.chat",
           "group": "navigation@2"
         },
         {
-          "command": "dimosi.selectModel",
+          "command": "dimosi.showRules",
           "when": "view == dimosi.chat",
           "group": "navigation@3"
         },
         {
-          "command": "dimosi.setApiKey",
+          "command": "dimosi.selectModel",
           "when": "view == dimosi.chat",
           "group": "navigation@4"
+        },
+        {
+          "command": "dimosi.setApiKey",
+          "when": "view == dimosi.chat",
+          "group": "navigation@5"
         },
         {
           "command": "dimosi.editAccess",

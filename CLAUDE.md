@@ -78,7 +78,7 @@ CLI: настройки в `~/.config/dimosi/` (`config.ts`), флаги `--prov
   - `tools/index.ts` — девять инструментов (`read_file`, `list_files`, `search`, `write_file`, `edit_file`, `run_command`, `update_plan`, `fetch_page`, `generate_image`); `tools/sandbox.ts` — песочница macOS и окружение команд без ключей; `tools/workspace.ts` — обход файлов и `isSecretFile`; `tools/web.ts` — `fetch_page`; `tools/image.ts` — картинки через Media API Polza AI, всегда с вопросом владельцу.
   - `prompt.ts` — системная инструкция; `rules.ts` — правила и доверие к ним; `providers/` — Anthropic SDK и OpenAI-совместимые сервисы, `presets.ts` — список сервисов.
   - `log.ts` — журнал с маскировкой ключей; `update.ts`, `update-key.ts` — подписанные обновления (Ed25519); `secrets.ts` — файл ключей.
-- `packages/vscode/src` — расширение: `extension.ts` (команды), `chatView.ts` (панель чата), `settings.ts` (настройки, сборка сервиса с ключом), `approval.ts` (карточки подтверждения), `editorFiles.ts` (правки через редактор), `problems.ts` (ошибки редактора после правки), `changes.ts` (откат), `chatStore.ts` (`chat.json`), `attachments.ts` (вложения), `keyStore.ts` (ключи в Keychain), `access.ts`, `commandRules.ts`, `ruleTrust.ts`, `updater.ts`, `vsixInstall.ts`, `report.ts`, `errorText.ts`, `directFetch.ts` (запрос напрямую, если прокси VS Code не отвечает), `pictures.ts` (картинка для панели). `protocol.ts` — сообщения между расширением и панелью.
+- `packages/vscode/src` — расширение: `extension.ts` (команды), `chatView.ts` (панель чата), `settings.ts` (настройки, сборка сервиса с ключом), `approval.ts` (карточки подтверждения), `editorFiles.ts` (правки через редактор), `problems.ts` (ошибки редактора после правки), `changes.ts` (откат), `chatStore.ts` (текущий чат `chat.json` и прошлые в `chats/`), `attachments.ts` (вложения), `keyStore.ts` (ключи в Keychain), `access.ts`, `commandRules.ts`, `ruleTrust.ts`, `updater.ts`, `vsixInstall.ts`, `report.ts`, `errorText.ts`, `directFetch.ts` (запрос напрямую, если прокси VS Code не отвечает), `pictures.ts` (картинка для панели). `protocol.ts` — сообщения между расширением и панелью.
 - `packages/vscode/webview` — интерфейс панели (браузерный код).
 - `packages/cli/src` — терминальная версия (`index.ts` — всё взаимодействие). Журнал: `~/.config/dimosi/dimosi.log`.
 - `scripts/` — выпуск, упаковка, ключ подписи.
@@ -152,8 +152,7 @@ CLI: настройки в `~/.config/dimosi/` (`config.ts`), флаги `--prov
 
 **Предложено, владелец ещё не решал:**
 
-- Краткий пересказ старой части длинного чата вместо простого вырезания результатов инструментов. Сложность: ответы модели в истории менять нельзя (см. «Запреты»).
-- Список прошлых чатов (сейчас хранится один последний чат на папку).
+- Краткий пересказ старой части длинного чата вместо простого вырезания результатов инструментов. Сложность: ответы модели в истории менять нельзя (см. «Запреты»). Владелец 3 октября 2026: пока не нужен.
 
 **Остальное несделанное:**
 

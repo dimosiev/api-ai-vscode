@@ -5,8 +5,14 @@ import { describe, expect, it } from "vitest";
 import type { Message } from "@dimosi/core";
 import { ChangeTracker } from "../src/changes";
 import {
+  archiveChat,
   CHAT_FORMAT,
+  chatTitle,
+  deleteArchivedChat,
+  listChats,
   parseSavedChat,
+  readArchivedChat,
+  unarchiveChat,
   readChatFile,
   restoredTranscript,
   serializeChat,
@@ -157,5 +163,86 @@ describe("chat file", () => {
     expect(items).toContainEqual({ type: "approval_resolved", id: "a1", decision: "deny" });
     expect(items).toContainEqual({ type: "changes", turn: 1, files: t.summary() });
     expect(items.at(-1)).toMatchObject({ type: "error", message: expect.stringContaining("перезагрузили") });
+  });
+});
+
+describe("earlier chats", () => {
+  /** A folder's storage with a current chat written `n` times and put away each time. */
+  async function store(n: number, max?: number, keep?: (ids: string[]) => string | undefined) {
+    const root = tmp();
+    const file = path.join(root, "store", "chat.json");
+    const dir = path.join(root, "store", "chats");
+    const ids: string[] = [];
+    for (let i = 1; i <= n; i++) {
+      await writeChatFile(file, serializeChat(chat(root, { transcript: [{ type: "user", text: `чат ${i}`, chips: [] }] })).text!);
+      ids.push((await archiveChat(file, dir, { title: `чат ${i}`, savedAt: i, tasks: 1 }, { max, keep: keep?.(ids) }))!);
+    }
+    return { root, file, dir, ids };
+  }
+
+  it("the title is the first message on one line, shortened", () => {
+    expect(chatTitle([{ type: "text", text: "x" }, { type: "user", text: "  исправь\n ошибку  в app.js ", chips: [] }])).toBe("исправь ошибку в app.js");
+    expect(chatTitle([{ type: "user", text: "я".repeat(200), chips: [] }])).toBe(`${"я".repeat(79)}…`);
+    expect(chatTitle([{ type: "user", text: "", chips: [{ id: "a", label: "a.png", kind: "image" }] }])).toBe("(сообщение с вложениями)");
+  });
+
+  it("a chat is moved, not copied; the list is newest first and reads no chat", async () => {
+    const { root, file, dir, ids } = await store(3);
+    await expect(fs.access(file)).rejects.toThrow();
+    expect((await listChats(dir)).map((c) => c.title)).toEqual(["чат 3", "чат 2", "чат 1"]);
+    // Listing works from the index alone: the chats themselves may be huge.
+    for (const id of ids) await fs.writeFile(path.join(dir, `${id}.json`), "{ not json");
+    expect((await listChats(dir)).map((c) => [c.title, c.tasks])).toEqual([["чат 3", 1], ["чат 2", 1], ["чат 1", 1]]);
+    expect(await readArchivedChat(dir, ids[0], root)).toBeUndefined(); // and a damaged one is not opened
+  });
+
+  it("opening moves the chat back byte for byte and takes it off the list", async () => {
+    const { root, file, dir, ids } = await store(2);
+    await unarchiveChat(dir, ids[0], file);
+    const loaded = await readChatFile(file, root);
+    expect(loaded?.transcript).toEqual([{ type: "user", text: "чат 1", chips: [] }]);
+    expect(JSON.stringify(loaded!.messages[1].providerData!.raw)).toBe(JSON.stringify(claudeRaw));
+    expect((await listChats(dir)).map((c) => c.title)).toEqual(["чат 2"]);
+    expect((await fs.readdir(dir)).sort()).toEqual([`${ids[1]}.json`, "index.json"].sort());
+  });
+
+  it("beyond the limit the oldest chats are deleted, but never the one being opened", async () => {
+    const plain = await store(4, 2);
+    expect((await listChats(plain.dir)).map((c) => c.title)).toEqual(["чат 4", "чат 3"]);
+    expect(await fs.readdir(plain.dir)).toHaveLength(3); // two chats and the index
+
+    const kept = await store(4, 2, (ids) => ids[0]);
+    expect((await listChats(kept.dir)).map((c) => c.title)).toEqual(["чат 4", "чат 3", "чат 1"]);
+  });
+
+  it("deleting removes the file and the entry; nothing to put away is not an error", async () => {
+    const { file, dir, ids } = await store(2);
+    await deleteArchivedChat(dir, ids[1]);
+    expect((await listChats(dir)).map((c) => c.title)).toEqual(["чат 1"]);
+    expect(await archiveChat(file, dir, { title: "нет файла", savedAt: 9, tasks: 1 })).toBeUndefined();
+    expect((await listChats(dir)).map((c) => c.title)).toEqual(["чат 1"]);
+    expect(await listChats(path.join(dir, "missing"))).toEqual([]);
+  });
+
+  it("a lost or damaged index is rebuilt from the chats; an entry without a file is dropped", async () => {
+    const { dir, ids } = await store(2);
+    await fs.writeFile(path.join(dir, "index.json"), "{ not json");
+    expect((await listChats(dir)).map((c) => [c.title, c.tasks]).sort()).toEqual([["чат 1", 1], ["чат 2", 1]]);
+    await fs.rm(path.join(dir, `${ids[0]}.json`));
+    expect((await listChats(dir)).map((c) => c.title)).toEqual(["чат 2"]);
+    // A file that is not a chat is listed as unreadable once, so it can be deleted, and is not read again.
+    await fs.writeFile(path.join(dir, "zzzzzzzz-0123abcd.json"), "{ not json");
+    expect((await listChats(dir)).map((c) => c.title)).toEqual(["чат 2", "(чат не удалось прочитать)"]);
+    expect(JSON.parse(await fs.readFile(path.join(dir, "index.json"), "utf8")).chats).toHaveLength(2);
+  });
+
+  it("an id that is not one of ours never becomes a path", async () => {
+    const { root, file, dir } = await store(1);
+    for (const id of ["../chat", "index", "a/b", "..", ""]) {
+      await expect(unarchiveChat(dir, id, file)).rejects.toThrow("Неизвестный чат.");
+      await expect(deleteArchivedChat(dir, id)).rejects.toThrow("Неизвестный чат.");
+      expect(await readArchivedChat(dir, id, root)).toBeUndefined();
+    }
+    expect(await listChats(dir)).toHaveLength(1);
   });
 });

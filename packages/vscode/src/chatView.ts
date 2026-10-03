@@ -29,13 +29,21 @@ import { log } from "./log";
 import { EditorProblems } from "./problems";
 import { vscodeRuleTrust } from "./ruleTrust";
 import {
+  archiveChat,
   CHAT_FORMAT,
+  chatTitle,
+  countTasks,
+  deleteArchivedChat,
   deleteChatFile,
+  listChats,
+  readArchivedChat,
   readChatFile,
   restoredTranscript,
   serializeChat,
   Transcript,
+  unarchiveChat,
   writeChatFile,
+  type ChatInfo,
   type SavedChat,
 } from "./chatStore";
 import type { SecretKeyStore } from "./keyStore";
@@ -89,6 +97,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private saving: Promise<void> = Promise.resolve();
   /** Bumped by "New chat": events of the stopped task no longer belong to the panel. */
   private generation = 0;
+  /** The task in progress: its revert card is not in the transcript yet. */
+  private running?: { turn: number; tracker: ChangeTracker };
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -159,17 +169,86 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.generation++;
     this.controller?.abort();
     this.approval.cancelAll();
-    this.agent?.reset();
-    this.restoredMessages = undefined;
-    this.transcript.clear();
-    this.trackers.clear();
-    const file = this.chatFile();
-    if (file) this.saving = this.saving.then(() => deleteChatFile(file)).catch(() => undefined);
-    this.chatUsage = new UsageTotals();
+    this.putAway();
+    this.forget();
     this.attachments = [];
     this.post({ type: "clear" });
     this.postAttachments();
     void this.postStatus();
+  }
+
+  /** The chat in memory is gone; its file is dealt with by the caller. */
+  private forget(): void {
+    this.agent?.reset();
+    this.restoredMessages = undefined;
+    this.transcript.clear();
+    this.trackers.clear();
+    this.running = undefined;
+    this.chatUsage = new UsageTotals();
+  }
+
+  /**
+   * Moves the current chat to the earlier ones, as it is now. A chat where the
+   * user wrote nothing is just deleted. `keep`: an earlier chat that must not
+   * be pushed out by this one.
+   */
+  private putAway(keep?: string): void {
+    const file = this.chatFile();
+    const dir = this.chatsDir();
+    if (!file || !dir) return;
+    const tasks = countTasks(this.transcript.items);
+    if (!tasks) {
+      this.saving = this.saving.then(() => deleteChatFile(file)).catch(() => undefined);
+      return;
+    }
+    // A task stopped by this very action is kept with its revert card, and without the "window was reloaded" note.
+    this.saveChat(this.running, false);
+    const info = { title: chatTitle(this.transcript.items), savedAt: Date.now(), tasks };
+    this.saving = this.saving
+      .then(() => archiveChat(file, dir, info, { keep }))
+      .then(() => undefined)
+      .catch((e) => log.warn(`could not keep the chat: ${errorText(e)}`));
+  }
+
+  /** The list of earlier chats: open one or delete it. */
+  async showChats(): Promise<void> {
+    const dir = this.chatsDir();
+    const root = this.root();
+    if (!dir || !root) return void vscode.window.showWarningMessage("Сначала откройте папку проекта: чаты хранятся отдельно для каждой папки.");
+    await this.saving;
+    const chats = await listChats(dir);
+    if (!chats.length) return void vscode.window.showInformationMessage("Прошлых чатов пока нет. Чат попадает сюда, когда вы начинаете новый.");
+    const picked = await vscode.window.showQuickPick(
+      chats.map((chat) => ({ label: chat.title, description: chatSummary(chat), chat })),
+      { title: "Прошлые чаты этой папки", placeHolder: "Выберите чат, чтобы открыть или удалить его", matchOnDescription: true },
+    );
+    if (!picked) return;
+    const action = await vscode.window.showQuickPick([{ label: "Открыть" }, { label: "Удалить" }], { title: picked.chat.title });
+    if (action?.label === "Открыть") await this.openChat(picked.chat);
+    else if (action?.label === "Удалить") {
+      const ok = await vscode.window.showWarningMessage(`Удалить чат «${picked.chat.title}»? Вернуть его будет нельзя.`, { modal: true }, "Удалить");
+      if (ok) await deleteArchivedChat(dir, picked.chat.id);
+    }
+  }
+
+  private async openChat(chat: ChatInfo): Promise<void> {
+    const file = this.chatFile();
+    const dir = this.chatsDir();
+    const root = this.root();
+    if (!file || !dir || !root) return;
+    if (this.busy) return void vscode.window.showWarningMessage("dimosi ещё работает над задачей. Дождитесь окончания или нажмите «Стоп», потом откройте другой чат.");
+    const saved = await readArchivedChat(dir, chat.id, root);
+    if (!saved) return void vscode.window.showWarningMessage("Этот чат не удалось открыть: его файл повреждён или сохранён другой версией dimosi. Его можно удалить из списка.");
+    this.generation++;
+    this.approval.cancelAll();
+    this.putAway(chat.id);
+    this.saving = this.saving.then(() => unarchiveChat(dir, chat.id, file)).catch((e) => log.warn(`could not make the chat current: ${errorText(e)}`));
+    await this.saving;
+    this.forget();
+    this.adopt(saved);
+    log.info(`earlier chat opened: ${saved.messages.length} messages, ${saved.trackers.length} revert cards`);
+    this.post({ type: "restore", items: this.transcript.items });
+    await this.postStatus();
   }
 
   async postStatus(): Promise<void> {
@@ -420,10 +499,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         log,
         ruleTrust: vscodeRuleTrust(this.context),
       });
-      if (this.restoredMessages) this.agent.restore(this.restoredMessages);
-      this.restoredMessages = undefined;
     }
     const agent = this.agent;
+    // A chat restored after a reload or opened from the list.
+    if (this.restoredMessages) agent.restore(this.restoredMessages);
+    this.restoredMessages = undefined;
     agent.provider = provider;
     agent.model = settings.model;
     agent.maxSteps = settings.maxSteps;
@@ -479,6 +559,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const ids = new Map<string, number>();
     const generation = this.generation;
     const running = { turn, tracker };
+    this.running = running;
     try {
       for await (const ev of agent.run(parts, this.controller.signal)) {
         if (generation !== this.generation) break; // "New chat" was pressed
@@ -533,6 +614,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.approval.signal = undefined;
       this.approval.cancelAll();
       const current = generation === this.generation;
+      if (this.running === running) this.running = undefined;
       if (current && !tracker.isEmpty) this.post({ type: "changes", turn, files: tracker.summary() });
       if (current && planning && finished) this.post({ type: "plan_ready" });
       this.post({ type: "busy", busy: false });
@@ -545,6 +627,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private chatFile(): string | undefined {
     const dir = this.context.storageUri;
     return dir?.scheme === "file" ? path.join(dir.fsPath, "chat.json") : undefined;
+  }
+
+  /** The earlier chats of this folder, next to the current one. */
+  private chatsDir(): string | undefined {
+    const dir = this.context.storageUri;
+    return dir?.scheme === "file" ? path.join(dir.fsPath, "chats") : undefined;
   }
 
   /** Restores the folder's last chat once per window; a bad file just means a new chat. */
@@ -560,6 +648,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     log.info(`chat restored: ${saved.messages.length} messages, ${saved.trackers.length} revert cards${saved.interrupted ? ", interrupted mid-task" : ""}`);
+    this.adopt(saved);
+  }
+
+  /** Makes a saved chat the one in memory; the agent gets its history with the next message. */
+  private adopt(saved: SavedChat): void {
     this.turn = Math.max(this.turn, saved.turn);
     for (const t of saved.trackers) this.trackers.set(t.turn, ChangeTracker.fromJSON(t, editorFiles));
     this.restoredMessages = saved.messages;
@@ -567,7 +660,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Snapshots the chat now and writes it in the background. `running` is set mid-task. */
-  private saveChat(running?: { turn: number; tracker: ChangeTracker }): void {
+  private saveChat(running?: { turn: number; tracker: ChangeTracker }, interrupted = Boolean(running)): void {
     const file = this.chatFile();
     const root = this.root();
     if (!file || !root) return;
@@ -575,10 +668,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       format: CHAT_FORMAT,
       root,
       turn: this.turn,
-      messages: this.agent?.messages ?? this.restoredMessages ?? [],
+      // A chat that was restored or opened from the list is still on its way to the agent.
+      messages: this.restoredMessages ?? this.agent?.messages ?? [],
       transcript: this.transcript.snapshot(running),
       trackers: [...this.trackers.entries()].filter(([, t]) => !t.isEmpty).map(([turn, t]) => ({ turn, ...t.toJSON() })),
-      interrupted: Boolean(running),
+      interrupted,
     };
     // Serialized right away: the history keeps changing while the file is written.
     const { text, dropped } = serializeChat(chat);
@@ -639,4 +733,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </body>
 </html>`;
   }
+}
+
+function chatSummary(chat: ChatInfo): string {
+  const when = chat.savedAt ? new Date(chat.savedAt).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+  return [when, chat.tasks ? `сообщений: ${chat.tasks}` : ""].filter(Boolean).join(" · ");
 }

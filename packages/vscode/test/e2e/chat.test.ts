@@ -362,6 +362,121 @@ describe("files with secrets in the panel", () => {
   });
 });
 
+describe("earlier chats", () => {
+  const chatsDir = () => path.join(storage, "chats");
+  const archived = () => {
+    try {
+      return (JSON.parse(readFileSync(path.join(chatsDir(), "index.json"), "utf8")).chats as Array<{ title: string; tasks: number }>).map((c) => c.title);
+    } catch {
+      return [];
+    }
+  };
+  /** Answers the two lists of "Прошлые чаты…": which chat, then what to do with it. */
+  const choose = (title: string, action: "Открыть" | "Удалить") => {
+    stub.pick = (items) => items.find((i) => i.label === title) ?? items.find((i) => i.label === action);
+  };
+
+  it("«Новый чат» keeps the chat; it can be opened again and the conversation goes on", async () => {
+    const panel = await setup([{ text: "Привет, это первый чат." }, { text: "А это второй." }, { text: "Помню первый." }]);
+    await panel.task("первая задача");
+    panel.provider.newChat();
+    expect(await eventually(() => archived().length === 1)).toBe(true);
+    expect(archived()).toEqual(["первая задача"]);
+    expect(existsSync(path.join(storage, "chat.json"))).toBe(false);
+
+    await panel.task("вторая задача");
+    expect(sentText(server!.requests.at(-1)!.body)).not.toContain("первая задача");
+
+    // Open the first chat: the second one takes its place in the list.
+    const from = panel.posted.length;
+    choose("первая задача", "Открыть");
+    await panel.provider.showChats();
+    const restore = await panel.waitFor(isType("restore"), from);
+    expect(restore.items.filter(isType("user")).map((m) => m.text)).toEqual(["первая задача"]);
+    expect(restore.items.filter(isType("text")).map((m) => m.text).join("")).toBe("Привет, это первый чат.");
+    expect(archived()).toEqual(["вторая задача"]);
+
+    const events = await panel.task("что было?");
+    expect(events.filter(isType("text")).map((e) => e.text).join("")).toBe("Помню первый.");
+    const history = sentText(server!.requests.at(-1)!.body);
+    expect(history).toContain("первая задача");
+    expect(history).toContain("Привет, это первый чат.");
+    expect(history).not.toContain("вторая задача");
+  });
+
+  it("an opened chat keeps its history and its revert cards, also over a window reload", async () => {
+    const panel = await setup([{ text: "Создаю.", toolCalls: [{ name: "write_file", args: { path: "a.txt", content: "A\n" } }] }, { text: "Готово." }, { text: "Помню a.txt." }], "auto");
+    await panel.task("создай a.txt");
+    panel.provider.newChat();
+    expect(await eventually(() => archived().length === 1)).toBe(true);
+
+    const from = panel.posted.length;
+    choose("создай a.txt", "Открыть");
+    await panel.provider.showChats();
+    const changes = (await panel.waitFor(isType("restore"), from)).items.find(isType("changes"))!;
+    expect(changes.files[0]).toMatchObject({ relPath: "a.txt", reverted: false, unavailable: false });
+
+    // Reverting saves the chat again, before any new message: the history must still be in it.
+    const before = panel.posted.length;
+    panel.send({ type: "revert", turn: changes.turn, relPath: "a.txt" });
+    expect((await panel.waitFor(isType("changes"), before)).files[0].reverted).toBe(true);
+    expect(existsSync(path.join(root, "a.txt"))).toBe(false);
+    const saved = () => {
+      try {
+        return readFileSync(path.join(storage, "chat.json"), "utf8").includes('"reverted":true');
+      } catch {
+        return false;
+      }
+    };
+    expect(await eventually(saved)).toBe(true);
+    panel.close();
+
+    const reloaded = new Panel(context);
+    reloaded.send({ type: "ready" });
+    expect((await reloaded.waitFor(isType("restore"))).items.find(isType("user"))?.text).toBe("создай a.txt");
+    await reloaded.task("что мы делали?");
+    expect(sentText(server!.requests.at(-1)!.body)).toContain("создай a.txt");
+  });
+
+  it("a chat can be deleted from the list after a confirmation; an empty chat is never kept", async () => {
+    const panel = await setup([{ text: "Ответ." }]);
+    await panel.task("ненужный чат");
+    panel.provider.newChat();
+    expect(await eventually(() => archived().length === 1)).toBe(true);
+    panel.provider.newChat(); // nothing was written in this one
+    choose("ненужный чат", "Удалить");
+    await panel.provider.showChats();
+    expect(archived()).toEqual(["ненужный чат"]); // the confirmation was dismissed
+    expect(stub.messages.at(-1)).toMatch(/^Удалить чат «ненужный чат»\? Вернуть его будет нельзя\.$/);
+
+    stub.answer = (_m, items) => items.find((i) => i === "Удалить");
+    await panel.provider.showChats();
+    expect(archived()).toEqual([]);
+    expect((await fs.readdir(chatsDir())).filter((n) => n !== "index.json")).toEqual([]);
+
+    await panel.provider.showChats();
+    expect(stub.messages.at(-1)).toMatch(/^Прошлых чатов пока нет/);
+  });
+
+  it("another chat is not opened while a task is running", async () => {
+    const panel = await setup([{ text: "Раз." }, { text: "Пишу.", toolCalls: [{ name: "write_file", args: { path: "b.txt", content: "B\n" } }] }, { text: "Готово." }]);
+    await panel.task("первый чат");
+    panel.provider.newChat();
+    expect(await eventually(() => archived().length === 1)).toBe(true);
+
+    const from = panel.posted.length;
+    panel.send({ type: "send", text: "второй чат" });
+    const ask = await panel.waitFor(isType("approval_request"), from);
+    choose("первый чат", "Открыть");
+    await panel.provider.showChats();
+    expect(stub.messages.at(-1)).toMatch(/^dimosi ещё работает над задачей/);
+    expect(panel.posted.slice(from).some(isType("restore"))).toBe(false);
+    expect(archived()).toEqual(["первый чат"]);
+    panel.send({ type: "approval_response", id: ask.id, decision: "allow" });
+    await panel.waitFor((m): m is Extract<ToWebview, { type: "busy" }> => m.type === "busy" && !m.busy, from);
+  });
+});
+
 describe("effort", () => {
   it("the setting reaches the panel and the agent; a service without it is named once per chat", async () => {
     const panel = await setup([{ text: "Раз." }, { text: "Два." }]);
