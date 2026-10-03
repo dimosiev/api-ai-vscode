@@ -1,7 +1,7 @@
 {
   "name": "dimosi",
   "private": true,
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Portable coding agent for VS Code and the terminal that works with any LLM via your own API keys",
   "workspaces": [
     "packages/core",
