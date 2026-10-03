@@ -1,0 +1,78 @@
+// Findings of the audit after 0.5.4 (docs/AUDIT.md, «Аудит после 0.5.4») in the extension.
+// bug(...) is green while the bug is there; real failures: AUDIT_STRICT=1 npx vitest run audit054.
+import { mkdtempSync, promises as fs } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { describe, expect, it } from "vitest";
+import { polzaImages } from "@dimosi/core";
+import { fetchWithDirectFallback } from "../src/directFetch";
+import { pictureDataUrl } from "../src/pictures";
+
+const bug = process.env.AUDIT_STRICT ? it : it.fails;
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+/** What Node reports when the connection broke after the request had gone out. */
+const reset = () => new TypeError("fetch failed", { cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }) });
+
+describe("О-2: the direct way repeats a request the service may already have received", () => {
+  /** Polza AI as the service sees it: every POST /media starts one paid picture. */
+  function service() {
+    const started: string[] = [];
+    const answer = (url: string, init?: RequestInit): Response => {
+      if (init?.method === "POST") {
+        started.push(String(init.body));
+        return json({ id: `aig_${started.length}`, status: "completed", data: { url: "https://s3.polza.ai/x.png" } });
+      }
+      return new Response(PNG);
+    };
+    return { started, answer };
+  }
+
+  bug("one approved picture is one paid request, even when the answer was lost on the way back through the proxy", async () => {
+    const { started, answer } = service();
+    let lost = false;
+    const send = fetchWithDirectFallback({
+      // The proxy passed the request on, the service started the picture, then the connection dropped.
+      primary: (async (url: string, init?: RequestInit) => {
+        const res = answer(url, init);
+        if (init?.method === "POST" && !lost) {
+          lost = true;
+          throw reset();
+        }
+        return res;
+      }) as unknown as typeof fetch,
+      direct: () => (async (url: string, init?: RequestInit) => answer(url, init)) as unknown as typeof fetch,
+    });
+    await polzaImages({ apiKey: "k", fetch: send }).generate({ prompt: "кот" }).catch(() => undefined);
+    expect(started).toHaveLength(1);
+  });
+
+  it("(for comparison) a request that never left is repeated directly: that is what the fallback is for", async () => {
+    const { started, answer } = service();
+    const send = fetchWithDirectFallback({
+      primary: async () => {
+        throw new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:1082"), { code: "ECONNREFUSED" }) });
+      },
+      direct: () => (async (url: string, init?: RequestInit) => answer(url, init)) as unknown as typeof fetch,
+    });
+    const image = await polzaImages({ apiKey: "k", fetch: send }).generate({ prompt: "кот" });
+    expect(image.bytes).toHaveLength(PNG.length);
+    expect(started).toHaveLength(1);
+  });
+});
+
+describe("checked and fine: the panel gets only real pictures", () => {
+  it("a text file named like a picture, a link to a secret file and a missing file give nothing", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "dimosi-audit054-"));
+    await fs.writeFile(path.join(dir, ".env"), "KEY=secret");
+    await fs.writeFile(path.join(dir, "notes.png"), "KEY=secret");
+    await fs.symlink(path.join(dir, ".env"), path.join(dir, "link.png"));
+    await fs.writeFile(path.join(dir, "real.png"), PNG);
+    expect(await pictureDataUrl(path.join(dir, "notes.png"))).toBeUndefined();
+    expect(await pictureDataUrl(path.join(dir, "link.png"))).toBeUndefined();
+    expect(await pictureDataUrl(path.join(dir, "gone.png"))).toBeUndefined();
+    expect(await pictureDataUrl(path.join(dir, ".env"))).toBeUndefined();
+    expect(await pictureDataUrl(path.join(dir, "real.png"))).toMatch(/^data:image\/png;base64,/);
+  });
+});
