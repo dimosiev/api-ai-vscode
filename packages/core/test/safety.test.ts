@@ -514,6 +514,84 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
     }
   });
 
+  it("lets a command read only the secret files named for it", () => {
+    mkdirSync(path.join(project, "marketing"));
+    writeFileSync(path.join(project, "marketing/.env"), "TOKEN=FROM_MARKETING");
+    writeFileSync(path.join(project, ".env"), "TOKEN=FROM_ROOT");
+    expect(run("cat marketing/.env").out).not.toContain("FROM_MARKETING");
+    paths.secretFiles = [path.join(project, "marketing/.env")];
+    expect(run("cat marketing/.env").out).toContain("FROM_MARKETING");
+    expect(run("cat .env").out).not.toContain("FROM_ROOT");
+    // Private folders stay closed. The test home, by its full path: `~` here is the real home.
+    expect(run(`cat "${path.join(home, ".ssh/id_ed25519")}"`).out).not.toContain("PRIVATE");
+  });
+
+  describe("run_command with secret_files", () => {
+    beforeEach(async () => {
+      root = project;
+      mkdirSync(path.join(project, "marketing"));
+      writeFileSync(path.join(project, "marketing/.env"), "TOKEN=abc123\n");
+      writeFileSync(path.join(project, ".env"), "OTHER=zzz999\n");
+      // A script that needs its token to work and does not print it.
+      writeFileSync(path.join(project, "report.sh"), `. marketing/.env && [ "$TOKEN" = abc123 ] && echo REPORT_OK`);
+    });
+
+    it("without it the script fails and the model is told about secret_files", async () => {
+      const r = await call("run_command", { command: "sh report.sh" }, gate("auto"));
+      expect(r.content).not.toContain("REPORT_OK");
+      expect(r.content).toMatch(/Operation not permitted/);
+      expect(r.content).toMatch(/secret_files/);
+    });
+
+    it("asks every time with a warning, even with approvals off, and never offers Always", async () => {
+      decision = "allow_always";
+      const g = gate("auto");
+      const r = await call("run_command", { command: "sh report.sh", secret_files: ["marketing/.env"] }, g);
+      expect(r.content).toContain("REPORT_OK");
+      await call("run_command", { command: "sh report.sh", secret_files: ["marketing/.env"] }, g);
+      expect(requests).toHaveLength(2);
+      for (const req of requests) {
+        expect(req.kind === "command" && req.warning).toMatch(/marketing\/\.env/);
+        expect(req.kind === "command" && req.always).toBeUndefined();
+      }
+      // The permission ended with the command.
+      expect((await call("run_command", { command: "sh report.sh" }, g)).content).not.toContain("REPORT_OK");
+    });
+
+    it("opens only the named file", async () => {
+      const r = await call("run_command", { command: "cat .env; cat marketing/.env" , secret_files: ["marketing/.env"] });
+      expect(r.content).toContain("abc123");
+      expect(r.content).not.toContain("zzz999");
+    });
+
+    it("a denied command does not run", async () => {
+      decision = "deny";
+      const r = await call("run_command", { command: "sh report.sh > out.txt", secret_files: ["marketing/.env"] }, gate("auto"));
+      expect(r.isError).toBe(true);
+      expect(existsSync(path.join(project, "out.txt"))).toBe(false);
+    });
+
+    it.each([
+      ["outside the project", () => [path.join(home, ".git-credentials")]],
+      ["in a private folder", () => [path.join(os.homedir(), ".ssh/id_ed25519")]],
+      ["not a list of paths", () => "marketing/.env"],
+      ["too many", () => Array.from({ length: 6 }, () => "marketing/.env")],
+    ])("refuses files %s without asking", async (_name, files) => {
+      const r = await call("run_command", { command: "echo RAN", secret_files: files() }, gate("auto"));
+      expect(r.isError).toBe(true);
+      expect(r.content).not.toContain("RAN");
+      expect(requests).toHaveLength(0);
+    });
+
+    it("is refused in plan mode", async () => {
+      const g = gate("auto");
+      g.planOnly = true;
+      const r = await call("run_command", { command: "sh report.sh", secret_files: ["marketing/.env"] }, g);
+      expect(r.isError).toBe(true);
+      expect(requests).toHaveLength(0);
+    });
+  });
+
   it("can be switched off", async () => {
     const probe = path.join(os.homedir(), `dimosi-sandbox-off-probe-${process.pid}-${Date.now()}.txt`);
     try {

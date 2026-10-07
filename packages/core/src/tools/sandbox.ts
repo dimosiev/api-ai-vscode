@@ -54,13 +54,15 @@ export interface SandboxPaths {
   private: string[];
   /** Folders outside the project that the user opened (already checked, see createAccess). */
   folders?: ExtraFolder[];
+  /** Secret files this one command may read: the user allowed it for this command (already checked, see resolvePath). */
+  secretFiles?: string[];
 }
 
-export function defaultSandboxPaths(root: string, folders: ExtraFolder[] = []): SandboxPaths {
+export function defaultSandboxPaths(root: string, folders: ExtraFolder[] = [], secretFiles: string[] = []): SandboxPaths {
   const tmp = real(os.tmpdir());
   // macOS keeps per-user caches next to the temp folder: .../T and .../C.
   const tmpDirs = [path.basename(tmp) === "T" ? path.dirname(tmp) : tmp, "/private/tmp"];
-  return { root, home: os.homedir(), tmpDirs, private: ownDirs(), folders };
+  return { root, home: os.homedir(), tmpDirs, private: ownDirs(), folders, secretFiles };
 }
 
 /** Seatbelt string literal. */
@@ -120,6 +122,8 @@ export function sandboxProfile(paths: SandboxPaths): string {
     // Only their contents: tools may still see that they exist.
     `(deny file-read-data ${regexes(secrets.flatMap((s) => s.secret))})`,
     `(allow file-read-data ${regexes(secrets.flatMap((s) => [s.template, s.dependencies]))})`,
+    // Reading only, and before the private folders below: they stay closed.
+    paths.secretFiles?.length ? `(allow file-read-data ${paths.secretFiles.map((f) => `(literal ${q(real(f))})`).join(" ")})` : "",
     within.length ? `(deny file-read* file-write* ${sub(within)})` : "",
     `(allow file-read* ${sub(HOME_READABLE.map((p) => path.join(home, p)))})`,
     `(deny file-read* file-write* ${sub(HOME_PRIVATE_AGAIN.map((p) => path.join(home, p)))})`,

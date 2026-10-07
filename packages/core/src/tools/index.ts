@@ -301,6 +301,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: {
         command: { type: "string", description: "Shell command to run." },
         timeout_seconds: { type: "integer", description: "Default 120, max 600." },
+        secret_files: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Only when a program of the project cannot work without its own file with keys (a script that calls an API with a token from .env): the paths of those files. " +
+            "This one command may then read them; the user is asked every time. The command must use the keys, never print or copy them.",
+        },
       },
       required: ["command"],
       additionalProperties: false,
@@ -642,29 +649,49 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     const unprotected = sandboxed && !sandboxAvailable();
     // Without the sandbox a command can reach the whole computer: the user decides every time.
     const warning = unprotected ? "Песочница macOS не запустилась: команда будет работать со всеми вашими правами." : undefined;
-    const ok = await gate.check({ kind: "command", command, cwd: root, warning });
+    const access = accessOf(ctx);
+    const secretFiles = secretFilesOf(input, access);
+    // Without the sandbox nothing is closed to the command, so there is nothing to open.
+    const secretsWarning = secretFiles.length && sandboxed && !unprotected
+      ? `Команда сможет прочитать файлы с паролями и ключами: ${secretFiles.map((f) => revealHidden(showPath(access, f))).join(", ")}. ` +
+        "Обычно песочница это запрещает. Разрешайте, только если это ваша программа, которой ключи нужны для работы: всё, что команда напечатает, уйдёт сервису ИИ."
+      : undefined;
+    const ok = await gate.check({ kind: "command", command, cwd: root, warning: warning ?? secretsWarning });
     if (!ok) throw new Error("The user rejected this command.");
     if (!sandboxed) return runShell(command, root, timeout, signal);
     if (unprotected) {
       return "Note: the macOS sandbox could not start, so this command ran without it.\n" + (await runShell(command, root, timeout, signal));
     }
-    const result = await runShell(command, root, timeout, signal, accessOf(ctx));
+    const result = await runShell(command, root, timeout, signal, access, secretFiles);
     return /Operation not permitted/.test(result)
       ? `${result}\n\n${SANDBOX_HINT}`
       : result;
   },
 };
 
+const MAX_SECRET_FILES = 5;
+
+/** The files of `secret_files`, checked like any path from the model: inside the project or an open folder, not in a private one. */
+function secretFilesOf(input: Input, access: AccessPolicy): string[] {
+  const list = input.secret_files;
+  if (list === undefined) return [];
+  if (!Array.isArray(list) || list.some((p) => typeof p !== "string" || !p) || list.length > MAX_SECRET_FILES) {
+    throw new Error(`Invalid "secret_files" (expected up to ${MAX_SECRET_FILES} file paths).`);
+  }
+  return list.map((p: string) => resolvePath(access, p));
+}
+
 const SANDBOX_HINT =
   "Note: dimosi runs commands in a sandbox. It blocks writing outside the project and the extra folders the user opened for writing (temp folders and package caches are allowed), " +
   "changing git hooks and settings, .vscode, .dimosi, .husky, .devcontainer, .github/workflows and .envrc, starting apps (open, osascript), reading the project's secret files (.env, keys) and private folders (~/.ssh, ~/Documents, ~/Desktop, ~/Downloads and others). " +
-  "Do not try to work around it. If the command really needs this, tell the user: they can run it in their own terminal.";
+  "Do not try to work around it. If a program of the project needs its own file with keys to work (a script reading a token from .env), run the command again with secret_files naming that file: the user decides. " +
+  "For anything else the command really needs, tell the user: they can run it in their own terminal.";
 
 /** With `sandboxed`, the command runs in the macOS sandbox built from that access rule. */
-function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal, sandboxed?: AccessPolicy): Promise<string> {
+function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal, sandboxed?: AccessPolicy, secretFiles?: string[]): Promise<string> {
   if (signal?.aborted) return Promise.resolve("Cancelled by the user.");
   const isWindows = process.platform === "win32";
-  const sandbox = sandboxed ? sandboxedCommand(command, defaultSandboxPaths(cwd, sandboxed.folders)) : undefined;
+  const sandbox = sandboxed ? sandboxedCommand(command, defaultSandboxPaths(cwd, sandboxed.folders, secretFiles)) : undefined;
   return new Promise((resolve) => {
     const child = spawn(sandbox?.file ?? command, sandbox?.args ?? [], {
       cwd,
