@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createProvider,
   PRESETS,
@@ -283,6 +283,13 @@ describe("presets", () => {
 
 describe("TeamoRouter: one service, two entries (the Anthropic format for Claude, the OpenAI one for all models)", () => {
   /** Answers the model list and a chat in the Anthropic format; remembers where each request went and with what. */
+  beforeEach(() => {
+    process.env.ANTHROPIC_AUTH_TOKEN = "token-of-another-service";
+  });
+  afterEach(() => {
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+  });
+
   function teamo(presetId: string, models: string[] = []) {
     const calls: { url: URL; headers: Headers; body?: any }[] = [];
     const ev = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
@@ -311,6 +318,8 @@ describe("TeamoRouter: one service, two entries (the Anthropic format for Claude
     const events = await collect(provider.stream({ model: "claude-opus-5-5", system: "s", messages: history, tools: [], effort: "high" }));
     expect(calls.map((c) => c.url.href)).toEqual(["https://api.teamorouter.com/v1/messages"]);
     expect(calls[0].headers.get("x-api-key")).toBe("sk-teamo-test");
+    // Set in beforeEach below: a token of another service must not travel along.
+    expect(calls[0].headers.get("authorization")).toBeNull();
     expect(calls[0].body.cache_control).toEqual({ type: "ephemeral" });
     expect(calls[0].body.output_config).toEqual({ effort: "high" });
     const done = events.at(-1) as Extract<StreamEvent, { type: "done" }>;

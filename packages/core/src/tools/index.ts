@@ -4,7 +4,7 @@ import { constants as fsConstants, promises as fs } from "node:fs";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
-import { createAccess, folderOf, isClosedFolder, relativeInFolder, resolvePath, showPath, type AccessPolicy } from "../access";
+import { createAccess, folderOf, inside, isClosedFolder, realPath, relativeInFolder, resolvePath, showPath, type AccessPolicy } from "../access";
 import { PLAN_MODE_REFUSAL, revealHidden, type PermissionGate } from "../permissions";
 import type { ToolCallPart, ToolDefinition } from "../types";
 import { commandEnv, defaultSandboxPaths, sandboxAvailable, sandboxedCommand } from "./sandbox";
@@ -653,16 +653,18 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
     const secretFiles = secretFilesOf(input, access);
     // Without the sandbox nothing is closed to the command, so there is nothing to open.
     const secretsWarning = secretFiles.length && sandboxed && !unprotected
-      ? `Команда сможет прочитать файлы с паролями и ключами: ${secretFiles.map((f) => revealHidden(showPath(access, f))).join(", ")}. ` +
+      ? `Команда сможет прочитать файлы с паролями и ключами: ${secretFiles.map((f) => revealHidden(showRealPath(access, f))).join(", ")}. ` +
         "Обычно песочница это запрещает. Разрешайте, только если это ваша программа, которой ключи нужны для работы: всё, что команда напечатает, уйдёт сервису ИИ."
       : undefined;
     const ok = await gate.check({ kind: "command", command, cwd: root, warning: warning ?? secretsWarning, secretFiles: secretsWarning ? secretFiles : undefined });
     if (!ok) throw new Error("The user rejected this command.");
+    // The files the user was asked about: a link swapped during the question must not open another file.
+    if (secretFilesOf(input, access).join("\n") !== secretFiles.join("\n")) throw new Error("The secret files changed while the user was deciding, so the command was not run.");
     if (!sandboxed) return runShell(command, root, timeout, signal);
     if (unprotected) {
       return "Note: the macOS sandbox could not start, so this command ran without it.\n" + (await runShell(command, root, timeout, signal));
     }
-    const result = await runShell(command, root, timeout, signal, access, secretFiles);
+    const result = await hideSecretValues(await runShell(command, root, timeout, signal, access, secretFiles), secretFiles);
     return /Operation not permitted/.test(result)
       ? `${result}\n\n${SANDBOX_HINT}`
       : result;
@@ -678,7 +680,57 @@ function secretFilesOf(input: Input, access: AccessPolicy): string[] {
   if (!Array.isArray(list) || list.some((p) => typeof p !== "string" || !p) || list.length > MAX_SECRET_FILES) {
     throw new Error(`Invalid "secret_files" (expected up to ${MAX_SECRET_FILES} file paths).`);
   }
-  return list.map((p: string) => resolvePath(access, p));
+  // The real file: a link is shown, opened and remembered as what it leads to.
+  return list.map((p: string) => realPath(resolvePath(access, p)));
+}
+
+/** showPath for a real path: the project folder itself may be reached through a link. */
+function showRealPath(access: AccessPolicy, real: string): string {
+  const root = realPath(access.root);
+  return inside(real, root) ? showPath(access, path.join(access.root, path.relative(root, real))) : showPath(access, real);
+}
+
+const MAX_SECRET_FILE_BYTES = 100_000;
+/** Shorter values are ordinary words (`true`, `prod`): hiding them would only spoil the output. */
+const MIN_SECRET_VALUE = 8;
+/** A whole line this long is hidden too: key files have no `name=value`. */
+const MIN_SECRET_LINE = 16;
+
+/**
+ * The command was allowed to use the keys, not to show them: values from the
+ * secret files are cut out of its output before the model and the AI service
+ * see it. This catches a program that prints its settings or a plain `cat`;
+ * a value printed in another form (encoded, split) is not found.
+ */
+async function hideSecretValues(output: string, files: string[]): Promise<string> {
+  const values = new Set<string>();
+  for (const file of files) {
+    let text: string;
+    try {
+      const data = await fs.readFile(file);
+      if (data.length > MAX_SECRET_FILE_BYTES) continue;
+      text = data.toString("utf8");
+    } catch {
+      continue;
+    }
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (line.startsWith("#")) continue;
+      // `NAME=value`, `export NAME="value"`, `"name": "value",`: the name stays readable.
+      const value = /^[^=:]*[=:]\s*(.*?)[\s,;]*$/.exec(line)?.[1].replace(/^(["'])(.*)\1$/, "$2") ?? "";
+      // A plain word (`production`, `localhost`) is not a key: hiding it everywhere would spoil the output.
+      if (value.length >= MIN_SECRET_VALUE && (value.length >= MIN_SECRET_LINE || !/^[A-Za-z]+$/.test(value))) values.add(value);
+      else if (line.length >= MIN_SECRET_LINE) values.add(line);
+    }
+  }
+  let hidden = 0;
+  // Long ones first: a short value may be a part of a long one.
+  for (const value of [...values].sort((a, b) => b.length - a.length)) {
+    const parts = output.split(value);
+    hidden += parts.length - 1;
+    output = parts.join("[hidden]");
+  }
+  return hidden ? `${output}\n\nNote: dimosi hid ${hidden} value(s) from the secret files in this output. Do not try to print them another way.` : output;
 }
 
 const SANDBOX_HINT =

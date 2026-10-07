@@ -29,7 +29,8 @@ export class AnthropicProvider implements Provider {
 
   constructor(opts: AnthropicProviderOptions) {
     this.id = opts.id ?? "anthropic";
-    this.client = new Anthropic({ apiKey: opts.apiKey, baseURL: opts.baseURL, fetch: opts.fetch });
+    // authToken: the library would take ANTHROPIC_AUTH_TOKEN from the environment and send it to whatever service this is.
+    this.client = new Anthropic({ apiKey: opts.apiKey, authToken: null, baseURL: opts.baseURL, fetch: opts.fetch });
   }
 
   async *stream(req: ChatRequest): AsyncIterable<StreamEvent> {

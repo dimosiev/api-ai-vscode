@@ -522,6 +522,11 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
     paths.secretFiles = [path.join(project, "marketing/.env")];
     expect(run("cat marketing/.env").out).toContain("FROM_MARKETING");
     expect(run("cat .env").out).not.toContain("FROM_ROOT");
+    // A file outside the open folders or in a private folder is not opened even if it got into the list
+    // (a link swapped while the user was reading the question).
+    writeFileSync(path.join(home, "Documents/other/.env"), "TOKEN=NEIGHBOUR");
+    paths.secretFiles = [path.join(project, "marketing/.env"), path.join(home, ".ssh/id_ed25519"), path.join(home, "Documents/other/.env"), path.join(home, "Documents/other/diary.txt")];
+    expect(run(`cat "${path.join(home, "Documents/other/.env")}" "${path.join(home, "Documents/other/diary.txt")}"`).out).not.toMatch(/NEIGHBOUR|DIARY/);
     // Private folders stay closed. The test home, by its full path: `~` here is the real home.
     expect(run(`cat "${path.join(home, ".ssh/id_ed25519")}"`).out).not.toContain("PRIVATE");
   });
@@ -577,6 +582,9 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
         ["sh report.sh", [".env"]],
         ["sh report.sh", ["marketing/.env", ".env"]],
         ["python3 tool.py review; cat marketing/.e*", ["marketing/.env"]],
+        // File name patterns: the remembered beginning must not cover `cat`-like reading by a pattern.
+        ["python3 tool.py marketing/.e*", ["marketing/.env"]],
+        ["python3 tool.py .en?", ["marketing/.env"]],
         ["python3 tool.py --env marketing/.env", ["marketing/.env"]],
       ] as const) {
         const before = requests.length;
@@ -602,6 +610,55 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
       const r = await call("run_command", { command: "cat .env; cat marketing/.env" , secret_files: ["marketing/.env"] });
       expect(r.content).toContain("abc123");
       expect(r.content).not.toContain("zzz999");
+    });
+
+    it("values from the secret file are cut out of the output before the model sees it", async () => {
+      writeFileSync(
+        path.join(project, "marketing/.env"),
+        '# comment\nTOKEN=sk-live-0123456789abcdef\nexport LOGIN="direct-user-42"\nURL = https://api.example.com/v5\nMODE=prod\nNODE_ENV=production\nHOST=localhost\n',
+      );
+      writeFileSync(path.join(project, "marketing/key.pem"), "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----\n");
+      const r = await call("run_command", { command: "cat marketing/.e*; cat marketing/key.p*; echo MODE=prod done; echo built for production on localhost", secret_files: ["marketing/.env", "marketing/key.pem"] });
+      for (const leaked of ["sk-live-0123456789abcdef", "direct-user-42", "https://api.example.com/v5", "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"]) expect(r.content, leaked).not.toContain(leaked);
+      // Names and short ordinary values stay: the output must remain readable.
+      expect(r.content).toContain("TOKEN=");
+      expect(r.content).toContain("MODE=prod done");
+      expect(r.content).toContain("built for production on localhost");
+      expect(r.content).toMatch(/dimosi hid/);
+      // A program that only uses the key is not touched.
+      writeFileSync(path.join(project, "use.sh"), `. marketing/.env && [ "$TOKEN" = sk-live-0123456789abcdef ] && echo USED_OK`);
+      const used = await call("run_command", { command: "sh use.sh", secret_files: ["marketing/.env"] });
+      expect(used.content).toContain("USED_OK");
+      expect(used.content).not.toMatch(/dimosi hid/);
+    });
+
+    it("a link is shown and opened as the file it leads to", async () => {
+      await fs.symlink(path.join(project, "marketing/.env"), path.join(project, "notes.txt"));
+      const r = await call("run_command", { command: "sh report.sh", secret_files: ["notes.txt"] });
+      expect(r.content).toContain("REPORT_OK");
+      const req = requests[0];
+      expect(req.kind === "command" && req.warning).toMatch(/marketing\/\.env/);
+      expect(req.kind === "command" && req.warning).not.toMatch(/notes\.txt/);
+      // A link that leads out of the project is refused.
+      await fs.symlink(path.join(home, ".git-credentials"), path.join(project, "creds.txt"));
+      expect((await call("run_command", { command: "cat creds.txt", secret_files: ["creds.txt"] })).isError).toBe(true);
+      expect(requests).toHaveLength(1);
+    });
+
+    it("a file swapped for a link while the user was deciding is not opened", async () => {
+      const g = new PermissionGate({
+        approve: async (req) => {
+          requests.push(req);
+          // What a process left behind by an earlier command could do during the question.
+          rmSync(path.join(project, "marketing"), { recursive: true });
+          await fs.symlink(path.join(home, "Documents/other"), path.join(project, "marketing"));
+          return "allow";
+        },
+      });
+      writeFileSync(path.join(home, "Documents/other/.env"), "TOKEN=NEIGHBOUR-0123456789\n");
+      const r = await call("run_command", { command: "cat marketing/.e*", secret_files: ["marketing/.env"] }, g);
+      expect(r.isError).toBe(true);
+      expect(r.content).not.toContain("NEIGHBOUR");
     });
 
     it("a denied command does not run", async () => {

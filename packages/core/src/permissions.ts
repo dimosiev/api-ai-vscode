@@ -194,6 +194,9 @@ export function dangerousCommandWarning(command: string): string | undefined {
   return DANGEROUS_COMMANDS.find(([re]) => re.test(command))?.[1];
 }
 
+/** Shell file name patterns and the home folder sign. */
+const FILE_PATTERN = /[*?[\]{}~]/;
+
 /** What the model is told when a call is refused in "plan first" mode. */
 export const PLAN_MODE_REFUSAL =
   "Plan mode is on, so this call was not run and nothing was changed. Finish investigating with the read-only tools " +
@@ -292,7 +295,9 @@ export class PermissionGate {
    * with the same files, so that a report run ten times is asked about once.
    */
   private async checkSecrets(req: Extract<ApprovalRequest, { kind: "command" }>, files: string[]): Promise<boolean> {
-    if (this.sessionSecrets.some((s) => ruleMatches(s.rule, req.command) && files.every((f) => s.files.includes(f)))) return true;
+    // A file name pattern (`cat .en*`) is not what was remembered, whatever the command begins with.
+    const same = (rule: CommandRule) => ruleMatches(rule, req.command) && (rule.kind === "exact" || !FILE_PATTERN.test(req.command));
+    if (this.sessionSecrets.some((s) => same(s.rule) && files.every((f) => s.files.includes(f)))) return true;
     const always = commandRule(req.command);
     const decision = await this.handler.approve({ ...req, always, untilNewChat: true });
     if (decision === "allow_always") this.sessionSecrets.push({ rule: always, files });

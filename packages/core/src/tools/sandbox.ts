@@ -103,6 +103,9 @@ export function sandboxProfile(paths: SandboxPaths): string {
   const within = priv.filter((p) => !opened(p).length);
   const way = [...new Set(around.flatMap((p) => opened(p).flatMap((f) => foldersBetween(p, f.path))))];
   const secrets = open.map((f) => secretPathPatterns(regexQuote(f.path)));
+  // Checked again here, by the real path: a rule for `file-read-data` is stronger than a ban on
+  // `file-read*` wherever it stands, so a file in a private folder or outside the open ones must not get one.
+  const secretFiles = (paths.secretFiles ?? []).map(real).filter((f) => open.some((o) => inside(f, o.path)) && !within.some((p) => inside(f, p)));
   const regexes = (list: string[]) => list.map((r) => `(regex #"${r}")`).join(" ");
   const lines = [
     "(version 1)",
@@ -122,8 +125,7 @@ export function sandboxProfile(paths: SandboxPaths): string {
     // Only their contents: tools may still see that they exist.
     `(deny file-read-data ${regexes(secrets.flatMap((s) => s.secret))})`,
     `(allow file-read-data ${regexes(secrets.flatMap((s) => [s.template, s.dependencies]))})`,
-    // Reading only, and before the private folders below: they stay closed.
-    paths.secretFiles?.length ? `(allow file-read-data ${paths.secretFiles.map((f) => `(literal ${q(real(f))})`).join(" ")})` : "",
+    secretFiles.length ? `(allow file-read-data ${secretFiles.map((f) => `(literal ${q(f)})`).join(" ")})` : "",
     within.length ? `(deny file-read* file-write* ${sub(within)})` : "",
     `(allow file-read* ${sub(HOME_READABLE.map((p) => path.join(home, p)))})`,
     `(deny file-read* file-write* ${sub(HOME_PRIVATE_AGAIN.map((p) => path.join(home, p)))})`,
