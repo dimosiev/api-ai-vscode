@@ -543,8 +543,7 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
       expect(r.content).toMatch(/secret_files/);
     });
 
-    it("asks every time with a warning, even with approvals off, and never offers Always", async () => {
-      decision = "allow_always";
+    it("asks with a warning even with approvals off; plain allow is not remembered", async () => {
       const g = gate("auto");
       const r = await call("run_command", { command: "sh report.sh", secret_files: ["marketing/.env"] }, g);
       expect(r.content).toContain("REPORT_OK");
@@ -552,10 +551,51 @@ describe.runIf(process.platform === "darwin")("macOS sandbox", () => {
       expect(requests).toHaveLength(2);
       for (const req of requests) {
         expect(req.kind === "command" && req.warning).toMatch(/marketing\/\.env/);
-        expect(req.kind === "command" && req.always).toBeUndefined();
+        // Offered only until the new chat, never saved for the project.
+        expect(req.kind === "command" && req.untilNewChat).toBe(true);
       }
       // The permission ended with the command.
       expect((await call("run_command", { command: "sh report.sh" }, g)).content).not.toContain("REPORT_OK");
+    });
+
+    it("«until the new chat» remembers this program with these files, and nothing wider", async () => {
+      writeFileSync(path.join(project, "tool.py"), "");
+      const g = gate();
+      const withEnv = (command: string, files = ["marketing/.env"]) => call("run_command", { command, secret_files: files }, g);
+      decision = "allow_always";
+      expect((await withEnv("sh report.sh")).content).toContain("REPORT_OK");
+      await withEnv("python3 tool.py review");
+      expect(requests).toHaveLength(2);
+      // From here every question would be refused: only what was remembered runs.
+      decision = "deny";
+      expect((await withEnv("sh report.sh")).content).toContain("REPORT_OK");
+      expect((await withEnv("python3 tool.py stats --days 7")).isError).toBeFalsy();
+      expect(requests).toHaveLength(2);
+      // Another program, another file, a chain, and a command that names the file itself are asked about.
+      for (const [command, files] of [
+        ["sh other.sh", ["marketing/.env"]],
+        ["sh report.sh", [".env"]],
+        ["sh report.sh", ["marketing/.env", ".env"]],
+        ["python3 tool.py review; cat marketing/.e*", ["marketing/.env"]],
+        ["python3 tool.py --env marketing/.env", ["marketing/.env"]],
+      ] as const) {
+        const before = requests.length;
+        expect((await withEnv(command, [...files])).isError, command).toBe(true);
+        expect(requests.length, command).toBe(before + 1);
+      }
+      // The command that names the file is never offered to be remembered.
+      expect(requests.at(-1)).not.toHaveProperty("untilNewChat", true);
+      // The saved "Always" list of the project did not get it, and a new chat forgets it.
+      g.resetSessionApprovals();
+      expect((await withEnv("sh report.sh")).isError).toBe(true);
+    });
+
+    it("what was remembered is still refused in plan mode", async () => {
+      const g = gate();
+      decision = "allow_always";
+      await call("run_command", { command: "sh report.sh", secret_files: ["marketing/.env"] }, g);
+      g.planOnly = true;
+      expect((await call("run_command", { command: "sh report.sh", secret_files: ["marketing/.env"] }, g)).isError).toBe(true);
     });
 
     it("opens only the named file", async () => {

@@ -25,6 +25,10 @@ export type ApprovalRequest =
       warning?: string;
       /** What "Always" would remember, set by the gate. Absent when "Always" is not offered. */
       always?: CommandRule;
+      /** Secret files (absolute paths) the sandbox lets this command read. Always asked about, see checkSecrets. */
+      secretFiles?: string[];
+      /** Set by the gate: "Always" is offered despite the warning and lasts only until the new chat. */
+      untilNewChat?: boolean;
     }
   | {
       /** Reading a web page. "Always" remembers the site. */
@@ -206,6 +210,8 @@ export class PermissionGate {
   /** Rules of this chat: all of them without a store, or those the store could not save. */
   private sessionRules: CommandRule[] = [];
   private sessionSites: string[] = [];
+  /** Commands allowed to read secret files until the new chat. Never saved: a new chat starts from nothing. */
+  private sessionSecrets: Array<{ rule: CommandRule; files: string[] }> = [];
   /**
    * "Plan first": nothing is changed and the user is not asked. Every write
    * and every command is refused, also the commands allowed with "Always":
@@ -235,6 +241,8 @@ export class PermissionGate {
     }
     const remembered = () => req.kind === "command" && [...(this.rules?.list() ?? []), ...this.sessionRules].some((rule) => ruleMatches(rule, req.command));
     if (this.planOnly) throw new Error(PLAN_MODE_REFUSAL);
+    // Hidden characters, a dangerous command or one that names a secret file itself: asked as any such command.
+    if (req.kind === "command" && req.secretFiles?.length && !hiddenCharsWarning(req) && !own) return this.checkSecrets(req, req.secretFiles);
     if (warning) return (await this.handler.approve({ ...req, warning })) !== "deny";
     if (this.mode === "auto") return true;
     if (req.kind === "write") {
@@ -278,10 +286,24 @@ export class PermissionGate {
     return decision !== "deny";
   }
 
-  /** New chat: "Always" for file writes is forgotten; saved command rules stay. */
+  /**
+   * A command that reads secret files is asked about in any mode. The user
+   * may remember it until the new chat: the same program (see commandRule)
+   * with the same files, so that a report run ten times is asked about once.
+   */
+  private async checkSecrets(req: Extract<ApprovalRequest, { kind: "command" }>, files: string[]): Promise<boolean> {
+    if (this.sessionSecrets.some((s) => ruleMatches(s.rule, req.command) && files.every((f) => s.files.includes(f)))) return true;
+    const always = commandRule(req.command);
+    const decision = await this.handler.approve({ ...req, always, untilNewChat: true });
+    if (decision === "allow_always") this.sessionSecrets.push({ rule: always, files });
+    return decision !== "deny";
+  }
+
+  /** New chat: "Always" for file writes and for secret files is forgotten; saved command rules stay. */
   resetSessionApprovals(): void {
     this.writesAllowed = false;
     this.sessionRules = [];
     this.sessionSites = [];
+    this.sessionSecrets = [];
   }
 }

@@ -656,7 +656,7 @@ const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<strin
       ? `Команда сможет прочитать файлы с паролями и ключами: ${secretFiles.map((f) => revealHidden(showPath(access, f))).join(", ")}. ` +
         "Обычно песочница это запрещает. Разрешайте, только если это ваша программа, которой ключи нужны для работы: всё, что команда напечатает, уйдёт сервису ИИ."
       : undefined;
-    const ok = await gate.check({ kind: "command", command, cwd: root, warning: warning ?? secretsWarning });
+    const ok = await gate.check({ kind: "command", command, cwd: root, warning: warning ?? secretsWarning, secretFiles: secretsWarning ? secretFiles : undefined });
     if (!ok) throw new Error("The user rejected this command.");
     if (!sandboxed) return runShell(command, root, timeout, signal);
     if (unprotected) {

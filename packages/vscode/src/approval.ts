@@ -75,7 +75,7 @@ export class WebviewApproval implements ApprovalHandler {
       } else if (req.kind === "fetch") {
         this.ui.post({ type: "approval_request", id, kind: "fetch", url: revealHidden(req.url), host: req.host, warning: req.warning });
       } else {
-        this.ui.post({ type: "approval_request", id, kind: "command", command: revealHidden(req.command), warning: req.warning, always: req.always });
+        this.ui.post({ type: "approval_request", id, kind: "command", command: revealHidden(req.command), warning: req.warning, always: req.always, untilNewChat: req.untilNewChat });
       }
       this.ui.reveal();
     });

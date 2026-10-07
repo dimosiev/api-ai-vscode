@@ -90,6 +90,8 @@ export type ToWebview =
       warning?: string;
       /** What "Always" would remember: commands that begin like this, or only this one. */
       always?: { kind: "prefix" | "exact"; text: string };
+      /** "Always" is offered despite the warning and lasts only until the new chat (a command that reads secret files). */
+      untilNewChat?: boolean;
     }
   | {
       type: "approval_request";

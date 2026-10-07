@@ -430,10 +430,13 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         console.log(c.dim("  Агент получит текст страницы. Сайт увидит этот адрес целиком."));
       } else {
         console.log(c.yellow(c.bold("Выполнить команду:")));
-        if (warning) console.log(c.red(c.bold(`⚠ ${warning} Такую команду dimosi всегда показывает отдельно, даже без подтверждений.`)));
+        if (warning) console.log(c.red(c.bold(`⚠ ${warning}${req.untilNewChat ? "" : " Такую команду dimosi всегда показывает отдельно, даже без подтверждений."}`)));
         console.log(`  $ ${revealHidden(req.command)}`);
       }
-      const question = warning || req.kind === "image"
+      const untilNewChat = req.kind === "command" && req.untilNewChat;
+      const question = untilNewChat
+        ? `Разрешить? [y] да / [n] нет / [a] да, и до конца чата не спрашивать про ${req.always?.kind === "prefix" ? `команды «${req.always.text} …»` : "эту же команду"} с этими файлами: `
+        : warning || req.kind === "image"
         ? "Разрешить? [y] да / [n] нет: "
         : req.kind === "write"
           ? "Разрешить? [y] да / [n] нет / [a] да, и не спрашивать про файлы до конца сессии: "
@@ -441,7 +444,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
             ? `Разрешить? [y] да / [n] нет / [a] да, и больше не спрашивать про сайт ${req.host}: `
           : `Разрешить? [y] да / [n] нет / [a] да, и больше не спрашивать в этом проекте про ${req.always?.kind === "prefix" ? `команды «${req.always.text} …»` : "эту же команду"}: `;
       const answer = ((await io.ask(c.yellow(question), { signal: controller?.signal })) ?? "").toLowerCase();
-      if (["a", "а", "always", "всегда", "в"].includes(answer)) return warning ? "allow" : "allow_always";
+      if (["a", "а", "always", "всегда", "в"].includes(answer)) return warning && !untilNewChat ? "allow" : "allow_always";
       if (["y", "yes", "д", "да"].includes(answer)) return "allow";
       return "deny";
     },

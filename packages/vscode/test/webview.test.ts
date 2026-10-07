@@ -115,6 +115,23 @@ describe("chat webview", () => {
     send({ type: "approval_resolved", id: "c9", decision: "deny" });
   });
 
+  it("a command that reads secret files can be remembered until the new chat only", () => {
+    send({ type: "approval_request", id: "s1", kind: "command", command: "python3 tools/direct.py review", warning: "Команда сможет прочитать файлы с паролями и ключами: marketing/.env.", always: { kind: "prefix", text: "python3 tools/direct.py" }, untilNewChat: true });
+    const card = $$(".approval").at(-1)!;
+    expect(card.querySelector(".approval-warning")?.textContent).toContain("marketing/.env");
+    const buttons = [...card.querySelectorAll(".approval-actions .btn")] as HTMLElement[];
+    expect(buttons.map((b) => b.textContent)).toEqual(["Выполнить", "Отклонить", "Запомнить до конца чата"]);
+    expect(buttons[2].title).toContain("начинаются с «python3 tools/direct.py»");
+    buttons[2].click();
+    expect(posted.at(-1)).toEqual({ type: "approval_response", id: "s1", decision: "allow_always" });
+    send({ type: "approval_resolved", id: "s1", decision: "allow_always" });
+    const result = card.querySelector(".approval-result")!;
+    expect(result.textContent).toContain("до конца чата");
+    expect(result.textContent).not.toContain("в этом проекте");
+    // Nothing was saved for the project: no link to the saved list.
+    expect(result.querySelector(".btn")).toBeNull();
+  });
+
   it("an ordinary command says what Always will remember, and afterwards links to the list", () => {
     send({ type: "approval_request", id: "c10", kind: "command", command: "npm test -- --watch", always: { kind: "prefix", text: "npm test" } });
     const card = $$(".approval").at(-1)!;

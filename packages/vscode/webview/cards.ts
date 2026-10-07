@@ -172,9 +172,20 @@ type Always = { kind: "prefix" | "exact"; text: string };
 
 const short = (text: string) => (text.length > 40 ? `${text.slice(0, 40)}…` : text);
 
-export function approvalCommandCard(id: string, command: string, post: Post, warning?: string, always?: Always): HTMLElement {
+export function approvalCommandCard(id: string, command: string, post: Post, warning?: string, always?: Always, untilNewChat?: boolean): HTMLElement {
   // Without `always` (a dangerous command) nothing is remembered and there is no "Always" button.
   const remembered = !always ? undefined : always.kind === "prefix" ? `команды, которые начинаются с «${always.text}»` : "эту же команду";
+  // A command that reads secret files: remembered until the new chat only, never saved for the project.
+  if (untilNewChat && warning && remembered) {
+    return h(
+      "div",
+      { class: "approval protected", "data-id": id },
+      h("div", { class: "approval-head" }, svg(ICONS.terminal, "approval-icon"), h("span", { class: "approval-title" }, "Выполнить команду")),
+      h("div", { class: "approval-warning" }, svg(ICONS.warn, "inline-icon"), h("span", {}, warning)),
+      h("pre", { class: "command" }, `$ ${command}`),
+      approvalButtons(id, post, "Выполнить", `До конца этого чата не спрашивать про ${remembered} с этими же файлами. В новом чате dimosi спросит снова.`, undefined, "Запомнить до конца чата"),
+    );
+  }
   return h(
     "div",
     { class: `approval${warning ? " protected" : ""}`, "data-id": id, "data-remembered": remembered },

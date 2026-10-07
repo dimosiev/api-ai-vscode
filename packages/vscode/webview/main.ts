@@ -237,7 +237,7 @@ function handle(msg: ToWebview): void {
             ? approvalImageCard(msg.id, msg.prompt, msg.relPath, msg.model, post, msg.price, msg.warning)
           : msg.kind === "fetch"
             ? approvalFetchCard(msg.id, msg.url, msg.host, post, msg.warning)
-            : approvalCommandCard(msg.id, msg.command, post, msg.warning, msg.always);
+            : approvalCommandCard(msg.id, msg.command, post, msg.warning, msg.always, msg.untilNewChat);
       approvals.set(msg.id, add(card, currentTurn()));
       card.scrollIntoView({ block: "nearest", behavior: "smooth" });
       activityText.textContent = "Ждёт вашего решения…";
