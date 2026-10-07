@@ -70,6 +70,8 @@ export type UserInput = string | Array<TextPart | ImagePart>;
 type DoneEvent = Extract<StreamEvent, { type: "done" }>;
 
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
+/** How many real tokens one roughly counted token of new history is taken for (Cyrillic text: about two). */
+const GROWTH_FACTOR = 2;
 // Notes about "plan first" go into the user's message, never into the system
 // prompt or the tool list: those must stay the same for the prompt cache.
 const PLAN_NOTE =
@@ -102,6 +104,8 @@ export class Agent {
   readonly gate: PermissionGate;
   messages: Message[] = [];
   private maxTokens?: number;
+  /** The last request as the service counted it, next to our rough count of the same history. */
+  private measured?: { rough: number; tokens: number };
   private globalRulesPath?: string;
   private files?: FileAccess;
   private problems?: ProblemWatcher;
@@ -139,6 +143,7 @@ export class Agent {
   reset(): void {
     this.chat++;
     this.messages = [];
+    this.measured = undefined;
     this.layout = undefined;
     this.date = undefined;
     this.access = undefined;
@@ -210,10 +215,17 @@ export class Agent {
 
       for (let step = 0; step < this.maxSteps; step++) {
         // Trim rarely and in one go: every trim invalidates the prompt cache once.
-        const size = estimateTokens(this.messages);
+        const rough = estimateTokens(this.messages);
+        // What the service counted last time plus what was added since. The rough count alone is
+        // far too low: Russian text takes about twice as many tokens, and the system prompt with
+        // the tools is not in it at all.
+        const m = this.measured;
+        const size = m ? Math.max(rough, m.tokens + (rough - m.rough) * GROWTH_FACTOR) : rough;
         if (size > this.contextWindow * 0.7) {
-          trimToolResults(this.messages, this.contextWindow * 0.4);
-          this.log?.info(`context trimmed: ≈${size} → ≈${estimateTokens(this.messages)} tok (window ${this.contextWindow})`);
+          const target = this.contextWindow * 0.4;
+          trimToolResults(this.messages, m ? Math.min(target, m.rough + (target - m.tokens) / GROWTH_FACTOR) : target);
+          this.measured = undefined;
+          this.log?.info(`context trimmed: ≈${Math.round(size)} → ≈${estimateTokens(this.messages)} tok (window ${this.contextWindow})`);
         }
         const done = yield* this.request(system, signal);
         // "New chat" came while the model was answering: the reply belongs to no chat now.
@@ -251,7 +263,14 @@ export class Agent {
           }
           if (done.stopReason === "max_tokens") {
             this.log?.warn("reply cut off at the output token limit");
-            yield { type: "error", message: "Ответ упёрся в лимит длины и был обрезан. Напишите «продолжай»." };
+            // With the context full the service leaves the answer a token or two: asking again as it is would not help.
+            const full = this.measured !== undefined && this.measured.tokens > this.contextWindow * 0.7;
+            yield {
+              type: "error",
+              message: full
+                ? "Переписка заняла почти всю память модели, поэтому ответ оборвался. Напишите «продолжай»: dimosi освободит место (уберёт старые результаты команд) и продолжит."
+                : "Ответ упёрся в лимит длины и был обрезан. Напишите «продолжай».",
+            };
           }
           yield { type: "done", stopReason: done.stopReason };
           return;
@@ -323,7 +342,8 @@ export class Agent {
       let started = false;
       this.streamed = "";
       const at = Date.now();
-      const what = `request ${this.provider.id}/${this.model} (${this.messages.length} messages, ≈${estimateTokens(this.messages) + Math.ceil(system.length / 3)} tok${attempt ? `, attempt ${attempt + 1}` : ""})`;
+      const rough = estimateTokens(this.messages);
+      const what = `request ${this.provider.id}/${this.model} (${this.messages.length} messages, ≈${rough + Math.ceil(system.length / 3)} tok${attempt ? `, attempt ${attempt + 1}` : ""})`;
       try {
         let done: DoneEvent | undefined;
         for await (const ev of this.provider.stream({
@@ -343,6 +363,7 @@ export class Agent {
         }
         if (!done) throw new IncompleteResponseError();
         const u = done.usage;
+        if (u) this.measured = { rough, tokens: u.inputTokens + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0) };
         this.log?.info(`${what}: ok in ${seconds(at)}, stop ${done.stopReason}${u ? `, ${usageText(u)}` : ""}`);
         return done;
       } catch (e) {

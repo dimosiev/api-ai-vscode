@@ -437,3 +437,82 @@ describe("a new chat started while the model is still answering", () => {
     expect(agent.messages).toEqual([]);
   });
 });
+
+describe("the context is measured by what the service counted", () => {
+  // Russian text takes about twice the tokens the rough count expects, and the
+  // system prompt with the tools is not in that count at all: a chat estimated
+  // at 140 thousand was 239 thousand in fact and left no room for the answer.
+  it("trims old tool results when the real size nears the window, though the rough count is far from it", async () => {
+    const root = tmp();
+    for (const name of ["a", "b", "c"]) await fs.writeFile(path.join(root, `${name}.txt`), `${name}: ${"щщщ ".repeat(15).concat("\n").repeat(100)}`);
+    const read = (id: string, file: string, inputTokens: number): StreamEvent[] => [
+      {
+        type: "done",
+        stopReason: "tool_use",
+        message: { role: "assistant", parts: [{ type: "tool_call", id, name: "read_file", input: { path: file } }] },
+        usage: { inputTokens, outputTokens: 10 },
+      },
+    ];
+    const provider = new FakeProvider([
+      () => read("1", "a.txt", 3000),
+      () => read("2", "b.txt", 7000),
+      () => read("3", "c.txt", 11000),
+      () => [{ type: "done", stopReason: "end_turn", message: { role: "assistant", parts: [{ type: "text", text: "Готово." }] }, usage: { inputTokens: 5000, outputTokens: 5 } }],
+    ]);
+    const agent = new Agent({ provider, model: "m", root, approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL, contextWindow: 20_000 });
+    await collect(agent.run("прочитай три файла"));
+    const results = (messages: Message[]) => messages.flatMap((m) => m.parts).flatMap((p) => (p.type === "tool_result" ? [p.content] : []));
+    // Up to the third request nothing is touched: the cache must not be reset early.
+    expect(results(provider.requests[2]).every((r) => r.includes("щщщ"))).toBe(true);
+    // Before the fourth the service had counted 11000 and another file came: over 70% of 20000.
+    const last = results(provider.requests[3]);
+    expect(last).toHaveLength(3);
+    expect(last[0]).not.toContain("щщщ");
+    // The newest result, the one the model has not seen yet, stays.
+    expect(last[2]).toContain("c: щщщ");
+  });
+
+  it("a new chat forgets the measure", async () => {
+    const root = tmp();
+    await fs.writeFile(path.join(root, "a.txt"), "щщщ ".repeat(15).concat("\n").repeat(100));
+    const big: StreamEvent[] = [{ type: "done", stopReason: "end_turn", message: { role: "assistant", parts: [{ type: "text", text: "Да." }] }, usage: { inputTokens: 19_000, outputTokens: 5 } }];
+    const provider = new FakeProvider([
+      () => big,
+      () => [{ type: "done", stopReason: "tool_use", message: { role: "assistant", parts: [{ type: "tool_call", id: "1", name: "read_file", input: { path: "a.txt" } }] } }],
+      () => big,
+    ]);
+    const agent = new Agent({ provider, model: "m", root, approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL, contextWindow: 20_000 });
+    await collect(agent.run("первый чат"));
+    agent.reset();
+    await collect(agent.run("второй чат"));
+    expect(JSON.stringify(provider.requests[2])).toContain("щщщ");
+  });
+});
+
+describe("a reply cut off because the context was full", () => {
+  it("says so, and the next message frees the room first", async () => {
+    const root = tmp();
+    const cut = (inputTokens: number): StreamEvent[] => [{ type: "done", stopReason: "max_tokens", message: { role: "assistant", parts: [{ type: "text", text: "О" }] }, usage: { inputTokens, outputTokens: 1 } }];
+    const provider = new FakeProvider([() => cut(19_500), () => [{ type: "done", stopReason: "end_turn", message: { role: "assistant", parts: [{ type: "text", text: "Отчёт." }] } }]]);
+    const agent = new Agent({ provider, model: "m", root, approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL, contextWindow: 20_000 });
+    // A restored chat: nothing is measured yet, and the rough count (10 thousand) is under the limit.
+    agent.restore([
+      { role: "user", parts: [{ type: "text", text: "проверь проект" }] },
+      { role: "assistant", parts: [{ type: "tool_call", id: "t", name: "read_file", input: { path: "a.txt" } }] },
+      { role: "user", parts: [{ type: "tool_result", toolCallId: "t", content: "щ".repeat(30_000) }] },
+      { role: "assistant", parts: [{ type: "text", text: "Пишу отчёт." }] },
+    ]);
+    const first = await collect(agent.run("продолжай"));
+    expect(first.find((e) => e.type === "error")).toMatchObject({ message: expect.stringMatching(/память модели.*«продолжай».*освободит место/) });
+    expect(JSON.stringify(provider.requests[0])).toContain("щщщ");
+    await collect(agent.run("продолжай"));
+    expect(JSON.stringify(provider.requests[1])).not.toContain("щщщ");
+  });
+
+  it("an ordinary long reply keeps the old message", async () => {
+    const provider = new FakeProvider([() => [{ type: "done", stopReason: "max_tokens", message: { role: "assistant", parts: [{ type: "text", text: "Длинный текст" }] }, usage: { inputTokens: 3000, outputTokens: 4096 } }]]);
+    const agent = new Agent({ provider, model: "m", root: tmp(), approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL, contextWindow: 20_000 });
+    const events = await collect(agent.run("напиши отчёт"));
+    expect(events.find((e) => e.type === "error")).toMatchObject({ message: expect.stringMatching(/^Ответ упёрся в лимит длины/) });
+  });
+});
