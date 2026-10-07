@@ -109,14 +109,16 @@ export class AnthropicProvider implements Provider {
   }
 
   async getPricing(model: string): Promise<Pricing | undefined> {
-    const price = PRICES[model];
+    // The table is Anthropic's own: another service with this format sets its prices itself.
+    const price = this.id === "anthropic" ? PRICES[model] : undefined;
     return price ? { ...price, currency: "USD" } : undefined;
   }
 
   async listModels(): Promise<string[]> {
     const ids: string[] = [];
     for await (const model of this.client.models.list()) ids.push(model.id);
-    return ids;
+    // Another service lists the models of every format; only Claude answers in this one.
+    return this.id === "anthropic" ? ids : ids.filter((id) => /claude/i.test(id));
   }
 }
 

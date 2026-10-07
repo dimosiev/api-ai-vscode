@@ -121,7 +121,7 @@ describe("Р-1: only Polza AI is asked directly when VS Code's proxy is gone", (
     expect(direct).toEqual(["polza.ai", "polza.ai"]);
   });
 
-  for (const id of ["anthropic", "openai", "openrouter", "deepseek"]) {
+  for (const id of ["anthropic", "openai", "openrouter", "teamo", "teamo-openai", "deepseek"]) {
     it(`${id}: the request never leaves around the VPN`, async () => {
       const direct = deadProxy();
       const provider = await buildProvider(readSettings(), keys, id);

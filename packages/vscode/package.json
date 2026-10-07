@@ -271,6 +271,8 @@
             "openai",
             "polza",
             "openrouter",
+            "teamo",
+            "teamo-openai",
             "deepseek",
             "ollama",
             "custom"
@@ -280,6 +282,8 @@
             "OpenAI",
             "Polza AI (polza.ai)",
             "OpenRouter",
+            "TeamoRouter, только модели Claude (с кэшем: дешевле в длинных чатах)",
+            "TeamoRouter, все модели (Claude здесь может идти без кэша)",
             "DeepSeek",
             "Ollama на этом компьютере",
             "Любой OpenAI-совместимый сервер (укажите адрес ниже)"

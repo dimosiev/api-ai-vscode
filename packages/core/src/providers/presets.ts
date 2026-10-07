@@ -57,6 +57,27 @@ export const PRESETS: ProviderPreset[] = [
     defaultModel: "anthropic/claude-opus-5.5",
     includeUsage: true,
   },
+  // TeamoRouter answers in both formats with one key. Its docs: Claude through the OpenAI
+  // format "can lose prompt cache, thinking", so Claude gets an entry of its own.
+  {
+    id: "teamo",
+    label: "TeamoRouter (Claude)",
+    kind: "anthropic",
+    baseURL: "https://api.teamorouter.com",
+    envVar: "TEAMO_API_KEY",
+    requiresKey: true,
+    defaultModel: "claude-opus-5-5",
+  },
+  {
+    id: "teamo-openai",
+    label: "TeamoRouter (all models)",
+    kind: "openai",
+    baseURL: "https://api.teamorouter.com/v1",
+    envVar: "TEAMO_API_KEY",
+    requiresKey: true,
+    defaultModel: "claude-opus-5-5",
+    includeUsage: true,
+  },
   {
     id: "deepseek",
     label: "DeepSeek",

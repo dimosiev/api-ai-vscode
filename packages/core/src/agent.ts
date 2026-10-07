@@ -465,7 +465,7 @@ function usageText(u: Usage): string {
 export function effortIgnoredText(why: "unsupported" | "rejected", model: string): string {
   return why === "rejected"
     ? `Сервис не принял настройку «Усердие» для модели ${model}. Ответ получен без неё, работа продолжается. Чтобы это сообщение не появлялось, выключите настройку.`
-    : "Настройка «Усердие» для этого сервиса не действует: она работает с Anthropic, Polza AI, OpenRouter и OpenAI. Ответ получен как обычно, работа продолжается.";
+    : "Настройка «Усердие» для этого сервиса не действует: она работает с Anthropic, Polza AI, OpenRouter, OpenAI и TeamoRouter (Claude). Ответ получен как обычно, работа продолжается.";
 }
 
 export function trimToolResults(messages: Message[], targetTokens: number): boolean {

@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createProvider,
+  PRESETS,
   parsePricing,
   parseUsage,
   UsageTotals,
@@ -275,6 +278,72 @@ describe("presets", () => {
       if (saved.o === undefined) delete process.env.OPENAI_BASE_URL;
     }
     expect(urls.map((u) => new URL(u).origin)).toEqual(["https://api.anthropic.com", "https://api.openai.com", "https://polza.ai"]);
+  });
+});
+
+describe("TeamoRouter: one service, two entries (the Anthropic format for Claude, the OpenAI one for all models)", () => {
+  /** Answers the model list and a chat in the Anthropic format; remembers where each request went and with what. */
+  function teamo(presetId: string, models: string[] = []) {
+    const calls: { url: URL; headers: Headers; body?: any }[] = [];
+    const ev = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+    const fetchMock = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input instanceof Request ? input.url : input));
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url, headers: new Headers(init?.headers), body });
+      if (url.pathname.endsWith("/models")) {
+        return new Response(JSON.stringify({ object: "list", data: models.map((id) => ({ id, object: "model" })), has_more: false }), { headers: { "content-type": "application/json" } });
+      }
+      return sseResponse([
+        ev("message_start", { message: { id: "m", type: "message", role: "assistant", model: body.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } }),
+        ev("content_block_start", { index: 0, content_block: { type: "text", text: "" } }),
+        ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: "ok" } }),
+        ev("content_block_stop", { index: 0 }),
+        ev("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 2 } }),
+        ev("message_stop", {}),
+      ]);
+    }) as unknown as typeof fetch;
+    // An address from old settings must not move the key elsewhere.
+    return { calls, provider: createProvider({ presetId, apiKey: "sk-teamo-test", baseURL: "https://evil.example/v1", fetch: fetchMock }) };
+  }
+
+  it("the Claude entry talks in the Anthropic format, with the cache mark and the effort", async () => {
+    const { calls, provider } = teamo("teamo");
+    const events = await collect(provider.stream({ model: "claude-opus-5-5", system: "s", messages: history, tools: [], effort: "high" }));
+    expect(calls.map((c) => c.url.href)).toEqual(["https://api.teamorouter.com/v1/messages"]);
+    expect(calls[0].headers.get("x-api-key")).toBe("sk-teamo-test");
+    expect(calls[0].body.cache_control).toEqual({ type: "ephemeral" });
+    expect(calls[0].body.output_config).toEqual({ effort: "high" });
+    const done = events.at(-1) as Extract<StreamEvent, { type: "done" }>;
+    expect(done.message.providerData?.provider).toBe("teamo");
+    expect(done).not.toHaveProperty("effortIgnored");
+  });
+
+  it("the entry for all models talks in the OpenAI format to the same service", async () => {
+    const { calls, provider } = teamo("teamo-openai", ["claude-opus-5-5", "gpt-6.1-sol"]);
+    expect(await provider.listModels()).toEqual(["claude-opus-5-5", "gpt-6.1-sol"]);
+    expect(calls.map((c) => c.url.href)).toEqual(["https://api.teamorouter.com/v1/models"]);
+    expect(calls[0].headers.get("authorization")).toBe("Bearer sk-teamo-test");
+  });
+
+  it("the Claude entry offers only Claude: the service lists every model, the others do not answer in this format", async () => {
+    const { calls, provider } = teamo("teamo", ["claude-opus-5-5", "gpt-6.1-sol", "gemini-3.5-flash", "claude-haiku-4-5"]);
+    expect(await provider.listModels()).toEqual(["claude-opus-5-5", "claude-haiku-4-5"]);
+    expect(calls[0].url.origin).toBe("https://api.teamorouter.com");
+    // Anthropic itself is shown as it answers.
+    const direct = createProvider({ presetId: "anthropic", apiKey: "k", fetch: (async () => new Response(JSON.stringify({ data: [{ id: "some-new-model" }], has_more: false }), { headers: { "content-type": "application/json" } })) as unknown as typeof fetch });
+    expect(await direct.listModels()).toEqual(["some-new-model"]);
+  });
+
+  it("Anthropic's own prices are not shown for another service: its prices may differ", async () => {
+    expect(await teamo("teamo").provider.getPricing!("claude-opus-5-5")).toBeUndefined();
+    expect(await createProvider({ presetId: "anthropic", apiKey: "k" }).getPricing!("claude-opus-5-5")).toEqual({ input: 4, output: 20, currency: "USD" });
+  });
+
+  it("every service of the list can be chosen in the settings of the extension", () => {
+    const manifest = JSON.parse(readFileSync(path.join(__dirname, "../../vscode/package.json"), "utf8"));
+    const setting = manifest.contributes.configuration.properties["dimosi.provider"];
+    expect(setting.enum).toEqual(PRESETS.map((p) => p.id));
+    expect(setting.enumDescriptions).toHaveLength(PRESETS.length);
   });
 });
 
