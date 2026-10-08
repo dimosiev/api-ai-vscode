@@ -5,6 +5,7 @@ export * from "./commandRules";
 export * from "./secrets";
 export * from "./rules";
 export * from "./usage";
+export * from "./subagents";
 export * from "./history";
 export * from "./log";
 export { buildSystemPrompt, snapshotLayout } from "./prompt";

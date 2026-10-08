@@ -1,6 +1,7 @@
 import * as os from "node:os";
 import type { ExtraFolder } from "./access";
 import type { LoadedRules } from "./rules";
+import { subagentsPrompt, type SubagentDef } from "./subagents";
 import { IgnoreMatcher, walk } from "./tools/workspace";
 
 /** Line breaks and other control characters: a file name with them could pose as instructions. */
@@ -21,6 +22,10 @@ export interface PromptInput {
   folders?: ExtraFolder[];
   /** Taken once per chat (see today): a prompt that changes at midnight would lose the cache. */
   date?: string;
+  /** Helpers the agent may start (run_subagent); also taken once per chat. */
+  helpers?: SubagentDef[];
+  /** Added for a helper: what it is and what it does. Replaces the working notes of the main agent. */
+  role?: string;
 }
 
 /** The user's local date: toISOString would give London's, a day behind in the small hours east of it. */
@@ -30,7 +35,7 @@ export function today(): string {
   return `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`;
 }
 
-export function buildSystemPrompt({ root, layout, rules, folders = [], date = today() }: PromptInput): string {
+export function buildSystemPrompt({ root, layout, rules, folders = [], date = today(), helpers = [], role }: PromptInput): string {
   const paths = folders.length
     ? "- Paths are relative to the project root. Outside the project you can reach only the extra folders listed under Environment: use full paths for them. A folder marked \"read only\" must not be changed, by commands either. Everything else is closed."
     : "- All paths are relative to the project root. You cannot access files outside it.";
@@ -64,8 +69,8 @@ ${paths}
 - Project root: ${root}${foldersBlock}
 - OS: ${os.type()} ${os.release()} (${process.platform})
 - Shell commands run with: ${process.platform === "win32" ? "cmd.exe" : "/bin/sh"}
-- Date: ${date} (when this chat started)
+- Date: ${date} (when this chat started)${role ? `\n\n# Your role\n${role}` : ""}
 
 # Project layout (top two levels, at the start of this chat)
-${layout}${rulesBlock}`;
+${layout}${subagentsPrompt(helpers)}${rulesBlock}`;
 }

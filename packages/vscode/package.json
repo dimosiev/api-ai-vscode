@@ -107,7 +107,11 @@
       },
       {
         "command": "dimosi.showCommandRules",
-        "title": "dimosi: Запомненные команды и сайты («Всегда»)…"
+        "title": "dimosi: Запомненные команды, сайты и помощники («Всегда»)…"
+      },
+      {
+        "command": "dimosi.manageSubagents",
+        "title": "dimosi: Помощники (субагенты) и их модели…"
       },
       {
         "command": "dimosi.showRules",
@@ -209,6 +213,11 @@
           "command": "dimosi.showCommandRules",
           "when": "view == dimosi.chat",
           "group": "dimosi@2"
+        },
+        {
+          "command": "dimosi.manageSubagents",
+          "when": "view == dimosi.chat",
+          "group": "dimosi@3"
         }
       ],
       "editor/context": [
@@ -384,6 +393,23 @@
             ]
           },
           "description": "Папки вне проекта, которые открыты агенту. Удобнее менять кнопкой «Изменить» в строке «Доступ» панели чата. Папки с ключами и паролями и секретные файлы остаются закрытыми всегда."
+        },
+        "dimosi.subagents": {
+          "scope": "application",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "Имя латинскими буквами (reader, scout). По нему агент вызывает помощника." },
+              "description": { "type": "string", "description": "Для чего помощник: это читает главный агент, чтобы понять, когда его звать." },
+              "provider": { "type": "string", "description": "Сервис (anthropic, openai, polza, openrouter, teamo, teamo-openai, deepseek, ollama, custom). Пусто — сервис основного чата." },
+              "model": { "type": "string", "description": "Модель помощника. Пусто — модель чата (или модель по умолчанию, если сервис другой)." },
+              "maxSteps": { "type": "integer", "description": "Сколько шагов помощник может сделать за одно задание (по умолчанию 25, не больше 60)." }
+            },
+            "required": ["name", "description"]
+          },
+          "description": "Помощники: отдельные модели, которые читают проект и присылают агенту короткий итог. Помощник «explorer» есть всегда. Удобнее менять командой «dimosi: Помощники (субагенты) и их модели…»: список моделей берётся у выбранного сервиса. Помощники только читают; перед первым запуском dimosi спрашивает, и ответ «Всегда» запоминается."
         },
         "dimosi.autoUpdate": {
           "scope": "application",

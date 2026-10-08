@@ -81,7 +81,7 @@ class Panel {
   }
 
   /** Sends a task and answers approvals with `decide` until the agent is done. */
-  async task(text: string, decide: (m: Extract<ToWebview, { type: "approval_request" }>) => "allow" | "deny" = () => "allow"): Promise<ToWebview[]> {
+  async task(text: string, decide: (m: Extract<ToWebview, { type: "approval_request" }>) => "allow" | "deny" | "allow_always" = () => "allow"): Promise<ToWebview[]> {
     const from = this.posted.length;
     this.send({ type: "send", text });
     const answered = new Set<string>();
@@ -555,6 +555,62 @@ describe("earlier chats", () => {
     expect(archived()).toEqual(["первый чат"]);
     panel.send({ type: "approval_response", id: ask.id, decision: "allow" });
     await panel.waitFor((m): m is Extract<ToWebview, { type: "busy" }> => m.type === "busy" && !m.busy, from);
+  });
+});
+
+describe("helpers", () => {
+  const ask = (task: string) => ({ text: "Спрашиваю помощника.", toolCalls: [{ name: "run_subagent", args: { name: "explorer", task } }] });
+
+  it("the built-in explorer works without setup: asked once, «Always» is kept for good, and its work is shown on the card", async () => {
+    await fs.writeFile(path.join(root, "notes.txt"), "СОДЕРЖИМОЕ-ТОЛЬКО-ДЛЯ-ПОМОЩНИКА\n");
+    const panel = await setup([
+      ask("Что в notes.txt?"),
+      { toolCalls: [{ name: "read_file", args: { path: "notes.txt" } }] }, // the helper reads
+      { text: "В notes.txt одна строка." }, // the helper answers
+      { text: "Помощник нашёл: одна строка." }, // the main agent finishes
+      ask("А теперь ещё раз."),
+      { text: "Всё то же." },
+      { text: "Готово." },
+    ]);
+
+    const first = await panel.task("разберись с notes.txt", () => "allow_always");
+    const request = first.find(isType("approval_request"))!;
+    expect(request).toMatchObject({ kind: "subagent", name: "explorer", external: false, model: "fake-model", task: "Что в notes.txt?" });
+    // What it does is on the card of the tool call, and the card ends with its answer.
+    expect(first.filter(isType("tool_note")).map((m) => m.text)).toEqual(expect.arrayContaining([expect.stringMatching(/notes\.txt/)]));
+    const end = first.filter(isType("tool_end")).find((m) => m.result.includes("В notes.txt одна строка."))!;
+    expect(end.isError).toBe(false);
+    // The file was read by the helper: the main agent got the answer only.
+    const mainRequests = server!.requests.filter((r) => JSON.stringify(r.body.messages).includes("Спрашиваю помощника"));
+    expect(JSON.stringify(mainRequests.at(-1)!.body.messages)).not.toContain("СОДЕРЖИМОЕ-ТОЛЬКО-ДЛЯ-ПОМОЩНИКА");
+    // The helper has no tools that change anything.
+    const helperRequest = server!.requests[1].body as unknown as { tools: Array<{ function: { name: string } }> };
+    expect(helperRequest.tools.map((t) => t.function.name).sort()).toEqual(["fetch_page", "list_files", "read_file", "search"]);
+    expect(context.globalState.get<Record<string, unknown>>("dimosi.commandRules")?.helpers).toEqual([{ kind: "exact", text: "explorer|custom|fake-model" }]);
+
+    const second = await panel.task("и ещё раз", () => "deny");
+    expect(second.filter(isType("approval_request"))).toEqual([]);
+    expect(second.filter(isType("tool_end")).some((m) => !m.isError && m.result.includes("Всё то же."))).toBe(true);
+  });
+
+  it("is not asked in the «no approvals» mode, and a helper from the settings is offered to the agent", async () => {
+    stub.config["dimosi.subagents"] = [{ name: "reader", description: "читает документацию" }];
+    const panel = await setup([{ text: "Привет." }], "auto");
+    stub.config["dimosi.subagents"] = [{ name: "reader", description: "читает документацию" }];
+    await panel.task("привет");
+    const system = (server!.requests[0].body.messages[0].content as string) ?? "";
+    expect(system).toContain("- reader: читает документацию");
+    expect(system).toContain("- explorer:");
+  });
+
+  it("stopping the task while a helper works ends it quickly", async () => {
+    const panel = await setup([ask("долго"), { text: "ответ" }, { text: "конец" }], "auto");
+    const from = panel.posted.length;
+    panel.send({ type: "send", text: "go" });
+    await panel.waitFor((m): m is Extract<ToWebview, { type: "tool_start" }> => m.type === "tool_start", from);
+    panel.send({ type: "stop" });
+    const busy = await panel.waitFor((m): m is Extract<ToWebview, { type: "busy" }> => m.type === "busy" && !m.busy, from);
+    expect(busy.busy).toBe(false);
   });
 });
 

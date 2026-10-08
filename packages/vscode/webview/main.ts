@@ -2,11 +2,13 @@ import { EFFORT_LABELS, type FromWebview, type ToWebview } from "../src/protocol
 import {
   approvalCommandCard,
   approvalFetchCard,
+  approvalHelperCard,
   approvalImageCard,
   approvalWriteCard,
   changesCard,
   chipEl,
   finishToolCard,
+  setToolNote,
   planCard,
   pictureCard,
   planReadyCard,
@@ -211,6 +213,11 @@ function handle(msg: ToWebview): void {
       if (msg.name === "update_plan") break; // shown as the plan card instead
       tools.set(msg.id, add(toolCard(msg.title, msg.name), currentTurn()));
       break;
+    case "tool_note": {
+      const card = tools.get(msg.id);
+      if (card) setToolNote(card, msg.text);
+      break;
+    }
     case "tool_end": {
       const card = tools.get(msg.id);
       if (card) finishToolCard(card, msg.result, msg.isError);
@@ -233,6 +240,8 @@ function handle(msg: ToWebview): void {
       const card =
         msg.kind === "write"
           ? approvalWriteCard(msg.id, msg.relPath, msg.created, msg.diff, post, msg.warning)
+          : msg.kind === "subagent"
+            ? approvalHelperCard(msg.id, msg.name, msg.description, msg.service, msg.model, msg.external, msg.task, post, msg.warning)
           : msg.kind === "image"
             ? approvalImageCard(msg.id, msg.prompt, msg.relPath, msg.model, post, msg.price, msg.warning)
           : msg.kind === "fetch"

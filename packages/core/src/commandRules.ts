@@ -17,6 +17,9 @@ export interface CommandRuleStore {
   /** Sites whose pages may be read without asking. */
   sites?(): string[];
   addSite?(host: string): Promise<void>;
+  /** Helpers (see subagentKey) that may start without asking. */
+  helpers?(): string[];
+  addHelper?(key: string): Promise<void>;
 }
 
 /**
@@ -109,6 +112,8 @@ export interface CommandRulesStorage {
 const MAX_RULES = 200;
 /** Where the allowed sites are kept: one list for all projects (no project folder has this name). */
 const SITES_KEY = "sites";
+/** The same for the helpers allowed to start without asking. */
+const HELPERS_KEY = "helpers";
 
 /**
  * One project's remembered commands. They are kept by the host outside the
@@ -182,5 +187,24 @@ export class ProjectCommandRules implements CommandRuleStore {
 
   async removeSite(host: string): Promise<void> {
     await this.replaceSites(this.sites().filter((h) => h !== host));
+  }
+
+  helpers(): string[] {
+    return (this.all()[HELPERS_KEY] ?? []).map((r) => r.text);
+  }
+
+  private async replaceHelpers(keys: string[]): Promise<void> {
+    const all = this.all();
+    if (keys.length) all[HELPERS_KEY] = keys.slice(-MAX_RULES).map((text) => ({ kind: "exact", text }));
+    else delete all[HELPERS_KEY];
+    await this.storage.save(all);
+  }
+
+  async addHelper(key: string): Promise<void> {
+    if (!this.helpers().includes(key)) await this.replaceHelpers([...this.helpers(), key]);
+  }
+
+  async removeHelper(key: string): Promise<void> {
+    await this.replaceHelpers(this.helpers().filter((k) => k !== key));
   }
 }

@@ -28,6 +28,8 @@ import { buildProblemReport, serverOrigin } from "./report";
 import { askAboutRules, trustDecisions } from "./ruleTrust";
 import { buildProvider, readSettings, updateSetting } from "./settings";
 import { EFFORT_LABELS } from "./protocol";
+import { manageSubagents } from "./subagentsUi";
+import { askAndStoreKey, chooseModel, pickProvider } from "./modelPicker";
 import { Updater } from "./updater";
 
 const EDITOR_PROMPTS = {
@@ -120,6 +122,7 @@ export function activate(context: vscode.ExtensionContext): void {
     command("dimosi.selectEffort", selectEffort),
     command("dimosi.editAccess", () => editAccess(root())),
     command("dimosi.showCommandRules", () => showCommandRules(context, root())),
+    command("dimosi.manageSubagents", () => manageSubagents(keys)),
 
     // Rules
     command("dimosi.showRules", () => showRules(context, root())),
@@ -318,38 +321,6 @@ async function showRules(context: vscode.ExtensionContext, root: string | undefi
   await pick?.run();
 }
 
-async function pickProvider(
-  keys: SecretKeyStore,
-  placeHolder: string,
-  filter: (p: (typeof PRESETS)[number]) => boolean = () => true,
-): Promise<string | undefined> {
-  const saved = new Set(await keys.list());
-  const current = readSettings().provider;
-  const items = PRESETS.filter(filter).map((p) => ({
-    label: p.label,
-    description: p.id === current ? "сейчас выбран" : "",
-    detail: !p.requiresKey ? "ключ не обязателен" : saved.has(p.id) ? "ключ сохранён ✓" : "нужен API-ключ",
-    id: p.id,
-  }));
-  const choice = await vscode.window.showQuickPick(items, { placeHolder });
-  return choice?.id;
-}
-
-async function askAndStoreKey(keys: SecretKeyStore, presetId: string): Promise<boolean> {
-  const preset = getPreset(presetId);
-  const value = await vscode.window.showInputBox({
-    title: `API-ключ для ${preset.label}`,
-    prompt: "Вставьте ключ (Cmd+V / Ctrl+V) и нажмите Enter. Ключ хранится в защищённом хранилище системы.",
-    password: true,
-    ignoreFocusOut: true,
-    validateInput: (v) => (v.trim() ? undefined : "Ключ не может быть пустым"),
-  });
-  if (!value) return false;
-  await keys.set(presetId, value.trim());
-  void vscode.window.showInformationMessage(`Ключ для ${preset.label} сохранён (${maskKey(value.trim())}).`);
-  return true;
-}
-
 const EFFORT_HINTS: Record<string, string> = {
   "": "настройка не передаётся — так dimosi работал всегда",
   low: "быстрее и дешевле; для простых правок",
@@ -376,64 +347,12 @@ async function selectModel(keys: SecretKeyStore): Promise<void> {
   const presetId = await pickProvider(keys, "Через какой сервис работать?");
   if (!presetId) return;
   const preset = getPreset(presetId);
-
-  if (presetId === "custom") {
-    const url = await vscode.window.showInputBox({
-      title: "Адрес OpenAI-совместимого API",
-      prompt: "Например: http://localhost:1234/v1",
-      value: readSettings().customBaseUrl,
-      ignoreFocusOut: true,
-      validateInput: (v) => (/^https?:\/\//.test(v.trim()) ? undefined : "Адрес должен начинаться с http:// или https://"),
-    });
-    if (!url) return;
-    await updateSetting("customBaseUrl", url.trim());
-  }
-
-  if (preset.requiresKey && !(await keys.get(presetId))) {
-    if (!(await askAndStoreKey(keys, presetId))) return;
-  }
-
-  let models: string[] = [];
-  try {
-    const provider = await buildProvider({ ...readSettings(), provider: presetId }, keys, presetId);
-    models = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: `Загружаю список моделей ${preset.label}…` },
-      () => provider.listModels(),
-    );
-  } catch (e) {
-    void vscode.window.showWarningMessage(`Не удалось получить список моделей: ${errorText(e)}`);
-  }
-
-  const MANUAL = "$(edit) Ввести имя модели вручную";
   const current = readSettings();
-  const currentModel = current.provider === presetId ? current.model : "";
-  const ordered = [...new Set([preset.defaultModel, ...models].filter(Boolean))];
-  let model: string | undefined;
-  if (ordered.length) {
-    const pick = await vscode.window.showQuickPick(
-      [
-        { label: MANUAL },
-        ...ordered.map((m) => ({
-          label: m,
-          description: [m === preset.defaultModel ? "рекомендуется" : "", m === currentModel ? "текущая" : ""].filter(Boolean).join(", "),
-        })),
-      ],
-      { placeHolder: "Выберите модель (можно начать печатать для поиска)", matchOnDescription: true },
-    );
-    if (!pick) return;
-    model = pick.label === MANUAL ? undefined : pick.label;
-  }
-  model ??= await vscode.window.showInputBox({
-    title: "Имя модели",
-    value: currentModel || preset.defaultModel,
-    ignoreFocusOut: true,
-    validateInput: (v) => (v.trim() ? undefined : "Введите имя модели"),
-  });
+  const model = await chooseModel(keys, presetId, current.provider === presetId ? current.model : "");
   if (!model) return;
-
   await updateSetting("provider", presetId);
-  await updateSetting("model", model.trim() === preset.defaultModel ? "" : model.trim());
-  void vscode.window.showInformationMessage(`Агент работает через ${preset.label}, модель ${model.trim()}.`);
+  await updateSetting("model", model === preset.defaultModel ? "" : model);
+  void vscode.window.showInformationMessage(`Агент работает через ${preset.label}, модель ${model}.`);
 }
 
 async function askNewPassword(): Promise<string | undefined> {

@@ -24,8 +24,10 @@ import {
   parseExtraFolders,
   polzaImages,
   PRESETS,
+  parseSubagents,
   ProjectCommandRules,
   rememberingTrust,
+  withBuiltinSubagents,
   revealHidden,
   checkBaseUrl,
   CUSTOM_URL_PRESETS,
@@ -423,6 +425,11 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         if (warning) console.log(c.red(c.bold(`⚠ ${warning}`)));
         console.log(`  ${revealHidden(req.prompt)}`);
         console.log(c.dim(`  Платный запрос к модели ${req.model} через Polza AI${req.price ? `: одна картинка стоит ${req.price}` : ""}. Спрашивается каждый раз.`));
+      } else if (req.kind === "subagent") {
+        console.log(c.yellow(c.bold(`Запустить помощника ${revealHidden(req.name)}:`)));
+        if (warning) console.log(c.red(c.bold(`⚠ ${warning}`)));
+        console.log(`  ${revealHidden(req.task)}`);
+        console.log(c.dim(`  ${req.description} Модель ${req.model} (${getPreset(req.providerId).label}). Только читает. ${req.external ? "Это другой сервис, чем в чате: тексты прочитанных файлов уйдут туда." : "Прочитанные файлы уйдут тому же сервису, что и чат."}`));
       } else if (req.kind === "fetch") {
         console.log(c.yellow(c.bold("Прочитать страницу в интернете:")));
         if (warning) console.log(c.red(c.bold(`⚠ ${warning}`)));
@@ -440,6 +447,8 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
         ? "Разрешить? [y] да / [n] нет: "
         : req.kind === "write"
           ? "Разрешить? [y] да / [n] нет / [a] да, и не спрашивать про файлы до конца сессии: "
+          : req.kind === "subagent"
+            ? `Разрешить? [y] да / [n] нет / [a] да, и больше не спрашивать про помощника ${req.name} на модели ${req.model}: `
           : req.kind === "fetch"
             ? `Разрешить? [y] да / [n] нет / [a] да, и больше не спрашивать про сайт ${req.host}: `
           : `Разрешить? [y] да / [n] нет / [a] да, и больше не спрашивать в этом проекте про ${req.always?.kind === "prefix" ? `команды «${req.always.text} …»` : "эту же команду"}: `;
@@ -459,6 +468,19 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
     sandbox: !flags.noSandbox,
     commandRules,
     extraFolders,
+    subagents: withBuiltinSubagents(parseSubagents(config.subagents)),
+    resolveSubagent: async (def) => {
+      if (!def.provider) return undefined;
+      let preset;
+      try {
+        preset = getPreset(def.provider);
+      } catch {
+        throw new Error(`Helper "${def.name}": no such service "${def.provider}". Do the task yourself.`);
+      }
+      const key = await keys.get(def.provider);
+      if (!key && preset.requiresKey) throw new Error(`Helper "${def.name}" runs on ${preset.label}, but there is no API key for it (dimosi keys set ${def.provider}). Do the task yourself.`);
+      return { provider: createProvider({ presetId: def.provider, apiKey: key, baseURL: config.baseUrls[def.provider] }), model: def.model || preset.defaultModel, contextWindow: preset.contextWindow };
+    },
     contextWindow: getPreset(presetId).contextWindow,
     log,
     ruleTrust: rememberingTrust(await loadTrustDecisions(), (file) => askAboutRules(io, file)),
@@ -529,6 +551,14 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
           case "usage":
             usage.add(ev.usage);
             chatUsage.add(ev.usage);
+            break;
+          case "helper":
+            newline();
+            console.log(c.dim(`    ↳ ${ev.text}`));
+            break;
+          case "helper_usage":
+            usage.addHelper(ev.cost);
+            chatUsage.addHelper(ev.cost);
             break;
           case "error":
             newline();

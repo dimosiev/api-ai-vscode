@@ -60,7 +60,7 @@ AUDIT_STRICT=1 npx vitest run audit   # показать настоящие па
 
 ## Настройки расширения
 
-`dimosi.provider` (`anthropic` | `openai` | `polza` | `openrouter` | `teamo` | `teamo-openai` | `deepseek` | `ollama` | `custom`, по умолчанию `anthropic`), `dimosi.model` (пусто — модель сервиса по умолчанию), `dimosi.customBaseUrl`, `dimosi.approvalMode` (`ask` | `auto`), `dimosi.maxSteps` (50), `dimosi.sandbox` (true), `dimosi.effort` (усердие модели: пусто | `low` | `medium` | `high` | `max`; пусто — ничего не передаётся), `dimosi.imageModel` (модель Polza AI для картинок; пусто — `qwen/image-2`), `dimosi.extraFolders` (`[{ "path", "access": "read" | "write" }]`, пусто), `dimosi.autoUpdate` (true). Все с `"scope": "application"`: действуют только из личных настроек, `.vscode/settings.json` проекта их не меняет. Ключи — в SecretStorage (Keychain), не в настройках. Свой адрес сервиса — только для `custom`/`ollama` и только `https://` (http — для localhost), проверка в `checkBaseUrl` (`presets.ts`).
+`dimosi.provider` (`anthropic` | `openai` | `polza` | `openrouter` | `teamo` | `teamo-openai` | `deepseek` | `ollama` | `custom`, по умолчанию `anthropic`), `dimosi.model` (пусто — модель сервиса по умолчанию), `dimosi.customBaseUrl`, `dimosi.approvalMode` (`ask` | `auto`), `dimosi.maxSteps` (50), `dimosi.sandbox` (true), `dimosi.effort` (усердие модели: пусто | `low` | `medium` | `high` | `max`; пусто — ничего не передаётся), `dimosi.imageModel` (модель Polza AI для картинок; пусто — `qwen/image-2`), `dimosi.extraFolders` (`[{ "path", "access": "read" | "write" }]`, пусто), `dimosi.subagents` (`[{ "name", "description", "provider"?, "model"? }]`, пусто; `explorer` есть всегда), `dimosi.autoUpdate` (true). Все с `"scope": "application"`: действуют только из личных настроек, `.vscode/settings.json` проекта их не меняет. Ключи — в SecretStorage (Keychain), не в настройках. Свой адрес сервиса — только для `custom`/`ollama` и только `https://` (http — для localhost), проверка в `checkBaseUrl` (`presets.ts`).
 
 CLI: настройки в `~/.config/dimosi/` (`config.ts`), флаги `--provider`, `--model`, `--base-url`, `--dir`, `--read-dir`, `--write-dir`, `--auto`, `--plan`, `--effort`, `--no-sandbox`.
 
@@ -75,7 +75,8 @@ CLI: настройки в `~/.config/dimosi/` (`config.ts`), флаги `--prov
   - `access.ts` — единое правило доступа (`AccessPolicy`): проект плюс папки вне проекта. Им пользуются и инструменты (`resolvePath`), и песочница (`sandboxProfile`): менять доступ только здесь.
   - `permissions.ts` — подтверждения (`PermissionGate`), особо важные файлы (`protectedPathWarning`), опасные команды (`dangerousCommandWarning`): спрашиваются всегда, даже в `auto`.
   - `commandRules.ts` — что запоминает «Всегда» для команды (по началу или целиком).
-  - `tools/index.ts` — девять инструментов (`read_file`, `list_files`, `search`, `write_file`, `edit_file`, `run_command`, `update_plan`, `fetch_page`, `generate_image`); `tools/sandbox.ts` — песочница macOS и окружение команд без ключей; `tools/workspace.ts` — обход файлов и `isSecretFile`; `tools/web.ts` — `fetch_page`; `tools/image.ts` — картинки через Media API Polza AI, всегда с вопросом владельцу.
+  - `tools/index.ts` — десять инструментов (`read_file`, `list_files`, `search`, `write_file`, `edit_file`, `run_command`, `update_plan`, `fetch_page`, `generate_image`, `run_subagent`); `tools/sandbox.ts` — песочница macOS и окружение команд без ключей; `tools/workspace.ts` — обход файлов и `isSecretFile`; `tools/web.ts` — `fetch_page`; `tools/image.ts` — картинки через Media API Polza AI, всегда с вопросом владельцу.
+  - `subagents.ts` — помощники: только чтение, своя модель (можно другой сервис), общий `PermissionGate`; запуск `Agent.runHelper`.
   - `prompt.ts` — системная инструкция; `rules.ts` — правила и доверие к ним; `providers/` — Anthropic SDK и OpenAI-совместимые сервисы, `presets.ts` — список сервисов.
   - `log.ts` — журнал с маскировкой ключей; `update.ts`, `update-key.ts` — подписанные обновления (Ed25519); `secrets.ts` — файл ключей.
 - `packages/vscode/src` — расширение: `extension.ts` (команды), `chatView.ts` (панель чата), `settings.ts` (настройки, сборка сервиса с ключом), `approval.ts` (карточки подтверждения), `editorFiles.ts` (правки через редактор), `problems.ts` (ошибки редактора после правки), `changes.ts` (откат), `chatStore.ts` (текущий чат `chat.json` и прошлые в `chats/`), `attachments.ts` (вложения), `keyStore.ts` (ключи в Keychain), `access.ts`, `commandRules.ts`, `ruleTrust.ts`, `updater.ts`, `vsixInstall.ts`, `report.ts`, `errorText.ts`, `directFetch.ts` (запрос напрямую, если прокси VS Code не отвечает), `pictures.ts` (картинка для панели). `protocol.ts` — сообщения между расширением и панелью.
@@ -143,7 +144,7 @@ CLI: настройки в `~/.config/dimosi/` (`config.ts`), флаги `--prov
 
 Новое — только после обкатки и только по решению владельца. Перед работой сверься с `git log`: пункт мог быть уже сделан.
 
-**Решено не делать** (против «стабильность прежде всего»): помощники-субагенты, MCP (подключение внешних сервисов), хуки. Не предлагай их заново.
+**Решено не делать** (против «стабильность прежде всего»): MCP (подключение внешних сервисов), хуки. Не предлагай их заново. Помощники-субагенты разрешены владельцем 8 октября 2026: только чтение, по очереди (этап 1 готов, ждёт проверки владельцем на живых ключах; помощники с записью и параллельные — только по его решению).
 
 **Согласовано, ждёт владельца:**
 

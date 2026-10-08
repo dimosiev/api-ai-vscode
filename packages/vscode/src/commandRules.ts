@@ -14,7 +14,7 @@ export function commandRuleStore(context: vscode.ExtensionContext, root: string)
   });
 }
 
-type Item = vscode.QuickPickItem & { rule?: CommandRule; site?: string; all?: true };
+type Item = vscode.QuickPickItem & { rule?: CommandRule; site?: string; helper?: string; all?: true };
 
 /** "Запомненные команды": what "Always" allowed in this project, with a way to take it back. */
 export async function showCommandRules(context: vscode.ExtensionContext, root: string | undefined): Promise<void> {
@@ -24,13 +24,15 @@ export async function showCommandRules(context: vscode.ExtensionContext, root: s
   for (;;) {
     const rules = store.list();
     const sites = store.sites();
-    if (!rules.length && !sites.length) {
-      void vscode.window.showInformationMessage("В этом проекте нет запомненных команд и сайтов. Они появляются, когда вы нажимаете «Всегда» на карточке команды или страницы.");
+    const helpers = store.helpers();
+    if (!rules.length && !sites.length && !helpers.length) {
+      void vscode.window.showInformationMessage("В этом проекте нет запомненных команд, сайтов и помощников. Они появляются, когда вы нажимаете «Всегда» на карточке команды или страницы.");
       return;
     }
     const items: Item[] = [
       ...rules.map((rule): Item => ({ label: `$(terminal) ${rule.text}`, description: rule.kind === "prefix" ? "и всё, что начинается так же" : "только эта команда", rule })),
       ...sites.map((site): Item => ({ label: `$(globe) ${site}`, description: "сайт: страницы читаются без вопроса, во всех проектах", site })),
+      ...helpers.map((helper): Item => ({ label: `$(hubot) ${helper.split("|")[0]}`, description: `помощник на модели ${helper.split("|").slice(2).join("|")}: запускается без вопроса, во всех проектах`, helper })),
       ...(rules.length ? [{ label: "$(trash) Забыть все команды", description: "агент снова будет спрашивать про каждую команду", all: true as const }] : []),
     ];
     const pick = await vscode.window.showQuickPick(items, {
@@ -38,9 +40,10 @@ export async function showCommandRules(context: vscode.ExtensionContext, root: s
       placeHolder: "Выберите строку, чтобы агент снова спрашивал про неё",
     });
     if (!pick) return;
-    const question = pick.all ? "Забыть все запомненные команды этого проекта?" : pick.site ? `Снова спрашивать про страницы сайта ${pick.site}?` : `Снова спрашивать про ${describeRule(pick.rule!)}?`;
+    const question = pick.all ? "Забыть все запомненные команды этого проекта?" : pick.helper ? `Снова спрашивать перед запуском помощника «${pick.helper.split("|")[0]}»?` : pick.site ? `Снова спрашивать про страницы сайта ${pick.site}?` : `Снова спрашивать про ${describeRule(pick.rule!)}?`;
     if (!(await vscode.window.showWarningMessage(question, { modal: true }, "Забыть"))) continue;
     if (pick.all) await store.clear();
+    else if (pick.helper) await store.removeHelper(pick.helper);
     else if (pick.site) await store.removeSite(pick.site);
     else await store.remove(pick.rule!);
   }

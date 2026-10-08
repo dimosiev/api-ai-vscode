@@ -11,6 +11,8 @@ export interface CliConfig {
   mode: "ask" | "auto";
   /** Folders outside the project opened to the agent: `[{ "path": "...", "access": "read" | "write" }]`. */
   extraFolders?: unknown;
+  /** Helpers: `[{ "name", "description", "provider"?, "model"? }]` (see parseSubagents). */
+  subagents?: unknown;
 }
 
 const DEFAULTS: CliConfig = { provider: "anthropic", models: {}, baseUrls: {}, mode: "ask" };

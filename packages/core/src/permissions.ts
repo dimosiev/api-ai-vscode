@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import { commandRule, ruleMatches, type CommandRule, type CommandRuleStore } from "./commandRules";
+import { subagentKey } from "./subagents";
 import { isSecretFile } from "./tools/workspace";
 
 export type ApprovalRequest =
@@ -48,6 +49,21 @@ export type ApprovalRequest =
       model: string;
       /** The price of one picture as the service lists it, e.g. "4 ₽". */
       price?: string;
+      warning?: string;
+    }
+  | {
+      /** Starting a helper (run_subagent). "Always" remembers this helper on this service and model. */
+      kind: "subagent";
+      name: string;
+      description: string;
+      /** Preset id of the service the helper runs on, and its model. */
+      providerId: string;
+      model: string;
+      /** The helper runs on another service than the chat: the project's text will go there. */
+      external: boolean;
+      task: string;
+      /** What "Always" remembers; set by the gate. */
+      key?: string;
       warning?: string;
     };
 
@@ -127,6 +143,8 @@ function hiddenCharsWarning(req: ApprovalRequest): string | undefined {
     ? countHidden(req.command) > 0
     : req.kind === "image"
     ? countHidden(req.prompt) + countHidden(req.relPath) > 0
+    : req.kind === "subagent"
+    ? countHidden(req.task) > 0
     // In a file, only new ones count: a byte order mark at the start is common.
     : countHidden(req.relPath) > 0 || countHidden(req.newContent) > countHidden(req.oldContent);
   return found
@@ -213,6 +231,7 @@ export class PermissionGate {
   /** Rules of this chat: all of them without a store, or those the store could not save. */
   private sessionRules: CommandRule[] = [];
   private sessionSites: string[] = [];
+  private sessionHelpers: string[] = [];
   /** Commands allowed to read secret files until the new chat. Never saved: a new chat starts from nothing. */
   private sessionSecrets: Array<{ rule: CommandRule; files: string[] }> = [];
   /**
@@ -242,6 +261,7 @@ export class PermissionGate {
       if (this.planOnly) throw new Error(PLAN_MODE_REFUSAL);
       return (await this.handler.approve({ ...req, warning })) !== "deny";
     }
+    if (req.kind === "subagent") return this.checkHelper(req, warning);
     const remembered = () => req.kind === "command" && [...(this.rules?.list() ?? []), ...this.sessionRules].some((rule) => ruleMatches(rule, req.command));
     if (this.planOnly) throw new Error(PLAN_MODE_REFUSAL);
     // Hidden characters, a dangerous command or one that names a secret file itself: asked as any such command.
@@ -290,6 +310,29 @@ export class PermissionGate {
   }
 
   /**
+   * A helper only reads (and its page requests go through this same gate), so
+   * what is asked is where the project's text goes: to the helper's model.
+   * Asked once per helper, service and model; "Always" is remembered for all
+   * projects and "no approvals" mode does not ask. Allowed in plan mode: it
+   * changes nothing.
+   */
+  private async checkHelper(req: Extract<ApprovalRequest, { kind: "subagent" }>, warning: string | undefined): Promise<boolean> {
+    const key = subagentKey({ name: req.name, description: req.description }, req.providerId, req.model);
+    const known = [...(this.rules?.helpers?.() ?? []), ...this.sessionHelpers].includes(key);
+    if (!warning && (known || this.mode === "auto")) return true;
+    const decision = await this.handler.approve({ ...req, key, warning });
+    if (decision === "allow_always" && !warning) {
+      try {
+        if (!this.rules?.addHelper) throw new Error("no store");
+        await this.rules.addHelper(key);
+      } catch {
+        this.sessionHelpers.push(key);
+      }
+    }
+    return decision !== "deny";
+  }
+
+  /**
    * A command that reads secret files is asked about in any mode. The user
    * may remember it until the new chat: the same program (see commandRule)
    * with the same files, so that a report run ten times is asked about once.
@@ -309,6 +352,7 @@ export class PermissionGate {
     this.writesAllowed = false;
     this.sessionRules = [];
     this.sessionSites = [];
+    this.sessionHelpers = [];
     this.sessionSecrets = [];
   }
 }

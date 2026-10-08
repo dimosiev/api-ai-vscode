@@ -68,7 +68,18 @@ export function toolCard(title: string, name: string): HTMLElement {
   );
 }
 
+/** What a helper is doing now: one line under the card's title, replaced by the next. */
+export function setToolNote(card: HTMLElement, text: string): void {
+  let note = card.querySelector(".tool-note");
+  if (!note) {
+    note = h("div", { class: "tool-note" });
+    card.querySelector(".tool-head")?.after(note);
+  }
+  note.textContent = text;
+}
+
 export function finishToolCard(card: HTMLElement, result: string, isError: boolean): void {
+  card.querySelector(".tool-note")?.remove();
   card.classList.remove("running");
   card.classList.add(isError ? "error" : "ok");
   const first = result.split("\n")[0].slice(0, 160);
@@ -218,6 +229,32 @@ export function approvalFetchCard(id: string, url: string, host: string, post: P
       warning ? undefined : `Больше не спрашивать про страницы сайта ${host}, во всех проектах. Посмотреть и убрать: меню «…» панели → «Запомненные команды».`,
       undefined,
       `Всегда для ${short(host)}`,
+    ),
+  );
+}
+
+export function approvalHelperCard(id: string, name: string, description: string, service: string, model: string, external: boolean, task: string, post: Post, warning?: string): HTMLElement {
+  return h(
+    "div",
+    { class: `approval${warning ? " protected" : ""}`, "data-id": id, "data-remembered": warning ? undefined : `помощника «${name}» на модели ${model}`, "data-remembered-scope": "во всех проектах" },
+    h("div", { class: "approval-head" }, svg(ICONS.code, "approval-icon"), h("span", { class: "approval-title" }, "Запустить помощника ", h("b", {}, name))),
+    warning && h("div", { class: "approval-warning" }, svg(ICONS.warn, "inline-icon"), h("span", {}, warning)),
+    h("pre", { class: "command" }, task),
+    h(
+      "div",
+      { class: "approval-note" },
+      `${description} Работает на модели ${model} (${service}). Только читает: файлы не меняет и команд не запускает. ` +
+        (external
+          ? "Это другой сервис, чем в чате: тексты файлов, которые помощник прочитает, уйдут туда."
+          : "Прочитанные файлы уйдут этому же сервису, что и ваш чат."),
+    ),
+    approvalButtons(
+      id,
+      post,
+      "Запустить",
+      warning ? undefined : `Больше не спрашивать про помощника «${name}» на модели ${model}, во всех проектах. Посмотреть и убрать: меню «…» панели → «Запомненные команды».`,
+      undefined,
+      "Всегда для него",
     ),
   );
 }

@@ -13,6 +13,7 @@ import {
   isSecretFile,
   resolvePath,
   UsageTotals,
+  withBuiltinSubagents,
   type ImagePart,
   type Message,
   type Pricing,
@@ -49,7 +50,7 @@ import {
 import type { SecretKeyStore } from "./keyStore";
 import type { FromWebview, ToWebview } from "./protocol";
 import { isPicturePath, pictureDataUrl } from "./pictures";
-import { buildImages, MissingKeyError, readSettings, rememberedProvider } from "./settings";
+import { buildImages, MissingKeyError, readSettings, rememberedProvider, rememberedSubagentResolver } from "./settings";
 
 const CONTEXT_WARNING_TOKENS = 150_000;
 /** Commands the panel's buttons run; the panel can ask for nothing else. */
@@ -102,6 +103,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /** Another chat is being opened: no task may start until it is in place. */
   private switching = false;
   private provider = rememberedProvider();
+  private helperResolver = rememberedSubagentResolver();
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -549,6 +551,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     agent.extraFolders = settings.extraFolders;
     agent.planFirst = this.planFirst;
     agent.effort = settings.effort;
+    agent.subagents = withBuiltinSubagents(settings.subagents);
+    agent.resolveSubagent = this.helperResolver(settings, this.keys);
     agent.images = await buildImages(settings, this.keys).catch(() => undefined);
     const planning = this.planFirst;
     let finished = false;
@@ -621,6 +625,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.post({ type: "tool_end", id: ids.get(ev.call.id) ?? 0, result: ev.result.slice(0, 4000), isError: ev.isError });
             this.post({ type: "activity", text: "Думает…" });
             this.saveChat(running);
+            break;
+          case "helper":
+            this.post({ type: "tool_note", id: ids.get(ev.callId) ?? 0, text: ev.text });
+            break;
+          case "helper_usage":
+            usage.addHelper(ev.cost);
+            this.chatUsage.addHelper(ev.cost);
+            postUsage();
             break;
           case "plan":
             this.post({ type: "plan", items: ev.items });

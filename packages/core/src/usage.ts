@@ -8,6 +8,8 @@ export class UsageTotals {
   cacheWrite = 0;
   /** Size of the most recent request, i.e. how full the context is. */
   lastContext = 0;
+  /** What the helpers cost: they run on other models, so their tokens are not mixed into the counts above. */
+  private helperCosts: Array<{ amount: number; currency: Pricing["currency"] }> = [];
   private requests = 0;
   private reported = 0;
   private reportedCount = 0;
@@ -27,12 +29,24 @@ export class UsageTotals {
     this.lastContext = u.inputTokens + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
   }
 
+  addHelper(cost: { amount: number; currency: Pricing["currency"] } | undefined): void {
+    if (cost) this.helperCosts.push(cost);
+  }
+
   get totalInput(): number {
     return this.input + this.cacheRead + this.cacheWrite;
   }
 
   /** Exact cost when the service reported it for every request; otherwise an estimate from the price list. */
   cost(p: Pricing | undefined): { amount: number; currency: Pricing["currency"] } | undefined {
+    const own = this.ownCost(p);
+    if (!own) return undefined;
+    // A helper priced in another currency is left out rather than added up wrongly.
+    const extra = this.helperCosts.filter((c) => c.currency === own.currency).reduce((sum, c) => sum + c.amount, 0);
+    return { amount: own.amount + extra, currency: own.currency };
+  }
+
+  private ownCost(p: Pricing | undefined): { amount: number; currency: Pricing["currency"] } | undefined {
     if (this.requests > 0 && this.reportedCount === this.requests && this.reportedCurrency) {
       return { amount: this.reported, currency: this.reportedCurrency };
     }

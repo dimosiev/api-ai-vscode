@@ -70,6 +70,8 @@ export type ToWebview =
   | { type: "activity"; text: string }
   | { type: "tool_start"; id: number; title: string; name: string }
   | { type: "tool_end"; id: number; result: string; isError: boolean }
+  /** What a helper is doing now, shown on the card of its tool call. Not kept in the saved chat. */
+  | { type: "tool_note"; id: number; text: string }
   | { type: "plan"; items: PlanItemView[] }
   | {
       type: "approval_request";
@@ -113,6 +115,20 @@ export type ToWebview =
       model: string;
       /** The listed price of one picture, e.g. "4 ₽". */
       price?: string;
+      warning?: string;
+    }
+  | {
+      type: "approval_request";
+      id: string;
+      /** Starting a helper: the project's text goes to its model. */
+      kind: "subagent";
+      name: string;
+      description: string;
+      /** The service and model the helper runs on, as the user reads them. */
+      service: string;
+      model: string;
+      external: boolean;
+      task: string;
       warning?: string;
     }
   | { type: "approval_resolved"; id: string; decision: "allow" | "deny" | "allow_always" }

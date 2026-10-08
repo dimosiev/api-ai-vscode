@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { revealHidden, type ApprovalDecision, type ApprovalHandler, type ApprovalRequest } from "@dimosi/core";
+import { getPreset, revealHidden, type ApprovalDecision, type ApprovalHandler, type ApprovalRequest } from "@dimosi/core";
 import { buildDiffView } from "./diff";
 import type { ToWebview } from "./protocol";
 
@@ -72,6 +72,19 @@ export class WebviewApproval implements ApprovalHandler {
         });
       } else if (req.kind === "image") {
         this.ui.post({ type: "approval_request", id, kind: "image", prompt: revealHidden(req.prompt), relPath: revealHidden(req.relPath), model: req.model, price: req.price, warning: req.warning });
+      } else if (req.kind === "subagent") {
+        this.ui.post({
+          type: "approval_request",
+          id,
+          kind: "subagent",
+          name: revealHidden(req.name),
+          description: revealHidden(req.description),
+          service: getPreset(req.providerId).label,
+          model: req.model,
+          external: req.external,
+          task: revealHidden(req.task),
+          warning: req.warning,
+        });
       } else if (req.kind === "fetch") {
         this.ui.post({ type: "approval_request", id, kind: "fetch", url: revealHidden(req.url), host: req.host, warning: req.warning });
       } else {

@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { createProvider, getPreset, parseEffort, parseExtraFolders, polzaImages, type Effort, type ExtraFolder, type ImageMaker, type Provider } from "@dimosi/core";
+import { createProvider, getPreset, parseEffort, parseExtraFolders, parseSubagents, polzaImages, type Effort, type ExtraFolder, type ImageMaker, type Provider, type SubagentDef, type SubagentResolver } from "@dimosi/core";
 import type { SecretKeyStore } from "./keyStore";
 import { fetchWithDirectFallback, vscodeOriginalFetch } from "./directFetch";
 import { log } from "./log";
@@ -17,6 +17,8 @@ export interface Settings {
   imageModel: string;
   /** How hard the model works; not set: the model's own default. */
   effort?: Effort;
+  /** The user's helpers (without the built-in ones). */
+  subagents: SubagentDef[];
 }
 
 export function readSettings(): Settings {
@@ -32,6 +34,7 @@ export function readSettings(): Settings {
     extraFolders: parseExtraFolders(cfg.get<unknown>("extraFolders", [])),
     imageModel: cfg.get<string>("imageModel", "").trim(),
     effort: parseEffort(cfg.get<string>("effort", "")),
+    subagents: parseSubagents(cfg.get<unknown>("subagents", [])),
   };
 }
 
@@ -90,5 +93,34 @@ export function rememberedProvider(): (settings: Settings, keys: SecretKeyStore)
     const id = JSON.stringify([settings.provider, settings.customBaseUrl, await keys.get(settings.provider)]);
     if (last?.id !== id) last = { id, provider: await buildProvider(settings, keys) };
     return last.provider;
+  };
+}
+
+/**
+ * The services of the helpers that run on another service than the chat. Built once and kept,
+ * like the chat's own service: it remembers what the server refused and the price list.
+ * A missing key is explained to the main agent, which then does the task itself.
+ */
+export function rememberedSubagentResolver(): (settings: Settings, keys: SecretKeyStore) => SubagentResolver {
+  const built = new Map<string, Provider>();
+  return (settings, keys) => async (def) => {
+    if (!def.provider) return undefined;
+    let preset;
+    try {
+      preset = getPreset(def.provider);
+    } catch {
+      throw new Error(`Helper "${def.name}": no such service "${def.provider}". Tell the user to check the helper's settings. Do the task yourself.`);
+    }
+    const key = await keys.get(def.provider);
+    if (preset.requiresKey && !key) {
+      throw new Error(`Helper "${def.name}" runs on ${preset.label}, but the user has no API key for it. Tell the user (command "dimosi: Выбрать сервис и модель"). Do the task yourself.`);
+    }
+    const id = JSON.stringify([def.provider, def.provider === "custom" ? settings.customBaseUrl : "", key]);
+    let provider = built.get(id);
+    if (!provider) {
+      provider = await buildProvider(settings, keys, def.provider);
+      built.set(id, provider);
+    }
+    return { provider, model: def.model || preset.defaultModel, contextWindow: preset.contextWindow };
   };
 }

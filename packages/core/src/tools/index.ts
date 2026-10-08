@@ -6,6 +6,7 @@ import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
 import { createAccess, folderOf, inside, isClosedFolder, realPath, relativeInFolder, resolvePath, showPath, type AccessPolicy } from "../access";
 import { PLAN_MODE_REFUSAL, revealHidden, type PermissionGate } from "../permissions";
+import type { SubagentDef } from "../subagents";
 import type { ToolCallPart, ToolDefinition } from "../types";
 import { commandEnv, defaultSandboxPaths, sandboxAvailable, sandboxedCommand } from "./sandbox";
 import { IMAGE_EXTENSIONS, imageFormat, type ImageMaker } from "./image";
@@ -140,6 +141,8 @@ export interface ToolContext {
   /** Makes pictures for generate_image; without it the tool explains what is missing. */
   images?: ImageMaker;
   onImage?: (image: { path: string; relPath: string }) => void;
+  /** The helpers of this chat and the way to start one; without it run_subagent explains that it is not available. */
+  subagents?: { list: SubagentDef[]; run(def: SubagentDef, task: string): Promise<string> };
 }
 
 export interface ToolResult {
@@ -313,6 +316,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: "run_subagent",
+    description:
+      "Hand a self-contained task to a helper (listed under Helpers in your instructions): a separate model that reads the project and returns a short answer. What it reads does not enter this conversation. " +
+      "It cannot change anything and does not see this conversation, so the task must be complete. Use it for broad searches and questions that need many reads; do small lookups yourself.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "The helper's name, as listed under Helpers." },
+        task: { type: "string", description: "What to find out, with every detail the helper needs (it knows nothing else) and the form of answer you want." },
+      },
+      required: ["name", "task"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 type Input = Record<string, unknown>;
@@ -429,6 +447,16 @@ function assertWritable(access: AccessPolicy, abs: string): void {
 }
 
 const HANDLERS: Record<string, (input: Input, ctx: ToolContext) => Promise<string>> = {
+  async run_subagent(input, ctx) {
+    const name = str(input, "name").trim();
+    const task = str(input, "task").trim();
+    if (!ctx.subagents?.list.length) throw new Error("Helpers are not available here. Do the task yourself.");
+    const def = ctx.subagents.list.find((d) => d.name === name);
+    if (!def) throw new Error(`There is no helper "${name}". Available: ${ctx.subagents.list.map((d) => d.name).join(", ")}.`);
+    if (!task) throw new Error('"task" is empty: describe what the helper has to find out.');
+    return ctx.subagents.run(def, task);
+  },
+
   async list_files(input, ctx) {
     const access = accessOf(ctx);
     const folder = folderOf(access, resolvePath(access, str(input, "path", false)));
@@ -930,6 +958,8 @@ function describe(call: ToolCallPart): string {
       return `Чтение страницы ${s("url")}`;
     case "generate_image":
       return `Картинка ${s("path")}`;
+    case "run_subagent":
+      return `Помощник ${s("name")}: ${s("task").replace(/\s+/g, " ").slice(0, 80)}`;
     case "update_plan":
       return "План работы";
     default:
