@@ -1,6 +1,6 @@
 {
   "name": "@dimosi/core",
-  "version": "0.5.10",
+  "version": "0.6.0",
   "private": true,
   "description": "Provider-agnostic coding agent core: providers, agent loop, tools, key storage",
   "main": "src/index.ts",
