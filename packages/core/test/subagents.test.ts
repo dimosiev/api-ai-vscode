@@ -254,6 +254,23 @@ describe("run_subagent", () => {
   });
 });
 
+describe("stopping", () => {
+  it("«Stop» does not wait for a slow price list", async () => {
+    const helper = new FakeProvider("cheap", [textTurn("x")]);
+    helper.getPricing = () => new Promise(() => undefined); // never answers
+    const main = new FakeProvider("main", [toolTurn(call("m1", "run_subagent", { name: "scout", task: "t" })), textTurn("ok")]);
+    const { agent } = setup({ main, helper, mode: "auto" });
+    const controller = new AbortController();
+    const started = Date.now();
+    const events: AgentEvent[] = [];
+    for await (const ev of agent.run("go", controller.signal)) {
+      events.push(ev);
+      if (ev.type === "tool_start") controller.abort();
+    }
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
+
 describe("asking about helpers", () => {
   const key = subagentKey(SCOUT, "cheap", "small-1");
   const script = () => ({

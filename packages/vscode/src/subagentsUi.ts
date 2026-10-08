@@ -9,8 +9,10 @@ type Item = vscode.QuickPickItem & { def?: SubagentDef; add?: true };
 /** How the helper's service and model read for the user. */
 function whereItRuns(def: SubagentDef, chat: { provider: string; model: string }): string {
   const provider = def.provider ?? chat.provider;
-  const model = def.model ?? (provider === chat.provider ? chat.model : getPreset(provider).defaultModel);
-  return `${def.provider ? getPreset(provider).label : "сервис чата"} · ${model}${def.model || def.provider ? "" : " (как в чате)"}`;
+  // A name written by hand may be wrong: the list must still open, so that it can be corrected.
+  const preset = PRESETS.find((p) => p.id === provider);
+  const model = def.model ?? (provider === chat.provider ? chat.model : preset?.defaultModel ?? "");
+  return `${def.provider ? (preset?.label ?? `${provider} (неизвестный сервис!)`) : "сервис чата"} · ${model}${def.model || def.provider ? "" : " (как в чате)"}`;
 }
 
 const save = (list: SubagentDef[]) => updateSetting("subagents", list.map(({ name, description, provider, model, maxSteps }) => ({ name, description, ...(provider && { provider }), ...(model && { model }), ...(maxSteps && { maxSteps }) })));
@@ -101,7 +103,7 @@ async function pickWhere(keys: SecretKeyStore, def: SubagentDef): Promise<boolea
   const SAME = "same";
   const service = await vscode.window.showQuickPick(
     [
-      { label: "Как в основном чате", description: getPreset(chat.provider).label, detail: "тот же сервис и ключ; можно выбрать другую модель", id: SAME },
+      { label: "Как в основном чате", description: getPreset(chat.provider).label, detail: "сейчас выбранный сервис и его ключ (запишется именно он, даже если потом сменить сервис чата)", id: SAME },
       ...PRESETS.filter((p) => p.id !== chat.provider).map((p) => ({
         label: p.label,
         detail: !p.requiresKey ? "ключ не обязателен" : saved.has(p.id) ? "ключ сохранён ✓" : "нужен API-ключ (спросим дальше)",
@@ -112,10 +114,11 @@ async function pickWhere(keys: SecretKeyStore, def: SubagentDef): Promise<boolea
   );
   if (!service) return false;
   const providerId = service.id === SAME ? chat.provider : service.id;
-  const sameAsChat = providerId === chat.provider;
   const model = await chooseModel(keys, providerId, def.model ?? "", `Модель для помощника «${def.name}» (подойдёт быстрая и дешёвая, но умеющая работать с инструментами)`);
   if (!model) return false;
-  def.provider = sameAsChat ? undefined : providerId;
+  // The service is always written down: a model name belongs to one service, and a helper that
+  // followed the chat to another service would be sent a model that service does not have.
+  def.provider = providerId;
   def.model = model;
   return true;
 }

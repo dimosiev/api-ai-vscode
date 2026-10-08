@@ -470,7 +470,8 @@ export class Agent {
       }
     } finally {
       // Settled even when the user pressed Stop: the helper's requests were paid for.
-      const price = await Promise.race([target.provider.getPricing?.(target.model).catch(() => undefined), sleepQuiet(2000)]);
+      // After «Stop» the price is not waited for: the cost is then shown without it.
+      const price = signal?.aborted ? undefined : await Promise.race([target.provider.getPricing?.(target.model).catch(() => undefined), sleepQuiet(2000)]);
       emit({ type: "helper_usage", callId, cost: totals.cost(price ?? undefined) });
       this.log?.info(`helper ${label}: finished in ${seconds(started)}${failure ? ", with a message to the user" : ""}`);
     }
