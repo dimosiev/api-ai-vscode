@@ -121,13 +121,13 @@ describe("Sign in with ChatGPT: the sign-in", () => {
     const attempt = () => signInChatGPT({ keys: new MemoryKeys(), fetch: openai.fetch, openBrowser: openai.browser, onNote: (t) => notes.push(t) });
 
     openai.callback = (authorize) => ({ error: "access_denied", error_description: "Workspace policy\nforbids apps", state: authorize.searchParams.get("state")! });
-    await expect(attempt()).rejects.toThrow("Вход отменён: доступ в браузере не был разрешён. (Ответ OpenAI: Workspace policy forbids apps)");
+    await expect(attempt()).rejects.toThrow("Вход отменён: доступ в браузере не был разрешён. Так OpenAI отвечает и аккаунту без платного тарифа: по подписке работают только Plus и Pro. (Ответ OpenAI: Workspace policy forbids apps)");
     expect(notes).toEqual(["new registration, the browser came back with: error, error_description, state; error access_denied: Workspace policy forbids apps"]);
 
     notes.length = 0;
     openai.callback = (authorize) => ({ code: "code-secret", state: authorize.searchParams.get("state")!, client_id: "oaiapp_issued" });
     openai.token = () => ({ status: 400, body: { error: "invalid_grant", error_description: "code was issued to another client" } });
-    await expect(attempt()).rejects.toThrow("Вход не выполнен: сервис не выдал пропуск (400 invalid_grant: code was issued to another client).");
+    await expect(attempt()).rejects.toThrow("Вход не выполнен: сервис не выдал пропуск (400 invalid_grant: code was issued to another client). Так OpenAI отвечает и аккаунту без платного тарифа: по подписке работают только Plus и Pro.");
     expect(notes).toEqual([
       "new registration, the browser came back with: client_id, code, state; client id of the kind oaiapp_…",
       "token request authorization_code refused: 400 invalid_grant: code was issued to another client",
@@ -165,7 +165,7 @@ describe("Sign in with ChatGPT: the sign-in", () => {
     const openai = fakeOpenAI();
     const keys = new MemoryKeys();
     openai.token = () => ({ status: 400, body: { error: "invalid_grant" } });
-    await expect(signInChatGPT({ keys, fetch: openai.fetch, openBrowser: openai.browser })).rejects.toThrow("Вход не выполнен: сервис не выдал пропуск (400 invalid_grant).");
+    await expect(signInChatGPT({ keys, fetch: openai.fetch, openBrowser: openai.browser })).rejects.toThrow("Вход не выполнен: сервис не выдал пропуск (400 invalid_grant). Так OpenAI отвечает и аккаунту без платного тарифа: по подписке работают только Plus и Pro.");
     expect(openai.opened).toHaveLength(2);
     expect(await keys.get(CHATGPT_KEY)).toBeUndefined();
   });

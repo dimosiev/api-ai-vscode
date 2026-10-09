@@ -31,6 +31,9 @@ const REFRESH_BEFORE_MS = 5 * 60_000;
 /** After these answers the refresh token is of no use: only a new sign-in helps. */
 const SIGN_IN_AGAIN_CODES = ["invalid_grant", "invalid_refresh_token", "token_expired", "refresh_token_expired", "refresh_token_invalidated", "refresh_token_reused"];
 
+/** Seen with real accounts: a free plan gets exactly these refusals, with no reason given by the service. */
+const PLAN_HINT = "Так OpenAI отвечает и аккаунту без платного тарифа: по подписке работают только Plus и Pro.";
+
 export const CHATGPT_SIGN_IN_HINT = "Выполните команду «dimosi: Войти через ChatGPT».";
 
 export interface ChatGPTAccount {
@@ -106,7 +109,7 @@ class CodeRefused extends Error {
     readonly clientId: string,
     error: string,
   ) {
-    super(`Вход не выполнен: сервис не выдал пропуск (${error}).`);
+    super(`Вход не выполнен: сервис не выдал пропуск (${error}). ${PLAN_HINT}`);
   }
 }
 
@@ -152,7 +155,7 @@ async function authorize(opts: ChatGPTLoginOptions, hostId: string, known: strin
 
     if (answer.get("error")) {
       const why = answer.get("error_description") ? ` (Ответ OpenAI: ${said(answer.get("error_description"))})` : "";
-      throw new Error((answer.get("error") === "access_denied" ? "Вход отменён: доступ в браузере не был разрешён." : `Вход не выполнен: сервис ответил «${said(answer.get("error"))}».`) + why);
+      throw new Error((answer.get("error") === "access_denied" ? `Вход отменён: доступ в браузере не был разрешён. ${PLAN_HINT}` : `Вход не выполнен: сервис ответил «${said(answer.get("error"))}».`) + why);
     }
     const code = answer.get("code");
     const clientId = answer.get("client_id") ?? known;
