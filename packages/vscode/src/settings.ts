@@ -75,7 +75,7 @@ export async function buildProvider(settings: Settings, keys: SecretKeyStore, pr
     if (!apiKey) throw new MissingKeyError("Вход в ChatGPT не выполнен.");
     const account = await readChatGPTAccount(keys);
     for (const token of [account?.accessToken, account?.refreshToken, account?.idToken]) log.addSecret(token);
-    return createProvider({ presetId, token: chatgptToken({ keys, onSecret: (value) => log.addSecret(value) }) });
+    return createProvider({ presetId, token: chatgptToken({ keys, onSecret: (value) => log.addSecret(value), onNote: (text) => log.warn(`ChatGPT sign-in: ${text}`) }) });
   }
   if (preset.requiresKey && !apiKey) {
     throw new MissingKeyError(`Нет API-ключа для ${preset.label}.`);

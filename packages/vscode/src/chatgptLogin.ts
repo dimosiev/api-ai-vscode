@@ -16,6 +16,7 @@ export async function signInWithChatGPT(keys: SecretKeyStore): Promise<void> {
         keys,
         signal: stop.signal,
         onSecret: (value) => log.addSecret(value),
+        onNote: (text) => log.info(`ChatGPT sign-in: ${text}`),
         openBrowser: async (url) => {
           // As text: VS Code re-encodes a parsed address, and the service compares it letter by letter.
           if (!(await vscode.env.openExternal(url.replaceAll("+", "%20") as unknown as vscode.Uri))) throw new Error("Не удалось открыть браузер для входа.");

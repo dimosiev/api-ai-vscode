@@ -52,6 +52,8 @@ export interface ChatGPTAuthOptions {
   fetch?: typeof fetch;
   /** Every token received: for the journal to mask it. */
   onSecret?(value: string): void;
+  /** What happened, for the journal: names and the service's own words, never a code, a token or an address. */
+  onNote?(text: string): void;
 }
 
 export interface ChatGPTLoginOptions extends ChatGPTAuthOptions {
@@ -118,9 +120,15 @@ export async function signInChatGPT(opts: ChatGPTLoginOptions): Promise<ChatGPTA
     callback.catch(() => {}); // reported by the await below
     await opts.openBrowser(`${AUTHORIZE_URL}?${query}`);
     const answer = await callback;
+    opts.onNote?.(
+      `${before ? "returning sign-in" : "new registration"}, the browser came back with: ${[...new Set(answer.keys())].sort().join(", ")}` +
+        (answer.get("error") ? `; error ${said(answer.get("error"))}${answer.get("error_description") ? `: ${said(answer.get("error_description"))}` : ""}` : "") +
+        (answer.get("client_id") ? `; client id of the kind ${said(answer.get("client_id")).slice(0, 7)}…` : ""),
+    );
 
     if (answer.get("error")) {
-      throw new Error(answer.get("error") === "access_denied" ? "Вход отменён: доступ в браузере не был разрешён." : `Вход не выполнен: сервис ответил «${answer.get("error")}».`);
+      const why = answer.get("error_description") ? ` (Ответ OpenAI: ${said(answer.get("error_description"))})` : "";
+      throw new Error((answer.get("error") === "access_denied" ? "Вход отменён: доступ в браузере не был разрешён." : `Вход не выполнен: сервис ответил «${said(answer.get("error"))}».`) + why);
     }
     const code = answer.get("code");
     const clientId = answer.get("client_id") ?? before?.clientId;
@@ -277,7 +285,15 @@ async function tokenRequest(opts: ChatGPTAuthOptions, form: Record<string, strin
   // Either the OAuth form ({ error: "code" }) or the API form ({ error: { code, message } }).
   const err = body.error as string | { code?: unknown; message?: unknown } | undefined;
   const code = typeof err === "string" ? err : typeof err?.code === "string" ? err.code : "";
-  return { ok: false, code, error: [res.status, code].filter(Boolean).join(" ") };
+  const words = typeof err === "object" && typeof err?.message === "string" ? err.message : typeof body.error_description === "string" ? body.error_description : "";
+  const error = [res.status, code].filter(Boolean).join(" ") + (words ? `: ${said(words)}` : "");
+  opts.onNote?.(`token request ${form.grant_type} refused: ${error}${res.headers.get("x-request-id") ? `, request ${said(res.headers.get("x-request-id"))}` : ""}`);
+  return { ok: false, code, error };
+}
+
+/** The service's own words, short and on one line: they go to the journal and to the user. */
+function said(text: string | null): string {
+  return (text ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
 function request(fetchFn: typeof fetch | undefined, url: string, init: RequestInit = {}): Promise<Response> {
