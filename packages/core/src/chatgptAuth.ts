@@ -89,9 +89,32 @@ export async function signInChatGPT(opts: ChatGPTLoginOptions): Promise<ChatGPTA
   }
   // A sign-in that ran out is renewed for the same account; after a sign-out the app registers anew.
   const before = await readChatGPTAccount(keys);
-  const state = base64url(randomBytes(24));
-  const nonce = base64url(randomBytes(24));
-  const verifier = base64url(randomBytes(48));
+  try {
+    return await authorize(opts, hostId, before?.clientId, before?.email);
+  } catch (e) {
+    if (!(e instanceof CodeRefused)) throw e;
+    // The service may refuse the one-time code right after it registered the app. Its documented
+    // cure, and what OpenAI's own sample does: ask once more, now for the app it has just issued.
+    opts.onNote?.("the code was refused; asking once more for the app already registered");
+    return await authorize(opts, hostId, e.clientId, before?.email);
+  }
+}
+
+/** The one-time code was not accepted; the app it was issued to is known. */
+class CodeRefused extends Error {
+  constructor(
+    readonly clientId: string,
+    error: string,
+  ) {
+    super(`Вход не выполнен: сервис не выдал пропуск (${error}).`);
+  }
+}
+
+/** One trip to the browser and back. `known`: the id of the app when it is already registered. */
+async function authorize(opts: ChatGPTLoginOptions, hostId: string, known: string | undefined, email: string | undefined): Promise<ChatGPTAccount> {
+  const state = base64url(randomBytes(32));
+  const nonce = base64url(randomBytes(32));
+  const verifier = base64url(randomBytes(32));
 
   // Ends the wait for the browser when the sign-in is over for any other reason.
   const over = new AbortController();
@@ -104,7 +127,7 @@ export async function signInChatGPT(opts: ChatGPTLoginOptions): Promise<ChatGPTA
     // 127.0.0.1 and this path exactly: the service accepts no other form of the address.
     const redirectUri = `http://127.0.0.1:${(server.address() as AddressInfo).port}${CALLBACK_PATH}`;
     const query = new URLSearchParams({
-      client_id: before?.clientId ?? REGISTRATION_CLIENT,
+      client_id: known ?? REGISTRATION_CLIENT,
       response_type: "code",
       redirect_uri: redirectUri,
       scope: SCOPE,
@@ -114,14 +137,15 @@ export async function signInChatGPT(opts: ChatGPTLoginOptions): Promise<ChatGPTA
       code_challenge: base64url(createHash("sha256").update(verifier).digest()),
       code_challenge_method: "S256",
       ext_agent_host_id: hostId,
-      ...(before ? { id_token_hint: before.idToken, ...(before.email ? { login_hint: before.email } : {}) } : { agent_name_hint: APP_NAME }),
+      // No saved token as a hint: the address is seen by the browser and its history.
+      ...(known ? (email ? { login_hint: email } : {}) : { agent_name_hint: APP_NAME }),
     });
     const callback = waitForCallback(server, state, opts.signal ? AbortSignal.any([opts.signal, over.signal]) : over.signal, opts.timeoutMs ?? LOGIN_TIMEOUT_MS);
     callback.catch(() => {}); // reported by the await below
     await opts.openBrowser(`${AUTHORIZE_URL}?${query}`);
     const answer = await callback;
     opts.onNote?.(
-      `${before ? "returning sign-in" : "new registration"}, the browser came back with: ${[...new Set(answer.keys())].sort().join(", ")}` +
+      `${known ? "sign-in of a registered app" : "new registration"}, the browser came back with: ${[...new Set(answer.keys())].sort().join(", ")}` +
         (answer.get("error") ? `; error ${said(answer.get("error"))}${answer.get("error_description") ? `: ${said(answer.get("error_description"))}` : ""}` : "") +
         (answer.get("client_id") ? `; client id of the kind ${said(answer.get("client_id")).slice(0, 7)}…` : ""),
     );
@@ -131,11 +155,12 @@ export async function signInChatGPT(opts: ChatGPTLoginOptions): Promise<ChatGPTA
       throw new Error((answer.get("error") === "access_denied" ? "Вход отменён: доступ в браузере не был разрешён." : `Вход не выполнен: сервис ответил «${said(answer.get("error"))}».`) + why);
     }
     const code = answer.get("code");
-    const clientId = answer.get("client_id") ?? before?.clientId;
-    if (!code || !clientId) throw new Error("Вход не выполнен: сервис не прислал код входа.");
-    if (before && clientId !== before.clientId) throw new Error("Вход не выполнен: сервис ответил для другого приложения. Выполните «dimosi: Выйти из ChatGPT» и войдите заново.");
+    const clientId = answer.get("client_id") ?? known;
+    if (!code || !clientId || clientId === REGISTRATION_CLIENT) throw new Error("Вход не выполнен: сервис не прислал код входа.");
+    if (known && clientId !== known) throw new Error("Вход не выполнен: сервис ответил для другого приложения. Выполните «dimosi: Выйти из ChatGPT» и войдите заново.");
 
     const tokens = await tokenRequest(opts, { grant_type: "authorization_code", client_id: clientId, code, code_verifier: verifier, redirect_uri: redirectUri, resource: RESOURCE });
+    if (!tokens.ok && tokens.code === "invalid_grant") throw new CodeRefused(clientId, tokens.error);
     if (!tokens.ok) throw new Error(`Вход не выполнен: сервис не выдал пропуск (${tokens.error}).`);
     const t = tokens.body;
     if (typeof t.access_token !== "string" || typeof t.refresh_token !== "string" || typeof t.id_token !== "string") {
@@ -256,11 +281,13 @@ function waitForCallback(server: Server, state: string, signal: AbortSignal, tim
     signal.addEventListener("abort", onAbort, { once: true });
     server.on("request", (req, res) => {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      const port = (server.address() as AddressInfo | null)?.port;
       const page = (status: number, text: string) => {
         res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", connection: "close" });
         res.end(`<!doctype html><meta charset="utf-8"><title>dimosi</title><body style="font-family:system-ui;margin:3em"><h2>${text}</h2></body>`);
       };
-      if (req.method !== "GET" || url.pathname !== CALLBACK_PATH) return page(404, "Здесь ничего нет.");
+      // Only the browser of this computer, addressing this listener by its number.
+      if (req.method !== "GET" || url.pathname !== CALLBACK_PATH || req.headers.host !== `127.0.0.1:${port}`) return page(404, "Здесь ничего нет.");
       // Not the answer to this sign-in: the wait goes on.
       if (url.searchParams.get("state") !== state) return page(400, "Это не ответ на текущий вход. Начните вход из dimosi заново.");
       if (url.searchParams.get("error")) page(200, "Вход не выполнен. Вернитесь в dimosi.");
@@ -297,7 +324,7 @@ function said(text: string | null): string {
 }
 
 function request(fetchFn: typeof fetch | undefined, url: string, init: RequestInit = {}): Promise<Response> {
-  return (fetchFn ?? fetch)(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  return (fetchFn ?? fetch)(url, { ...init, redirect: "error", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 }
 
 /** An address named by OpenAI's own configuration: it must still be OpenAI's, tokens go there. */

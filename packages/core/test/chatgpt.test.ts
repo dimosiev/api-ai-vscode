@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { get } from "node:http";
 import { describe, expect, it } from "vitest";
 import {
   CHATGPT_HOST_KEY,
@@ -71,8 +72,10 @@ describe("Sign in with ChatGPT: the sign-in", () => {
     await signInChatGPT({ keys, fetch: openai.fetch, openBrowser: openai.browser });
 
     const q = Object.fromEntries(openai.opened[0].searchParams);
-    expect(q).toMatchObject({ client_id: "oaiapp_issued", id_token_hint: account.idToken, login_hint: "owner@example.com", ext_agent_host_id: "urn:uuid:host-1" });
+    expect(q).toMatchObject({ client_id: "oaiapp_issued", login_hint: "owner@example.com", ext_agent_host_id: "urn:uuid:host-1" });
     expect(q.agent_name_hint).toBeUndefined();
+    // The saved token is not put into an address the browser keeps.
+    expect(openai.opened[0].href).not.toContain(account.idToken);
     expect(openai.tokenForms[0].client_id).toBe("oaiapp_issued");
     expect((await readChatGPTAccount(keys))?.accessToken).toBe("access-1");
   });
@@ -125,8 +128,63 @@ describe("Sign in with ChatGPT: the sign-in", () => {
     openai.callback = (authorize) => ({ code: "code-secret", state: authorize.searchParams.get("state")!, client_id: "oaiapp_issued" });
     openai.token = () => ({ status: 400, body: { error: "invalid_grant", error_description: "code was issued to another client" } });
     await expect(attempt()).rejects.toThrow("Вход не выполнен: сервис не выдал пропуск (400 invalid_grant: code was issued to another client).");
-    expect(notes).toEqual(["new registration, the browser came back with: client_id, code, state; client id of the kind oaiapp_…", "token request authorization_code refused: 400 invalid_grant: code was issued to another client"]);
+    expect(notes).toEqual([
+      "new registration, the browser came back with: client_id, code, state; client id of the kind oaiapp_…",
+      "token request authorization_code refused: 400 invalid_grant: code was issued to another client",
+      "the code was refused; asking once more for the app already registered",
+      "sign-in of a registered app, the browser came back with: client_id, code, state; client id of the kind oaiapp_…",
+      "token request authorization_code refused: 400 invalid_grant: code was issued to another client",
+    ]);
     expect(notes.join()).not.toMatch(/code-secret|oaiapp_issued/);
+  });
+
+  it("the code refused right after registration: the browser is asked once more for the issued app, not for a new one", async () => {
+    // Seen with a real account on 9 October 2026; OpenAI's sample (sign-in-with-chatgpt-devkit, index.ts) does the same.
+    const openai = fakeOpenAI();
+    const keys = new MemoryKeys();
+    const grant = openai.token;
+    let exchanges = 0;
+    openai.token = (form) => (++exchanges === 1 ? { status: 400, body: { error: "invalid_grant" } } : grant(form));
+    const account = await signInChatGPT({ keys, fetch: openai.fetch, openBrowser: openai.browser });
+
+    expect(openai.opened).toHaveLength(2);
+    const [first, second] = openai.opened.map((u) => Object.fromEntries(u.searchParams));
+    expect(first).toMatchObject({ client_id: "dynamic_agent_client", agent_name_hint: "dimosi" });
+    expect(second.client_id).toBe("oaiapp_issued");
+    expect(second.agent_name_hint).toBeUndefined();
+    expect(second.ext_agent_host_id).toBe(first.ext_agent_host_id);
+    // Nothing of the first attempt is used again.
+    for (const fresh of ["state", "nonce", "code_challenge"] as const) expect(second[fresh]).not.toBe(first[fresh]);
+    expect(openai.tokenForms[1]).toMatchObject({ grant_type: "authorization_code", client_id: "oaiapp_issued", redirect_uri: second.redirect_uri });
+    expect(openai.tokenForms[1].code_verifier).not.toBe(openai.tokenForms[0].code_verifier);
+    expect(account.accessToken).toBe("access-1");
+    expect(await readChatGPTAccount(keys)).toEqual(account);
+  });
+
+  it("the code refused twice: no third trip to the browser, nothing saved", async () => {
+    const openai = fakeOpenAI();
+    const keys = new MemoryKeys();
+    openai.token = () => ({ status: 400, body: { error: "invalid_grant" } });
+    await expect(signInChatGPT({ keys, fetch: openai.fetch, openBrowser: openai.browser })).rejects.toThrow("Вход не выполнен: сервис не выдал пропуск (400 invalid_grant).");
+    expect(openai.opened).toHaveLength(2);
+    expect(await keys.get(CHATGPT_KEY)).toBeUndefined();
+  });
+
+  it("a request that does not address the listener by its own number is turned away", async () => {
+    const openai = fakeOpenAI();
+    let status = 0;
+    const browser = async (url: string) => {
+      const redirect = new URL(new URL(url).searchParams.get("redirect_uri")!);
+      const state = new URL(url).searchParams.get("state");
+      // The same listener reached under another name, as a page of a hostile site would reach it.
+      status = await new Promise<number>((resolve, reject) =>
+        get({ host: "127.0.0.1", port: redirect.port, path: `/auth/callback?code=x&state=${state}&client_id=oaiapp_evil`, headers: { host: "evil.example" } }, (res) => (res.resume(), resolve(res.statusCode ?? 0))).on("error", reject),
+      );
+      await openai.browser(url);
+    };
+    const account = await signInChatGPT({ keys: new MemoryKeys(), fetch: openai.fetch, openBrowser: browser });
+    expect(status).toBe(404);
+    expect(account.clientId).toBe("oaiapp_issued");
   });
 
   it("a sign-in without the right to use the plan is not saved", async () => {
