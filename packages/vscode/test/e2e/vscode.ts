@@ -231,6 +231,10 @@ export const stub = {
   get tabs(): string[] {
     return window.tabGroups.all[0].tabs.map((t) => `${t.input instanceof TabInputText ? nodePath.basename(t.input.uri.fsPath) : "?"}${t.isActive ? "*" : ""}${t.isPreview ? "(p)" : ""}`);
   },
+  /** The user presses "Cancel" on the notification with the running task. */
+  cancelProgress: (): void => {},
+  /** The user's browser: what happens when the extension opens an address in it. */
+  openExternal: async (_url: string): Promise<boolean> => true,
   /** What the user picks in a quick pick list. */
   pick: (_items: Array<{ label: string }>): { label: string } | undefined => undefined,
   /** What the user chooses in an "open" dialog. */
@@ -249,6 +253,8 @@ export const stub = {
     this.config = {};
     this.answer = () => undefined;
     this.pick = () => undefined;
+    this.openExternal = async () => true;
+    this.cancelProgress = () => {};
     this.diagnostics.clear();
     this.check = undefined;
     this.checkDelayMs = 5;
@@ -324,6 +330,8 @@ export const window = {
   showSaveDialog: async () => undefined,
   showQuickPick: async (items: Array<{ label: string }>) => stub.pick(items),
   showInputBox: async () => undefined,
+  withProgress: async <T>(_options: unknown, task: (progress: { report(value: unknown): void }, cancel: { onCancellationRequested(listener: () => void): { dispose(): void } }) => Promise<T>): Promise<T> =>
+    task({ report() {} }, { onCancellationRequested: (listener) => ((stub.cancelProgress = listener), disposable()) }),
   registerWebviewViewProvider: () => disposable(),
   createOutputChannel: (_name: string, _opts?: { log: true }) => {
     const write = (level: string) => (message: string) => void stub.output.push(`[${level}] ${message}`);
@@ -355,7 +363,7 @@ export const languages = {
   getDiagnostics: (uri: Uri) => stub.diagnostics.get(uri.toString()) ?? [],
   onDidChangeDiagnostics: diagnosticsChanged.event,
 };
-export const env = { appName: "Visual Studio Code", appRoot: "/nonexistent/vscode/app", clipboard: { text: "", async writeText(t: string) { this.text = t; } } };
+export const env = { openExternal: async (target: unknown) => stub.openExternal(String(target)), appName: "Visual Studio Code", appRoot: "/nonexistent/vscode/app", clipboard: { text: "", async writeText(t: string) { this.text = t; } } };
 export const version = "1.140.0";
 
 export enum FileType {

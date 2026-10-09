@@ -1,3 +1,4 @@
+import { CHATGPT_KEY_NAMES } from "./chatgptAuth";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 
 /** Where a host keeps API keys: VS Code SecretStorage, an encrypted file, etc. */
@@ -78,6 +79,8 @@ export function decryptKeys(fileText: string, password: string): Record<string, 
 export async function exportKeys(store: KeyStore, password: string): Promise<string> {
   const keys: Record<string, string> = {};
   for (const name of await store.list()) {
+    // A sign-in is not a key: its tokens change with every renewal, a copy would break the original.
+    if (CHATGPT_KEY_NAMES.includes(name)) continue;
     const value = await store.get(name);
     if (value) keys[name] = value;
   }
@@ -88,8 +91,9 @@ export async function exportKeys(store: KeyStore, password: string): Promise<str
 /** Returns the names of the imported keys. */
 export async function importKeys(store: KeyStore, fileText: string, password: string): Promise<string[]> {
   const keys = decryptKeys(fileText, password);
-  for (const [name, value] of Object.entries(keys)) await store.set(name, value);
-  return Object.keys(keys);
+  const names = Object.keys(keys).filter((name) => !CHATGPT_KEY_NAMES.includes(name));
+  for (const name of names) await store.set(name, keys[name]);
+  return names;
 }
 
 /** Shows only the ends of a key, e.g. "sk-a…9f3c". */

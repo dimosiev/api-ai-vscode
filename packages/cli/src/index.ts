@@ -197,8 +197,11 @@ class Keys {
   }
 }
 
+const CHATGPT_ONLY_IN_VSCODE = "Вход через ChatGPT пока работает только в расширении VS Code. В терминале выберите другой сервис: dimosi use ИМЯ_СЕРВИСА";
+
 async function makeProvider(presetId: string, config: CliConfig, keys: Keys, interactive: boolean): Promise<Provider> {
   const preset = getPreset(presetId);
+  if (preset.kind === "chatgpt") fail(CHATGPT_ONLY_IN_VSCODE);
   let key = await keys.get(presetId);
   if (!key && preset.requiresKey) {
     if (!interactive) fail(`Нет API-ключа для ${preset.label}. Выполните: dimosi keys set ${presetId}`);
@@ -228,7 +231,7 @@ async function cmdKeys(args: string[], io: Prompter): Promise<void> {
   switch (sub) {
     case "set": {
       if (!arg) fail("Укажите провайдера, например: dimosi keys set polza");
-      getPreset(arg);
+      if (getPreset(arg).kind === "chatgpt") fail(CHATGPT_ONLY_IN_VSCODE);
       await keys.ask(arg);
       return;
     }
@@ -477,6 +480,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
       } catch {
         throw new Error(`Helper "${def.name}": no such service "${def.provider}". Do the task yourself.`);
       }
+      if (preset.kind === "chatgpt") throw new Error(`Helper "${def.name}" runs on ${preset.label}, which works only in the VS Code extension. Do the task yourself.`);
       const key = await keys.get(def.provider);
       if (!key && preset.requiresKey) throw new Error(`Helper "${def.name}" runs on ${preset.label}, but there is no API key for it (dimosi keys set ${def.provider}). Do the task yourself.`);
       return { provider: createProvider({ presetId: def.provider, apiKey: key, baseURL: config.baseUrls[def.provider] }), model: def.model || preset.defaultModel, contextWindow: preset.contextWindow };
@@ -689,7 +693,8 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
           break;
         }
         try {
-          getPreset(arg);
+          // Said here: makeProvider would end the whole chat.
+          if (getPreset(arg).kind === "chatgpt") throw new Error(CHATGPT_ONLY_IN_VSCODE);
           agent.provider = await makeProvider(arg, config, keys, true);
           presetId = arg;
           agent.images = await imagesFor(arg, keys);

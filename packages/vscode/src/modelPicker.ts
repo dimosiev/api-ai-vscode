@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
-import { getPreset, maskKey, PRESETS } from "@dimosi/core";
+import { getPreset, maskKey, PRESETS, type ProviderPreset } from "@dimosi/core";
+import { signInWithChatGPT } from "./chatgptLogin";
 import { errorText } from "./errorText";
 import type { SecretKeyStore } from "./keyStore";
 import { buildProvider, readSettings, updateSetting } from "./settings";
@@ -14,11 +15,17 @@ export async function pickProvider(
   const items = PRESETS.filter(filter).map((p) => ({
     label: p.label,
     description: p.id === current ? "сейчас выбран" : "",
-    detail: !p.requiresKey ? "ключ не обязателен" : saved.has(p.id) ? "ключ сохранён ✓" : "нужен API-ключ",
+    detail: keyNote(p, saved.has(p.id)),
     id: p.id,
   }));
   const choice = await vscode.window.showQuickPick(items, { placeHolder });
   return choice?.id;
+}
+
+/** What a list of services says about the key of each. */
+export function keyNote(p: ProviderPreset, saved: boolean): string {
+  if (p.kind === "chatgpt") return saved ? "вход выполнен ✓, запросы идут за счёт подписки ChatGPT" : "без ключа: вход через браузер, запросы идут за счёт подписки ChatGPT";
+  return !p.requiresKey ? "ключ не обязателен" : saved ? "ключ сохранён ✓" : "нужен API-ключ";
 }
 
 export async function askAndStoreKey(keys: SecretKeyStore, presetId: string): Promise<boolean> {
@@ -57,7 +64,8 @@ export async function chooseModel(keys: SecretKeyStore, presetId: string, curren
   }
 
   if (preset.requiresKey && !(await keys.get(presetId))) {
-    if (!(await askAndStoreKey(keys, presetId))) return undefined;
+    if (preset.kind === "chatgpt") await signInWithChatGPT(keys);
+    else if (!(await askAndStoreKey(keys, presetId))) return undefined;
   }
 
   let models: string[] = [];

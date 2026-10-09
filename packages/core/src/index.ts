@@ -28,5 +28,7 @@ export * from "./access";
 export { PRESETS, CUSTOM_URL_PRESETS, checkBaseUrl, getPreset, createProvider, type ProviderPreset } from "./providers/presets";
 export { AnthropicProvider, toAnthropicMessages } from "./providers/anthropic";
 export { OpenAIProvider, toOpenAIMessages, parsePricing, parseUsage, effortParams } from "./providers/openai";
+export { ChatGPTProvider, ChatGPTPlanError, toResponsesInput, parseResponsesUsage } from "./providers/chatgpt";
+export * from "./chatgptAuth";
 export * from "./update";
 export { UPDATE_PUBLIC_KEYS } from "./update-key";

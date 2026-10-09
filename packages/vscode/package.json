@@ -79,6 +79,16 @@
         "category": "dimosi"
       },
       {
+        "command": "dimosi.signInChatGPT",
+        "title": "Войти через ChatGPT",
+        "category": "dimosi"
+      },
+      {
+        "command": "dimosi.signOutChatGPT",
+        "title": "Выйти из ChatGPT",
+        "category": "dimosi"
+      },
+      {
         "command": "dimosi.importKeys",
         "title": "Импортировать ключи из файла…",
         "category": "dimosi"
@@ -278,6 +288,7 @@
           "enum": [
             "anthropic",
             "openai",
+            "chatgpt",
             "polza",
             "openrouter",
             "teamo",
@@ -289,6 +300,7 @@
           "enumDescriptions": [
             "Anthropic (Claude)",
             "OpenAI",
+            "ChatGPT по подписке: без ключа, вход командой «dimosi: Войти через ChatGPT»",
             "Polza AI (polza.ai)",
             "OpenRouter",
             "TeamoRouter, только модели Claude (с кэшем: дешевле в длинных чатах)",

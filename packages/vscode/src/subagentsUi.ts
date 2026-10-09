@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { BUILTIN_SUBAGENTS, getPreset, parseSubagents, PRESETS, withBuiltinSubagents, type SubagentDef } from "@dimosi/core";
-import { chooseModel } from "./modelPicker";
+import { chooseModel, keyNote } from "./modelPicker";
 import type { SecretKeyStore } from "./keyStore";
 import { readSettings, updateSetting } from "./settings";
 
@@ -106,7 +106,7 @@ async function pickWhere(keys: SecretKeyStore, def: SubagentDef): Promise<boolea
       { label: "Как в основном чате", description: getPreset(chat.provider).label, detail: "сейчас выбранный сервис и его ключ (запишется именно он, даже если потом сменить сервис чата)", id: SAME },
       ...PRESETS.filter((p) => p.id !== chat.provider).map((p) => ({
         label: p.label,
-        detail: !p.requiresKey ? "ключ не обязателен" : saved.has(p.id) ? "ключ сохранён ✓" : "нужен API-ключ (спросим дальше)",
+        detail: keyNote(p, saved.has(p.id)),
         id: p.id,
       })),
     ],

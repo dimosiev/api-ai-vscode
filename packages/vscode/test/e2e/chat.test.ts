@@ -1024,3 +1024,17 @@ describe("pictures (generate_image through Polza AI)", () => {
     }
   });
 });
+
+describe("ChatGPT plan instead of a key", () => {
+  it("not signed in: the panel asks for setup, and a task ends with the button that signs in", async () => {
+    stub.config = { "dimosi.provider": "chatgpt" };
+    const panel = new Panel(context);
+    panel.send({ type: "ready" });
+    expect(await panel.waitFor(isType("status"))).toMatchObject({ provider: "ChatGPT (подписка)", model: "gpt-6.1-sol", needsSetup: true });
+
+    panel.send({ type: "send", text: "привет" });
+    expect(await panel.waitFor(isType("error"))).toEqual({ type: "error", message: "Вход в ChatGPT не выполнен.", action: { label: "Войти через ChatGPT", command: "dimosi.signInChatGPT" } });
+    panel.send({ type: "command", command: "dimosi.signInChatGPT" });
+    expect(await eventually(() => stub.executed.some((e) => e.id === "dimosi.signInChatGPT"))).toBe(true);
+  });
+});

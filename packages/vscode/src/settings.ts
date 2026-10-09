@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { createProvider, getPreset, parseEffort, parseExtraFolders, parseSubagents, polzaImages, type Effort, type ExtraFolder, type ImageMaker, type Provider, type SubagentDef, type SubagentResolver } from "@dimosi/core";
+import { chatgptToken, createProvider, getPreset, readChatGPTAccount, parseEffort, parseExtraFolders, parseSubagents, polzaImages, type Effort, type ExtraFolder, type ImageMaker, type Provider, type SubagentDef, type SubagentResolver } from "@dimosi/core";
 import type { SecretKeyStore } from "./keyStore";
 import { fetchWithDirectFallback, vscodeOriginalFetch } from "./directFetch";
 import { log } from "./log";
@@ -71,6 +71,12 @@ export async function buildProvider(settings: Settings, keys: SecretKeyStore, pr
   const preset = getPreset(presetId);
   const apiKey = await keys.get(presetId);
   log.addSecret(apiKey); // masked if a server ever echoes it back
+  if (preset.kind === "chatgpt") {
+    if (!apiKey) throw new MissingKeyError("Вход в ChatGPT не выполнен.");
+    const account = await readChatGPTAccount(keys);
+    for (const token of [account?.accessToken, account?.refreshToken, account?.idToken]) log.addSecret(token);
+    return createProvider({ presetId, token: chatgptToken({ keys, onSecret: (value) => log.addSecret(value) }) });
+  }
   if (preset.requiresKey && !apiKey) {
     throw new MissingKeyError(`Нет API-ключа для ${preset.label}.`);
   }
@@ -82,6 +88,9 @@ export async function buildProvider(settings: Settings, keys: SecretKeyStore, pr
   });
 }
 
+/** What of the key decides that a service must be built anew. A sign-in renews its tokens every hour: only its presence counts. */
+const keyMark = (presetId: string, key: string | undefined): string | boolean | undefined => (getPreset(presetId).kind === "chatgpt" ? Boolean(key) : key);
+
 /**
  * The service for the chat, built once and kept while the service, its address and the key stay
  * the same. The service object remembers what the server refused (cache marks, effort) and the
@@ -90,7 +99,7 @@ export async function buildProvider(settings: Settings, keys: SecretKeyStore, pr
 export function rememberedProvider(): (settings: Settings, keys: SecretKeyStore) => Promise<Provider> {
   let last: { id: string; provider: Provider } | undefined;
   return async (settings, keys) => {
-    const id = JSON.stringify([settings.provider, settings.customBaseUrl, await keys.get(settings.provider)]);
+    const id = JSON.stringify([settings.provider, settings.customBaseUrl, keyMark(settings.provider, await keys.get(settings.provider))]);
     if (last?.id !== id) last = { id, provider: await buildProvider(settings, keys) };
     return last.provider;
   };
@@ -113,9 +122,9 @@ export function rememberedSubagentResolver(): (settings: Settings, keys: SecretK
     }
     const key = await keys.get(def.provider);
     if (preset.requiresKey && !key) {
-      throw new Error(`Helper "${def.name}" runs on ${preset.label}, but the user has no API key for it. Tell the user (command "dimosi: Выбрать сервис и модель"). Do the task yourself.`);
+      throw new Error(`Helper "${def.name}" runs on ${preset.label}, but the user has ${preset.kind === "chatgpt" ? "not signed in to it" : "no API key for it"}. Tell the user (command "dimosi: Выбрать сервис и модель"). Do the task yourself.`);
     }
-    const id = JSON.stringify([def.provider, def.provider === "custom" ? settings.customBaseUrl : "", key]);
+    const id = JSON.stringify([def.provider, def.provider === "custom" ? settings.customBaseUrl : "", keyMark(def.provider, key)]);
     let provider = built.get(id);
     if (!provider) {
       provider = await buildProvider(settings, keys, def.provider);

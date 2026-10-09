@@ -278,7 +278,7 @@ export function parseUsage(raw: Record<string, unknown>, providerId: string): Us
   return usage;
 }
 
-function parseArgs(raw: string): Record<string, unknown> {
+export function parseArgs(raw: string): Record<string, unknown> {
   if (!raw.trim()) return {};
   try {
     const parsed = JSON.parse(raw);

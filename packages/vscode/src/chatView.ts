@@ -60,6 +60,7 @@ const PANEL_COMMANDS = new Set([
   "dimosi.importKeys",
   "dimosi.showRules",
   "dimosi.setApiKey",
+  "dimosi.signInChatGPT",
   "dimosi.editAccess",
   "dimosi.showCommandRules",
   "dimosi.togglePlanFirst",
@@ -520,7 +521,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         type: "error",
         message: errorText(e),
         action: e instanceof MissingKeyError
-          ? { label: "Ввести ключ", command: "dimosi.setApiKey" }
+          ? getPreset(settings.provider).kind === "chatgpt"
+            ? { label: "Войти через ChatGPT", command: "dimosi.signInChatGPT" }
+            : { label: "Ввести ключ", command: "dimosi.setApiKey" }
           : { label: "Выбрать модель", command: "dimosi.selectModel" },
       });
       return;

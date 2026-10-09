@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import {
+  CHATGPT_KEY_NAMES,
   defaultGlobalRulesPath,
   exportKeys,
   GENERATE_RULES_PROMPT,
@@ -30,6 +31,7 @@ import { buildProvider, readSettings, updateSetting } from "./settings";
 import { EFFORT_LABELS } from "./protocol";
 import { manageSubagents } from "./subagentsUi";
 import { askAndStoreKey, chooseModel, pickProvider } from "./modelPicker";
+import { signInWithChatGPT, signOutOfChatGPT } from "./chatgptLogin";
 import { Updater } from "./updater";
 
 const EDITOR_PROMPTS = {
@@ -91,17 +93,19 @@ export function activate(context: vscode.ExtensionContext): void {
     command("dimosi.showChats", () => chat.showChats()),
     command("dimosi.reportProblem", () => reportProblem(context, keys)),
     command("dimosi.setApiKey", async () => {
-      const presetId = await pickProvider(keys, "Для какого сервиса ввести ключ?", (p) => p.requiresKey || p.id === "custom");
+      const presetId = await pickProvider(keys, "Для какого сервиса ввести ключ?", (p) => p.kind !== "chatgpt" && (p.requiresKey || p.id === "custom"));
       if (presetId) await askAndStoreKey(keys, presetId);
     }),
     command("dimosi.deleteApiKey", async () => {
-      const names = await keys.list();
+      const names = await apiKeyNames(keys);
       if (!names.length) return vscode.window.showInformationMessage("Сохранённых ключей нет.");
       const name = await vscode.window.showQuickPick(names, { placeHolder: "Какой ключ удалить?" });
       if (!name) return;
       await keys.delete(name);
       void vscode.window.showInformationMessage(`Ключ ${name} удалён.`);
     }),
+    command("dimosi.signInChatGPT", () => signInWithChatGPT(keys)),
+    command("dimosi.signOutChatGPT", () => signOutOfChatGPT(keys)),
     command("dimosi.selectModel", () => selectModel(keys)),
     command("dimosi.exportKeys", () => exportKeysCommand(keys)),
     command("dimosi.importKeys", () => importKeysCommand(keys)),
@@ -372,8 +376,13 @@ async function askNewPassword(): Promise<string | undefined> {
   return password;
 }
 
+/** The saved API keys: the ChatGPT sign-in is kept in the same store but is not a key. */
+async function apiKeyNames(keys: SecretKeyStore): Promise<string[]> {
+  return (await keys.list()).filter((name) => !CHATGPT_KEY_NAMES.includes(name));
+}
+
 async function exportKeysCommand(keys: SecretKeyStore): Promise<void> {
-  if (!(await keys.list()).length) {
+  if (!(await apiKeyNames(keys)).length) {
     void vscode.window.showInformationMessage("Сохранённых ключей нет — экспортировать нечего.");
     return;
   }

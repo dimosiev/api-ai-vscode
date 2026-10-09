@@ -1,11 +1,14 @@
+import { CHATGPT_SIGN_IN_HINT } from "../chatgptAuth";
 import type { Provider } from "../types";
 import { AnthropicProvider } from "./anthropic";
+import { ChatGPTProvider } from "./chatgpt";
 import { OpenAIProvider } from "./openai";
 
 export interface ProviderPreset {
   id: string;
   label: string;
-  kind: "anthropic" | "openai";
+  /** "chatgpt": no API key, the user signs in and the requests are paid from the ChatGPT plan. */
+  kind: "anthropic" | "openai" | "chatgpt";
   baseURL?: string;
   /** Environment variable the CLI checks before the key store. */
   envVar?: string;
@@ -36,6 +39,15 @@ export const PRESETS: ProviderPreset[] = [
     requiresKey: true,
     defaultModel: "gpt-6.1-sol",
     includeUsage: true,
+  },
+  // OpenAI through "Sign in with ChatGPT": the same address, but a sign-in instead of a key.
+  {
+    id: "chatgpt",
+    label: "ChatGPT (подписка)",
+    kind: "chatgpt",
+    baseURL: "https://api.openai.com/v1",
+    requiresKey: true,
+    defaultModel: "gpt-6.1-sol",
   },
   {
     id: "polza",
@@ -142,12 +154,18 @@ export interface CreateProviderOptions {
   apiKey?: string;
   /** Overrides the preset URL for "custom" (required) and "ollama"; ignored for the others. */
   baseURL?: string;
+  /** The access token of the ChatGPT sign-in (`chatgptToken`); required for "chatgpt". */
+  token?: () => Promise<string>;
   fetch?: typeof fetch;
 }
 
 export function createProvider(opts: CreateProviderOptions): Provider {
   const preset = getPreset(opts.presetId);
   const baseURL = (CUSTOM_URL_PRESETS.includes(preset.id) && opts.baseURL) || preset.baseURL;
+  if (preset.kind === "chatgpt") {
+    if (!opts.token) throw new Error(`Вход в ChatGPT не выполнен. ${CHATGPT_SIGN_IN_HINT}`);
+    return new ChatGPTProvider({ id: preset.id, baseURL: preset.baseURL!, token: opts.token, fetch: opts.fetch });
+  }
   if (preset.requiresKey && !opts.apiKey) {
     throw new Error(`No API key for ${preset.label}. Set one first.`);
   }
