@@ -173,7 +173,13 @@ describe("prompt caching through OpenAI-compatible services (Polza AI, OpenRoute
     const req = { model: "claude-opus-5-5", system: "s", messages: history, tools: [] };
     expect((await collect(provider.stream(req))).at(-1)).toMatchObject({ type: "done", stopReason: "end_turn" });
     await collect(provider.stream(req));
-    expect(bodies.map((b) => Array.isArray(b.messages[0].content))).toEqual([true, false, false]);
+    // The length of the reply is left out first (a free refused request), then the marks; the length comes back.
+    expect(bodies.map((b) => [Array.isArray(b.messages[0].content), b.max_tokens])).toEqual([
+      [true, 64000],
+      [true, undefined],
+      [false, undefined],
+      [false, 64000],
+    ]);
   });
 
   it("reads cached and written tokens from usage", () => {
@@ -596,7 +602,7 @@ describe("effort (how hard the model works)", () => {
   it("is not sent at all until the user sets it: requests stay as they were", async () => {
     const polza = service("polza");
     await collect(polza.provider.stream(req("anthropic/claude-opus-5.5")));
-    expect(Object.keys(polza.bodies[0]).sort()).toEqual(["messages", "model", "stream", "stream_options"]);
+    expect(Object.keys(polza.bodies[0]).sort()).toEqual(["max_tokens", "messages", "model", "stream", "stream_options"]);
     const direct = anthropic();
     expect(await done(direct.provider.stream(req("claude-opus-5-5")))).not.toHaveProperty("effortIgnored");
     expect(direct.bodies[0]).not.toHaveProperty("output_config");
@@ -612,7 +618,7 @@ describe("effort (how hard the model works)", () => {
     const sent = async (presetId: string, model: string) => {
       const { bodies, provider } = service(presetId);
       const last = await done(provider.stream(req(model, "high")));
-      const { model: _m, messages: _ms, stream: _s, stream_options: _o, ...rest } = bodies[0];
+      const { model: _m, messages: _ms, stream: _s, stream_options: _o, max_tokens: _t, ...rest } = bodies[0];
       return { rest, ignored: last.effortIgnored };
     };
     expect(await sent("polza", "anthropic/claude-opus-5.5")).toEqual({ rest: { reasoning: { type: "adaptive", effort_level: "high" } }, ignored: undefined });
@@ -670,5 +676,51 @@ describe("effort (how hard the model works)", () => {
     fail = false;
     expect((await done(provider.stream(req("claude-opus-5-5", "high")))).effortIgnored).toBeUndefined();
     expect(bodies.map((b) => Boolean(b.output_config))).toEqual([true, false, true]);
+  });
+});
+
+describe("the length of a reply through OpenAI-compatible services", () => {
+  // TeamoRouter, 19 October 2026: without max_tokens the service picked a short limit of its own,
+  // so a file written in one go was cut off every time, and "продолжай" hit the same wall.
+  const chunk = `data: ${JSON.stringify({ id: "x", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }] })}\n\n`;
+  const refused = () => new Response(JSON.stringify({ error: { message: "max_tokens is too large" } }), { status: 400, headers: { "content-type": "application/json" } });
+
+  function service(presetId: string, refuse: (body: any) => boolean = () => false) {
+    const bodies: any[] = [];
+    const fetchMock = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      bodies.push(body);
+      return refuse(body) ? refused() : sseResponse([chunk, "data: [DONE]\n\n"]);
+    }) as unknown as typeof fetch;
+    return { bodies, provider: createProvider({ presetId, apiKey: "k", fetch: fetchMock }) };
+  }
+  const req = (model: string, maxTokens?: number) => ({ model, system: "s", messages: history, tools: [], maxTokens });
+
+  it("Claude gets the same room for a reply as through the Anthropic format", async () => {
+    for (const [presetId, model] of [["teamo-openai", "claude-sonnet-5-5"], ["polza", "anthropic/claude-opus-5.5"], ["openrouter", "anthropic/claude-opus-5.5"]]) {
+      const { bodies, provider } = service(presetId);
+      await collect(provider.stream(req(model)));
+      expect(bodies[0].max_tokens).toBe(64000);
+    }
+    const { bodies, provider } = service("teamo-openai");
+    await collect(provider.stream(req("claude-sonnet-5-5", 1000)));
+    expect(bodies[0].max_tokens).toBe(1000);
+  });
+
+  it("other models are left to the service: their limits differ, a wrong number would be refused", async () => {
+    const { bodies, provider } = service("teamo-openai");
+    await collect(provider.stream(req("gpt-6.1-sol")));
+    expect(bodies[0]).not.toHaveProperty("max_tokens");
+  });
+
+  it("a refused length is left out for that model, before the cache marks", async () => {
+    const { bodies, provider } = service("teamo-openai", (b) => b.max_tokens !== undefined);
+    await collect(provider.stream(req("claude-sonnet-5-5")));
+    await collect(provider.stream(req("claude-sonnet-5-5")));
+    expect(bodies.map((b) => [b.max_tokens, Boolean(b.messages[0].content?.[0]?.cache_control)])).toEqual([
+      [64000, true],
+      [undefined, true],
+      [undefined, true],
+    ]);
   });
 });

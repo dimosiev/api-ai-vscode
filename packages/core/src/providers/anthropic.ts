@@ -2,6 +2,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { ToolIdMapper } from "./toolIds";
 import type { ChatRequest, Message, Part, Pricing, Provider, StopReason, StreamEvent } from "../types";
 
+/** Room for one reply of Claude: a whole file written in one go must fit. */
+export const CLAUDE_MAX_TOKENS = 64000;
+
 /** USD per 1M tokens for current models; others show tokens only. */
 const PRICES: Record<string, { input: number; output: number }> = {
   "claude-fable-5-1": { input: 10, output: 50 },
@@ -56,7 +59,7 @@ export class AnthropicProvider implements Provider {
     const stream = this.client.messages.stream(
       {
         model: req.model,
-        max_tokens: req.maxTokens ?? 64000,
+        max_tokens: req.maxTokens ?? CLAUDE_MAX_TOKENS,
         ...(effort ? { output_config: { effort } } : {}),
         // Automatic prompt caching: each agent step resends the whole history,
         // so cached prefixes make long tasks much cheaper.

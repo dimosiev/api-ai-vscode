@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { CLAUDE_MAX_TOKENS } from "./anthropic";
 import { ToolIdMapper } from "./toolIds";
 import type { ChatRequest, Effort, Message, Part, Pricing, Provider, StopReason, StreamEvent, Usage } from "../types";
 
@@ -23,6 +24,8 @@ export class OpenAIProvider implements Provider {
   private promptCache = true;
   /** Models for which the service refused the effort setting: it is not sent again. */
   private noEffort = new Set<string>();
+  /** Models for which the service refused max_tokens: it is not sent again. */
+  private noMaxTokens = new Set<string>();
   private catalog?: Promise<Catalog>;
 
   constructor(opts: OpenAIProviderOptions) {
@@ -51,10 +54,14 @@ export class OpenAIProvider implements Provider {
 
   private async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
     const effortFields = req.effort && !this.noEffort.has(req.model) ? effortParams(this.id, req.model, req.effort) : undefined;
-    const create = (withUsage: boolean, withCache: boolean, withEffort: boolean) =>
+    // Without it a service picks its own limit, and for Claude that can be too short for one file.
+    // Other models are left to the service: their limits differ.
+    const maxTokens = isClaude(req.model) && !this.noMaxTokens.has(req.model) ? (req.maxTokens ?? CLAUDE_MAX_TOKENS) : undefined;
+    const create = (withUsage: boolean, withCache: boolean, withEffort: boolean, withMaxTokens: boolean) =>
       this.client.chat.completions.create(
         {
           model: req.model,
+          ...(withMaxTokens ? { max_tokens: maxTokens } : {}),
           ...(withEffort ? effortFields : {}),
           messages: toOpenAIMessages(req.system, req.messages, { cache: withCache }),
           tools: req.tools.length
@@ -72,10 +79,11 @@ export class OpenAIProvider implements Provider {
     const cacheAsked = cache;
     let withUsage = this.includeUsage;
     let withEffort = Boolean(effortFields);
+    let withMaxTokens = maxTokens !== undefined;
     let stream;
     for (;;) {
       try {
-        stream = await create(withUsage, cache, withEffort);
+        stream = await create(withUsage, cache, withEffort, withMaxTokens);
         break;
       } catch (e) {
         if ((e as { status?: number }).status !== 400) throw e;
@@ -83,6 +91,9 @@ export class OpenAIProvider implements Provider {
           // Effort goes first: dropping the cache marks for a refusal they did not cause
           // would make every later step of the chat cost its full price.
           withEffort = false;
+        } else if (withMaxTokens) {
+          // Before the cache marks too, for the same reason.
+          withMaxTokens = false;
         } else if (cache) {
           // Any 400 with cache marks: retry once without them. If that works,
           // the service does not accept them and they are not sent again.
@@ -98,7 +109,9 @@ export class OpenAIProvider implements Provider {
     if (this.promptCache && isClaude(req.model) && !cache) this.promptCache = false;
     this.includeUsage = withUsage;
     // Remembered only when leaving the effort out was enough: otherwise something else was refused.
-    if (effortFields && !withEffort && cache === cacheAsked) this.noEffort.add(req.model);
+    const lengthAsked = maxTokens !== undefined;
+    if (effortFields && !withEffort && cache === cacheAsked && withMaxTokens === lengthAsked) this.noEffort.add(req.model);
+    if (lengthAsked && !withMaxTokens && cache === cacheAsked) this.noMaxTokens.add(req.model);
     // Left out this once for a refusal it did not cause: nothing to tell, the next request carries it again.
     const effortIgnored = !req.effort || withEffort ? undefined : this.noEffort.has(req.model) ? ("rejected" as const) : effortFields ? undefined : ("unsupported" as const);
 

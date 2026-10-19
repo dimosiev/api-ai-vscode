@@ -532,11 +532,13 @@ describe("earlier chats", () => {
   it("the service is remembered between messages: what it refused once is not sent with every message", async () => {
     const marked = (body: { messages: Array<{ content: unknown }> }) => Array.isArray(body.messages[0].content);
     const reply = (text: string) => (body: { messages: Array<{ content: unknown }> }) => (marked(body) ? { status: 400, error: "Unknown field: cache_control" } : { text });
-    const panel = await setup([reply("Раз."), reply("Раз."), reply("Два."), reply("Два.")]);
+    const panel = await setup([reply("Раз."), reply("Раз."), reply("Раз."), reply("Два.")]);
     stub.config["dimosi.model"] = "claude-on-my-server";
     await panel.task("раз");
     await panel.task("два");
-    expect(server!.requests.map((r) => marked(r.body))).toEqual([true, false, false]);
+    // The first message also tries once without the length of the reply: that comes back, the marks do not.
+    expect(server!.requests.map((r) => marked(r.body))).toEqual([true, true, false, false]);
+    expect(server!.requests.map((r) => (r.body as { max_tokens?: number }).max_tokens)).toEqual([64000, undefined, undefined, 64000]);
   });
 
   it("another chat is not opened while a task is running", async () => {
