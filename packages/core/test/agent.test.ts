@@ -8,6 +8,7 @@ import { Agent, describeError, type AgentEvent, type ChatRequest, type Message, 
 class FakeProvider implements Provider {
   readonly id = "fake";
   requests: Message[][] = [];
+  getPricing?: Provider["getPricing"];
   constructor(private turns: Array<(req: ChatRequest) => StreamEvent[] | Promise<StreamEvent[]>>) {}
   async *stream(req: ChatRequest): AsyncIterable<StreamEvent> {
     this.requests.push(structuredClone(req.messages));
@@ -564,5 +565,55 @@ describe("a model that repeats itself", () => {
     await collect(agent.run("прочитай"));
     const events = await collect(agent.run("ещё раз"));
     expect(events.at(-1)).toEqual({ type: "done", stopReason: "end_turn" });
+  });
+});
+
+describe("the cost limit of a task", () => {
+  const step = (id: string, rub?: number): StreamEvent => ({
+    type: "done",
+    stopReason: "tool_use",
+    message: { role: "assistant", parts: [{ type: "tool_call", id, name: "list_files", input: { path: id } }] },
+    usage: { inputTokens: 1000, outputTokens: 10, ...(rub === undefined ? {} : { cost: { amount: rub, currency: "RUB" as const } }) },
+  });
+  const end: StreamEvent = { type: "done", stopReason: "end_turn", message: { role: "assistant", parts: [{ type: "text", text: "Готово." }] } };
+  const setup = (turns: StreamEvent[], costLimit: number) => {
+    const provider = new FakeProvider(turns.map((t) => () => [t]));
+    const agent = new Agent({ provider, model: "m", root: tmp(), approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL });
+    agent.costLimit = costLimit;
+    return { provider, agent };
+  };
+
+  it("stops the task before the next request once it has cost as much as the limit", async () => {
+    const { provider, agent } = setup([step("a", 1), step("b", 1), step("c", 1), end], 1.5);
+    const events = await collect(agent.run("сделай"));
+    expect(provider.requests).toHaveLength(2);
+    expect(events.at(-1)).toEqual({ type: "error", message: expect.stringMatching(/^Задача обошлась уже в 2\.0 ₽.*предел в настройках — 1\.5 ₽.*«продолжай»/s) });
+    // The history is complete: the next message goes on from here.
+    expect(agent.messages.at(-1)!.parts).toEqual([expect.objectContaining({ type: "tool_result", toolCallId: "b", isError: false })]);
+  });
+
+  it("«continue» counts again from zero", async () => {
+    const { provider, agent } = setup([step("a", 1), step("b", 1), step("c", 1), end], 1.5);
+    await collect(agent.run("сделай"));
+    const events = await collect(agent.run("продолжай"));
+    expect(events.at(-1)).toEqual({ type: "done", stopReason: "end_turn" });
+    expect(provider.requests).toHaveLength(4);
+  });
+
+  it("does nothing when it is off or the cost is unknown", async () => {
+    for (const [turns, limit] of [
+      [[step("a", 5), step("b", 5), end], 0],
+      [[step("a"), step("b"), end], 0.01],
+    ] as const) {
+      const { agent } = setup([...turns], limit);
+      expect((await collect(agent.run("сделай"))).at(-1)).toEqual({ type: "done", stopReason: "end_turn" });
+    }
+  });
+
+  it("estimates the cost from the price list when the service does not report it", async () => {
+    const { provider, agent } = setup([step("a"), step("b"), end], 0.001);
+    provider.getPricing = async () => ({ input: 1, output: 1, currency: "USD" });
+    const events = await collect(agent.run("сделай"));
+    expect(events.at(-1)).toEqual({ type: "error", message: expect.stringMatching(/^Задача обошлась уже в \$0\.001/) });
   });
 });

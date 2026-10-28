@@ -9,7 +9,7 @@ import {
   type SubagentDef,
   type SubagentResolver,
 } from "./subagents";
-import { UsageTotals } from "./usage";
+import { formatCost, UsageTotals } from "./usage";
 import type { Log } from "./log";
 import { buildSystemPrompt, snapshotLayout, today } from "./prompt";
 import { isProjectRulesFile, loadRules, type RuleSource, type RuleTrust } from "./rules";
@@ -21,6 +21,7 @@ import type {
   ImagePart,
   Message,
   Part,
+  Pricing,
   Provider,
   StopReason,
   StreamEvent,
@@ -123,6 +124,8 @@ export class Agent {
   planFirst = false;
   /** How hard the model works; not set: its own default. Set by the host before a turn. */
   effort?: Effort;
+  /** A task that has cost this much (in the service's currency) stops before the next request; 0: no limit. */
+  costLimit = 0;
   /** The service and model the user was already told about: the effort is not applied there. */
   private effortNotice?: string;
   /** The previous turn was a planning one. */
@@ -261,6 +264,9 @@ export class Agent {
       let lastCall = "";
       let sameCalls = 0;
       let looped: ToolCallPart | undefined;
+      // What this turn has cost so far, the helpers included; checked against costLimit.
+      const spent = new UsageTotals();
+      let price: Pricing | undefined | null = null;
 
       for (let step = 0; step < this.maxSteps; step++) {
         // Trim rarely and in one go: every trim invalidates the prompt cache once.
@@ -279,7 +285,10 @@ export class Agent {
         const done = yield* this.request(system, signal);
         // "New chat" came while the model was answering: the reply belongs to no chat now.
         if (chat !== this.chat) return;
-        if (done.usage) yield { type: "usage", usage: done.usage };
+        if (done.usage) {
+          spent.add(done.usage);
+          yield { type: "usage", usage: done.usage };
+        }
         const noticed = `${this.provider.id}/${this.model}`;
         if (done.effortIgnored && this.effortNotice !== noticed) {
           // Once per chat and model: the answer is fine, only the setting did nothing.
@@ -374,7 +383,11 @@ export class Agent {
             wake?.();
           });
           for (;;) {
-            while (live.length) yield live.shift()!;
+            while (live.length) {
+              const e = live.shift()!;
+              if (e.type === "helper_usage") spent.addHelper(e.cost);
+              yield e;
+            }
             if (finished) break;
             await new Promise<void>((resolve) => {
               wake = resolve;
@@ -406,6 +419,19 @@ export class Agent {
             message: `Модель три раза подряд повторила одно и то же действие («${describeToolCall(looped)}»): похоже, она зациклилась. dimosi остановил задачу, чтобы не тратить деньги впустую. Если повтор нужен, напишите «продолжай».`,
           };
           return;
+        }
+        if (this.costLimit > 0) {
+          // Once per turn and never waited for long: without a price only a cost the service reports counts.
+          if (price === null) price = await Promise.race([this.provider.getPricing?.(this.model).catch(() => undefined), sleepQuiet(2000)]);
+          const cost = spent.cost(price);
+          if (cost && cost.amount >= this.costLimit) {
+            this.log?.warn(`stopped at the cost limit: ${formatCost(cost)} of ${this.costLimit}`);
+            yield {
+              type: "error",
+              message: `Задача обошлась уже в ${formatCost(cost)}, а предел в настройках — ${formatCost({ amount: this.costLimit, currency: cost.currency })}. dimosi остановился, чтобы вы проверили, туда ли идёт работа. Чтобы продолжить, напишите «продолжай»: счёт начнётся заново.`,
+            };
+            return;
+          }
         }
       }
       this.log?.warn(`stopped after ${this.maxSteps} steps`);

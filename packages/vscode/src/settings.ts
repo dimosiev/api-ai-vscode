@@ -10,6 +10,8 @@ export interface Settings {
   customBaseUrl: string;
   approvalMode: "ask" | "auto";
   maxSteps: number;
+  /** A task that has cost this much (in the service's currency) stops; 0: no limit. */
+  costLimit: number;
   sandbox: boolean;
   /** Folders outside the project opened to the agent, as written in the settings. */
   extraFolders: ExtraFolder[];
@@ -30,6 +32,7 @@ export function readSettings(): Settings {
     customBaseUrl: cfg.get<string>("customBaseUrl", "").trim(),
     approvalMode: cfg.get<"ask" | "auto">("approvalMode", "ask"),
     maxSteps: cfg.get<number>("maxSteps", 50),
+    costLimit: costLimit(cfg.get<unknown>("costLimit", 0)),
     sandbox: cfg.get<boolean>("sandbox", true),
     extraFolders: parseExtraFolders(cfg.get<unknown>("extraFolders", [])),
     imageModel: cfg.get<string>("imageModel", "").trim(),
@@ -37,6 +40,9 @@ export function readSettings(): Settings {
     subagents: parseSubagents(cfg.get<unknown>("subagents", [])),
   };
 }
+
+/** Hand-edited settings may hold anything: what is not a positive number means "no limit". */
+const costLimit = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0);
 
 export async function updateSetting(key: string, value: unknown) {
   await vscode.workspace.getConfiguration("dimosi").update(key, value, vscode.ConfigurationTarget.Global);

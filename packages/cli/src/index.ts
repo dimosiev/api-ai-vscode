@@ -57,6 +57,8 @@ ${c.bold("Запуск чата")} (в папке проекта):
   dimosi --no-sandbox            команды без песочницы macOS (осторожно!)
   dimosi --plan                  сначала план: агент ничего не меняет, пока вы не ответите /go
   dimosi --effort high           усердие модели: low, medium, high или max (без флага — как решит модель)
+  dimosi --cost-limit 200        остановиться, когда задача обойдётся дороже 200
+                                 (₽ для Polza AI, $ для остальных; «продолжай» — дальше)
   dimosi --read-dir ПУТЬ         открыть агенту ещё одну папку только для чтения
   dimosi --write-dir ПУТЬ        открыть агенту ещё одну папку для чтения и записи
                                  (оба флага можно повторять; постоянный список —
@@ -109,6 +111,7 @@ interface Flags {
   noSandbox?: boolean;
   plan?: boolean;
   effort?: string;
+  costLimit?: string;
   /** --read-dir and --write-dir, in the order given. */
   folders: ExtraFolder[];
   positional: string[];
@@ -132,6 +135,7 @@ function parseArgs(argv: string[]): Flags {
     else if (a === "--auto") flags.auto = true;
     else if (a === "--plan") flags.plan = true;
     else if (a === "--effort") flags.effort = next();
+    else if (a === "--cost-limit") flags.costLimit = next();
     else if (a === "--no-sandbox") flags.noSandbox = true;
     else if (a === "--help" || a === "-h") flags.positional.unshift("help");
     else if (a === "--version" || a === "-v") flags.positional.unshift("version");
@@ -493,6 +497,10 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
   if (flags.effort !== undefined) {
     agent.effort = parseEffort(flags.effort);
     if (!agent.effort) fail(`Неизвестное усердие «${flags.effort}». Допустимо: ${EFFORTS.join(", ")}.`);
+  }
+  if (flags.costLimit !== undefined) {
+    agent.costLimit = Number(flags.costLimit);
+    if (!(agent.costLimit >= 0)) fail(`Предел стоимости «${flags.costLimit}» — не число. Пример: --cost-limit 200.`);
   }
   agent.images = await imagesFor(presetId, keys);
   log.info(`chat: provider ${presetId}, model ${agent.model}, approvals ${agent.gate.mode}, sandbox ${agent.sandbox ? "on" : "off"}, extra folders ${extraFolders.length}`);

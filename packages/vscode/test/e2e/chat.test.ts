@@ -653,6 +653,20 @@ describe("effort", () => {
   });
 });
 
+describe("cost limit", () => {
+  it("is read from the settings: off by default, a negative or broken value is off too", async () => {
+    const { readSettings } = await import("../../src/settings");
+    expect(readSettings().costLimit).toBe(0);
+    stub.config["dimosi.costLimit"] = 200;
+    expect(readSettings().costLimit).toBe(200);
+    for (const bad of [-5, "много", null]) {
+      stub.config["dimosi.costLimit"] = bad;
+      expect(readSettings().costLimit).toBe(0);
+    }
+    delete stub.config["dimosi.costLimit"];
+  });
+});
+
 describe("extension start and problem report", () => {
   it("starts with a journal, and the report carries versions and the journal but no key", async () => {
     const { activate } = await import("../../src/extension");

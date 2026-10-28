@@ -221,6 +221,15 @@ describe("CLI, end to end", () => {
     for (const file of ["AGENTS.md", "CLAUDE.md", ".dimosi/rules.md", ".dimosi/rules/*.md"]) expect(out).toContain(file);
   });
 
+  it("--cost-limit takes a number and nothing else", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-root-"));
+    const home = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-home-"));
+    const { code, out } = await runCli(["--provider", "custom", "--model", "m", "--base-url", "https://example.com/v1", "--cost-limit", "много", "привет"], root, home, "");
+    expect(code).not.toBe(0);
+    expect(out).toContain("Предел стоимости «много» — не число");
+    expect((await runCli(["--help"], home, home, "")).out).toContain("--cost-limit");
+  }, 30_000);
+
   it("--base-url is accepted only for custom and ollama", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-root-"));
     const home = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-home-"));

@@ -550,6 +550,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     agent.provider = provider;
     agent.model = settings.model;
     agent.maxSteps = settings.maxSteps;
+    agent.costLimit = settings.costLimit;
     agent.sandbox = settings.sandbox;
     agent.extraFolders = settings.extraFolders;
     agent.planFirst = this.planFirst;
