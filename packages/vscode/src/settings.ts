@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { chatgptToken, createProvider, getPreset, readChatGPTAccount, parseEffort, parseExtraFolders, parseSubagents, polzaImages, type Effort, type ExtraFolder, type ImageMaker, type Provider, type SubagentDef, type SubagentResolver } from "@dimosi/core";
+import { chatgptToken, createProvider, DEFAULT_COST_LIMIT, DEFAULT_MAX_STEPS, getPreset, readChatGPTAccount, parseEffort, parseExtraFolders, parseSubagents, polzaImages, type Effort, type ExtraFolder, type ImageMaker, type Provider, type SubagentDef, type SubagentResolver } from "@dimosi/core";
 import type { SecretKeyStore } from "./keyStore";
 import { fetchWithDirectFallback, vscodeOriginalFetch } from "./directFetch";
 import { log } from "./log";
@@ -33,8 +33,8 @@ export function readSettings(): Settings {
     model: cfg.get<string>("model", "").trim() || getPreset(provider).defaultModel,
     customBaseUrl: cfg.get<string>("customBaseUrl", "").trim(),
     approvalMode: cfg.get<"ask" | "auto">("approvalMode", "ask"),
-    maxSteps: cfg.get<number>("maxSteps", 50),
-    costLimit: costLimit(cfg.get<unknown>("costLimit", 0)),
+    maxSteps: cfg.get<number>("maxSteps", DEFAULT_MAX_STEPS),
+    costLimit: costLimit(cfg.get<unknown>("costLimit", DEFAULT_COST_LIMIT)),
     notifications: cfg.get<boolean>("notifications", true) !== false,
     sandbox: cfg.get<boolean>("sandbox", true),
     extraFolders: parseExtraFolders(cfg.get<unknown>("extraFolders", [])),
@@ -44,8 +44,8 @@ export function readSettings(): Settings {
   };
 }
 
-/** Hand-edited settings may hold anything: what is not a positive number means "no limit". */
-const costLimit = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0);
+/** Hand-edited settings may hold anything: 0 is "no limit", what is not a number the default. */
+const costLimit = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : DEFAULT_COST_LIMIT);
 
 export async function updateSetting(key: string, value: unknown) {
   await vscode.workspace.getConfiguration("dimosi").update(key, value, vscode.ConfigurationTarget.Global);

@@ -688,14 +688,17 @@ describe("notifications", () => {
 });
 
 describe("cost limit", () => {
-  it("is read from the settings: off by default, a negative or broken value is off too", async () => {
+  it("is read from the settings: 300 and 150 steps by default, 0 turns it off, a broken value is the default", async () => {
     const { readSettings } = await import("../../src/settings");
-    expect(readSettings().costLimit).toBe(0);
+    expect(readSettings().costLimit).toBe(300);
+    expect(readSettings().maxSteps).toBe(150);
     stub.config["dimosi.costLimit"] = 200;
     expect(readSettings().costLimit).toBe(200);
+    stub.config["dimosi.costLimit"] = 0;
+    expect(readSettings().costLimit).toBe(0);
     for (const bad of [-5, "много", null]) {
       stub.config["dimosi.costLimit"] = bad;
-      expect(readSettings().costLimit).toBe(0);
+      expect(readSettings().costLimit).toBe(300);
     }
     delete stub.config["dimosi.costLimit"];
   });
@@ -710,7 +713,7 @@ describe("extension start and problem report", () => {
     stub.config = { "dimosi.provider": "polza", "dimosi.model": "anthropic/claude-opus-5.5" };
     activate(context as never);
     expect(stub.output[0]).toMatch(/^\[info\] dimosi 0\.0\.0-test started: VS Code 1\.140\.0/);
-    expect(stub.output[1]).toBe("[info] settings: provider polza, model anthropic/claude-opus-5.5, approvals ask, max steps 50, extra folders 0");
+    expect(stub.output[1]).toBe("[info] settings: provider polza, model anthropic/claude-opus-5.5, approvals ask, max steps 150, extra folders 0");
 
     log.error(`task failed: Неверный API-ключ (401). (${KEY})`);
     stub.answer = (_msg, items) => items.find((i) => i.startsWith("Скопировать"));

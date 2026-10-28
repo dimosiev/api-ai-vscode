@@ -340,16 +340,16 @@
         "dimosi.maxSteps": {
           "scope": "application",
           "type": "number",
-          "default": 50,
+          "default": 150,
           "minimum": 1,
           "description": "Сколько шагов (вызовов модели) агент может сделать на одну задачу."
         },
         "dimosi.costLimit": {
           "scope": "application",
           "type": "number",
-          "default": 0,
+          "default": 300,
           "minimum": 0,
-          "markdownDescription": "Предел стоимости одной задачи: когда задача обойдётся дороже, dimosi остановится и подождёт «продолжай». В рублях для Polza AI, в долларах для остальных сервисов. `0` — без предела."
+          "markdownDescription": "Предел стоимости одной задачи: когда задача обойдётся дороже, dimosi остановится и подождёт «продолжай». В рублях для Polza AI, в долларах для остальных сервисов (там 300 почти не ограничивает). `0` — без предела."
         },
         "dimosi.notifications": {
           "scope": "application",

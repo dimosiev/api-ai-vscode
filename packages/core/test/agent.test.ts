@@ -583,6 +583,11 @@ describe("the cost limit of a task", () => {
     return { provider, agent };
   };
 
+  it("is 300 by default, with 150 steps: the CLI uses these, VS Code takes its settings", () => {
+    const agent = new Agent({ provider: new FakeProvider([]), model: "m", root: tmp(), approval: { approve: async () => "allow" } });
+    expect([agent.costLimit, agent.maxSteps]).toEqual([300, 150]);
+  });
+
   it("stops the task before the next request once it has cost as much as the limit", async () => {
     const { provider, agent } = setup([step("a", 1), step("b", 1), step("c", 1), end], 1.5);
     const events = await collect(agent.run("сделай"));

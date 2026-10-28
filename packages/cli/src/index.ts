@@ -57,8 +57,8 @@ ${c.bold("Запуск чата")} (в папке проекта):
   dimosi --no-sandbox            команды без песочницы macOS (осторожно!)
   dimosi --plan                  сначала план: агент ничего не меняет, пока вы не ответите /go
   dimosi --effort high           усердие модели: low, medium, high или max (без флага — как решит модель)
-  dimosi --cost-limit 200        остановиться, когда задача обойдётся дороже 200
-                                 (₽ для Polza AI, $ для остальных; «продолжай» — дальше)
+  dimosi --cost-limit 500        предел стоимости задачи (по умолчанию 300: ₽ для Polza AI,
+                                 $ для остальных; 0 — без предела; «продолжай» — дальше)
   dimosi --read-dir ПУТЬ         открыть агенту ещё одну папку только для чтения
   dimosi --write-dir ПУТЬ        открыть агенту ещё одну папку для чтения и записи
                                  (оба флага можно повторять; постоянный список —
@@ -500,7 +500,7 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
   }
   if (flags.costLimit !== undefined) {
     agent.costLimit = Number(flags.costLimit);
-    if (!(agent.costLimit >= 0)) fail(`Предел стоимости «${flags.costLimit}» — не число. Пример: --cost-limit 200.`);
+    if (!(agent.costLimit >= 0)) fail(`Предел стоимости «${flags.costLimit}» — не число. Пример: --cost-limit 500.`);
   }
   agent.images = await imagesFor(presetId, keys);
   log.info(`chat: provider ${presetId}, model ${agent.model}, approvals ${agent.gate.mode}, sandbox ${agent.sandbox ? "on" : "off"}, extra folders ${extraFolders.length}`);

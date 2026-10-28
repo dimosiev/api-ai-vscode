@@ -95,6 +95,10 @@ export type UserInput = string | Array<TextPart | ImagePart>;
 type DoneEvent = Extract<StreamEvent, { type: "done" }>;
 
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
+/** Enough for a big task; the loop guard and the cost limit stop a runaway one sooner. */
+export const DEFAULT_MAX_STEPS = 150;
+/** In the service's currency: 300 ₽ with Polza AI, which the user works through; $300 elsewhere barely limits. */
+export const DEFAULT_COST_LIMIT = 300;
 /** How many real tokens one roughly counted token of new history is taken for (Cyrillic text: about two). */
 const GROWTH_FACTOR = 2;
 // Notes about "plan first" go into the user's message, never into the system
@@ -125,7 +129,7 @@ export class Agent {
   /** How hard the model works; not set: its own default. Set by the host before a turn. */
   effort?: Effort;
   /** A task that has cost this much (in the service's currency) stops before the next request; 0: no limit. */
-  costLimit = 0;
+  costLimit = DEFAULT_COST_LIMIT;
   /** The service and model the user was already told about: the effort is not applied there. */
   private effortNotice?: string;
   /** The previous turn was a planning one. */
@@ -165,7 +169,7 @@ export class Agent {
     this.provider = opts.provider;
     this.model = opts.model;
     this.root = opts.root;
-    this.maxSteps = opts.maxSteps ?? 50;
+    this.maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS;
     this.sandbox = opts.sandbox ?? true;
     this.contextWindow = opts.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     this.maxTokens = opts.maxTokens;
