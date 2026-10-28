@@ -653,6 +653,40 @@ describe("effort", () => {
   });
 });
 
+describe("notifications", () => {
+  const notified = (panel: Panel) => {
+    const sent: string[] = [];
+    (panel.provider as unknown as { showNotification: (text: string) => void }).showNotification = (text) => sent.push(text);
+    return sent;
+  };
+
+  it("while VS Code is in the background, tell that dimosi waits for an answer and that the task is done", async () => {
+    const panel = await setup([{ text: "Пишу.", toolCalls: [{ name: "write_file", args: { path: "a.txt", content: "a" } }] }, { text: "Готово." }]);
+    const sent = notified(panel);
+    stub.focused = false;
+    await panel.task("создай");
+    expect(sent).toEqual(["dimosi ждёт вашего ответа", "dimosi закончил задачу"]);
+  });
+
+  it("a task that ended with a message says so", async () => {
+    const panel = await setup([{ status: 401, error: "bad key" }]);
+    const sent = notified(panel);
+    stub.focused = false;
+    await panel.task("привет");
+    expect(sent).toEqual(["dimosi остановился: посмотрите сообщение в чате"]);
+  });
+
+  it("nothing while the user looks at VS Code, or when the setting is off", async () => {
+    const panel = await setup([{ text: "Раз." }, { text: "Два." }]);
+    const sent = notified(panel);
+    await panel.task("раз");
+    stub.focused = false;
+    stub.config["dimosi.notifications"] = false;
+    await panel.task("два");
+    expect(sent).toEqual([]);
+  });
+});
+
 describe("cost limit", () => {
   it("is read from the settings: off by default, a negative or broken value is off too", async () => {
     const { readSettings } = await import("../../src/settings");

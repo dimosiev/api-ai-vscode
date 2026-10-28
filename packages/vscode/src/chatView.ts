@@ -22,6 +22,7 @@ import {
 import { errorText } from "./errorText";
 import { accessStatus } from "./access";
 import { WebviewApproval } from "./approval";
+import { inBackground, systemNotification } from "./notify";
 import { fileAttachment, imageAttachment, isSecretPath, type Attachment } from "./attachments";
 import { ChangeTracker } from "./changes";
 import { commandRuleStore } from "./commandRules";
@@ -104,6 +105,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /** Another chat is being opened: no task may start until it is in place. */
   private switching = false;
   private provider = rememberedProvider();
+  /** Replaced in tests. */
+  showNotification: (text: string) => void = systemNotification;
   private helperResolver = rememberedSubagentResolver();
 
   constructor(
@@ -145,6 +148,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   post(msg: ToWebview): void {
+    if (msg.type === "approval_request") this.notify("dimosi ждёт вашего ответа");
     this.transcript.add(msg);
     void this.view?.webview.postMessage(msg);
   }
@@ -664,6 +668,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       log.error(`task crashed: ${errorText(e)}`);
       this.post({ type: "error", message: errorText(e) });
     } finally {
+      // The user who pressed Stop or New chat is looking already.
+      const stopped = this.controller?.signal.aborted;
       this.controller = undefined;
       this.approval.signal = undefined;
       this.approval.cancelAll();
@@ -673,7 +679,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (current && planning && finished) this.post({ type: "plan_ready" });
       this.post({ type: "busy", busy: false });
       if (current) this.saveChat();
+      if (current && !stopped) this.notify(finished ? "dimosi закончил задачу" : "dimosi остановился: посмотрите сообщение в чате");
     }
+  }
+
+  /** Tells the user who went to another program; never while they are looking at VS Code. */
+  private notify(text: string): void {
+    if (!inBackground() || !readSettings().notifications) return;
+    log.info(`notification: ${text}`);
+    this.showNotification(text);
   }
 
   // ---------- saved chat ----------

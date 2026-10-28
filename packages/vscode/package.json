@@ -351,6 +351,12 @@
           "minimum": 0,
           "markdownDescription": "Предел стоимости одной задачи: когда задача обойдётся дороже, dimosi остановится и подождёт «продолжай». В рублях для Polza AI, в долларах для остальных сервисов. `0` — без предела."
         },
+        "dimosi.notifications": {
+          "scope": "application",
+          "type": "boolean",
+          "default": true,
+          "description": "Показывать уведомление, когда задача закончилась или dimosi ждёт ответа, а окно VS Code в фоне."
+        },
         "dimosi.effort": {
           "scope": "application",
           "type": "string",

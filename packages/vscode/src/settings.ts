@@ -12,6 +12,8 @@ export interface Settings {
   maxSteps: number;
   /** A task that has cost this much (in the service's currency) stops; 0: no limit. */
   costLimit: number;
+  /** A system notice when a task ends or waits for an answer while VS Code is in the background. */
+  notifications: boolean;
   sandbox: boolean;
   /** Folders outside the project opened to the agent, as written in the settings. */
   extraFolders: ExtraFolder[];
@@ -33,6 +35,7 @@ export function readSettings(): Settings {
     approvalMode: cfg.get<"ask" | "auto">("approvalMode", "ask"),
     maxSteps: cfg.get<number>("maxSteps", 50),
     costLimit: costLimit(cfg.get<unknown>("costLimit", 0)),
+    notifications: cfg.get<boolean>("notifications", true) !== false,
     sandbox: cfg.get<boolean>("sandbox", true),
     extraFolders: parseExtraFolders(cfg.get<unknown>("extraFolders", [])),
     imageModel: cfg.get<string>("imageModel", "").trim(),

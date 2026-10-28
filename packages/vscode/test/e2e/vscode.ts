@@ -240,6 +240,8 @@ export const stub = {
   /** What the user chooses in an "open" dialog. */
   openDialog: (): Uri[] | undefined => undefined,
   messages: [] as string[],
+  /** The VS Code window is the one the user is looking at. */
+  focused: true,
   /** Options ({ modal, detail }) passed with each message box, in order. */
   messageOptions: [] as Array<Record<string, unknown> | undefined>,
   /** Paths opened with window.showTextDocument. */
@@ -250,6 +252,7 @@ export const stub = {
   output: [] as string[],
   reset(): void {
     this.output = [];
+    this.focused = true;
     this.config = {};
     this.answer = () => undefined;
     this.pick = () => undefined;
@@ -318,6 +321,9 @@ export const workspace = {
 
 export const window = {
   activeTextEditor: undefined as unknown,
+  get state() {
+    return { focused: stub.focused, active: stub.focused };
+  },
   onDidChangeActiveTextEditor: () => disposable(),
   showInformationMessage: message,
   showWarningMessage: message,
