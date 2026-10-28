@@ -108,7 +108,9 @@ writeFileSync(join(dist, "latest.json"), JSON.stringify(manifest, null, 2) + "\n
 const remote = cfg.remoteDir.replace(/\/$/, "");
 execFileSync("rsync", ["-az", join(dist, files.vsix), join(dist, files.cli), `${cfg.ssh}:${remote}/`], { stdio: "inherit" });
 execFileSync("rsync", ["-az", join(dist, "latest.json"), `${cfg.ssh}:${remote}/latest.json.tmp`], { stdio: "inherit" });
-execFileSync("ssh", [cfg.ssh, `mv ${remote}/latest.json.tmp ${remote}/latest.json && cd ${remote} && ls -t dimosi-*.vsix | tail -n +6 | xargs -r rm -- && ls -t dimosi-cli-*.tgz | tail -n +6 | xargs -r rm --`], { stdio: "inherit" });
+//    Fixed names dimosi.vsix / dimosi-cli.tgz point at the new version: the download
+//    button on d-osi.ru/dimosi/ links to them and works without knowing the version.
+execFileSync("ssh", [cfg.ssh, `mv ${remote}/latest.json.tmp ${remote}/latest.json && cd ${remote} && ln -sfn ${files.vsix} dimosi.vsix && ln -sfn ${files.cli} dimosi-cli.tgz && ls -t dimosi-*.vsix | tail -n +6 | xargs -r rm -- && ls -t dimosi-cli-*.tgz | tail -n +6 | xargs -r rm --`], { stdio: "inherit" });
 
 // 6. Verify through the public address, as an installed extension would.
 const live = parseManifest(await (await fetch(cfg.updateUrl + "latest.json", { headers: { "cache-control": "no-cache" } })).json());
@@ -116,6 +118,8 @@ if (live.version !== next) fail(`Сервер отдаёт версию ${live.v
 verifyManifest(live, UPDATE_PUBLIC_KEYS);
 const vsix = new Uint8Array(await (await fetch(cfg.updateUrl + files.vsix)).arrayBuffer());
 if (createHash("sha256").update(vsix).digest("hex") !== manifest.vsix.sha256) fail("Скачанный с сервера .vsix не совпал по контрольной сумме.");
+const fixed = new Uint8Array(await (await fetch(cfg.updateUrl + "dimosi.vsix", { headers: { "cache-control": "no-cache" } })).arrayBuffer());
+if (createHash("sha256").update(fixed).digest("hex") !== manifest.vsix.sha256) fail("Кнопка «Скачать» на сайте (dimosi.vsix) отдаёт не новую версию.");
 
 // 7. Remember which commit this release is.
 execFileSync("git", ["add", ...PACKAGES, "package-lock.json"], { cwd: root });
