@@ -60,12 +60,15 @@ export function welcomeCard(needsSetup: boolean, hasFolder: boolean, post: Post,
   );
 }
 
-export function toolCard(title: string, name: string): HTMLElement {
-  return h(
+/** detail: the command behind its explanation; on hover, and in the result once it is done. */
+export function toolCard(title: string, name: string, detail?: string): HTMLElement {
+  const card = h(
     "div",
     { class: "tool running" },
-    h("div", { class: "tool-head" }, svg(toolIcon(name), "tool-icon"), h("span", { class: "tool-title" }, title), h("span", { class: "tool-state" })),
+    h("div", { class: "tool-head" }, svg(toolIcon(name), "tool-icon"), h("span", { class: "tool-title", title: detail }, title), h("span", { class: "tool-state" })),
   );
+  if (detail) card.dataset.detail = detail;
+  return card;
 }
 
 /** What a helper is doing now: one line under the card's title, replaced by the next. */
@@ -83,7 +86,8 @@ export function finishToolCard(card: HTMLElement, result: string, isError: boole
   card.classList.remove("running");
   card.classList.add(isError ? "error" : "ok");
   const first = result.split("\n")[0].slice(0, 160);
-  const details = h("details", { class: "tool-details" }, h("summary", {}, first), h("pre", {}, result));
+  const command = card.dataset.detail;
+  const details = h("details", { class: "tool-details" }, h("summary", {}, first), h("pre", {}, command ? `$ ${command}\n\n${result}` : result));
   card.append(details);
 }
 

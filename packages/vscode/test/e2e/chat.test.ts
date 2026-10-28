@@ -969,6 +969,15 @@ describe("plan first", () => {
   });
 });
 
+describe("command explanations", () => {
+  it("the panel shows the model's explanation, keeps the command for a closer look and asks with the real command", async () => {
+    const panel = await setup([{ toolCalls: [{ name: "run_command", args: { command: "echo hi", description: "Проверяю, что терминал работает" } }] }, { text: "Готово." }], "ask");
+    const events = await panel.task("проверь терминал", () => "allow");
+    expect(events.find(isType("tool_start"))).toMatchObject({ title: "Команда: Проверяю, что терминал работает", detail: "echo hi" });
+    expect(events.find(isType("approval_request"))).toMatchObject({ command: "echo hi" });
+  });
+});
+
 describe("web pages", () => {
   it("a new site is asked about with its full address, even with approvals off; a refused site is not contacted", async () => {
     const panel = await setup([{ toolCalls: [{ name: "fetch_page", args: { url: "https://docs.example.com/guide?topic=fetch" } }] }, { text: "Хорошо, не читаю." }], "auto");

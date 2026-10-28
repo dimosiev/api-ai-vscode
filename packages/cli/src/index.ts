@@ -11,6 +11,7 @@ import {
   decryptKeys,
   describeRule,
   describeToolCall,
+  toolCallDetail,
   formatCost,
   formatTokens,
   GLOBAL_RULES_TEMPLATE,
@@ -550,6 +551,10 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
             if (ev.call.name === "update_plan") break;
             newline();
             console.log(c.blue(`● ${describeToolCall(ev.call)}`));
+            {
+              const detail = toolCallDetail(ev.call);
+              if (detail) console.log(c.dim(`  $ ${detail}`));
+            }
             break;
           case "plan":
             newline();

@@ -7,6 +7,7 @@ import {
   createAccess,
   DEFAULT_CONTEXT_WINDOW,
   describeToolCall,
+  toolCallDetail,
   formatCost,
   formatTokens,
   getPreset,
@@ -626,7 +627,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             break;
           case "tool_start":
             ids.set(ev.call.id, ++toolId);
-            this.post({ type: "tool_start", id: toolId, title: describeToolCall(ev.call), name: ev.call.name });
+            this.post({ type: "tool_start", id: toolId, title: describeToolCall(ev.call), name: ev.call.name, detail: toolCallDetail(ev.call) });
             this.post({ type: "activity", text: `${describeToolCall(ev.call)}…` });
             break;
           case "tool_end":

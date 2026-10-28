@@ -298,11 +298,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "run_command",
     description:
-      "Run a shell command in the project root (build, tests, git, package managers...). The user approves each command. Returns exit code and combined output.",
+      "Run a shell command in the project root (build, tests, git, package managers...). The user approves each command. Returns exit code and combined output. " +
+      "To read or search files use read_file, list_files and search instead.",
     inputSchema: {
       type: "object",
       properties: {
         command: { type: "string", description: "Shell command to run." },
+        description: {
+          type: "string",
+          description: "What the command does and why, in a few plain words in the user's language, e.g. \"Запускаю тесты после правки\". Shown to the user instead of the command.",
+        },
         timeout_seconds: { type: "integer", description: "Default 120, max 600." },
         secret_files: {
           type: "array",
@@ -938,6 +943,22 @@ export function describeToolCall(call: ToolCallPart): string {
   return revealHidden(describe(call));
 }
 
+/** The model's explanation of a command: one line, short. Empty when there is none. */
+function commandNote(call: ToolCallPart): string {
+  const d = call.input.description;
+  return typeof d === "string" ? d.replace(/\s+/g, " ").trim().slice(0, 120) : "";
+}
+
+/**
+ * What the summary leaves out, for a closer look: the command itself when the summary
+ * shows the model's explanation instead. Approval cards always show the real command.
+ */
+export function toolCallDetail(call: ToolCallPart): string | undefined {
+  if (call.name !== "run_command" || !commandNote(call)) return undefined;
+  const c = call.input.command;
+  return typeof c === "string" ? revealHidden(c) : undefined;
+}
+
 function describe(call: ToolCallPart): string {
   const i = call.input;
   const s = (k: string) => (typeof i[k] === "string" ? (i[k] as string) : "");
@@ -953,7 +974,7 @@ function describe(call: ToolCallPart): string {
     case "edit_file":
       return `Правка ${s("path")}`;
     case "run_command":
-      return `Команда: ${s("command")}`;
+      return `Команда: ${commandNote(call) || s("command")}`;
     case "fetch_page":
       return `Чтение страницы ${s("url")}`;
     case "generate_image":

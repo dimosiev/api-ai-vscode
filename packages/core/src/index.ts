@@ -13,6 +13,7 @@ export {
   TOOL_DEFINITIONS,
   executeTool,
   describeToolCall,
+  toolCallDetail,
   diskFiles,
   NotUtf8Error,
   type FileAccess,

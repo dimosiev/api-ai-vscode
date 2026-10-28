@@ -67,6 +67,16 @@ describe("chat webview", () => {
     expect($(".tool.ok .tool-title")?.textContent).toBe("Чтение a.txt");
   });
 
+  it("a command shown by its explanation keeps the command itself in the details", () => {
+    send({ type: "tool_start", id: 2, title: "Команда: Запускаю тесты", name: "run_command", detail: "npm test -- --run" });
+    expect($(".tool.running .tool-title")?.getAttribute("title")).toBe("npm test -- --run");
+    send({ type: "tool_end", id: 2, result: "Exit code: 0\nok", isError: false });
+    const card = [...document.querySelectorAll(".tool.ok")].at(-1)!;
+    expect(card.querySelector(".tool-title")?.textContent).toBe("Команда: Запускаю тесты");
+    expect(card.querySelector(".tool-details summary")?.textContent).toBe("Exit code: 0");
+    expect(card.querySelector(".tool-details pre")?.textContent).toBe("$ npm test -- --run\n\nExit code: 0\nok");
+  });
+
   it("asks for approval in the chat and reports the decision", () => {
     send({
       type: "approval_request",

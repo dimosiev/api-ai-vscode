@@ -68,7 +68,8 @@ export type ToWebview =
   | { type: "rules"; rules: RuleView[] }
   | { type: "text"; text: string }
   | { type: "activity"; text: string }
-  | { type: "tool_start"; id: number; title: string; name: string }
+  /** detail: what the title leaves out (the command behind the model's explanation of it). */
+  | { type: "tool_start"; id: number; title: string; name: string; detail?: string }
   | { type: "tool_end"; id: number; result: string; isError: boolean }
   /** What a helper is doing now, shown on the card of its tool call. Not kept in the saved chat. */
   | { type: "tool_note"; id: number; text: string }

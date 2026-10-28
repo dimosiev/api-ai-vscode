@@ -211,7 +211,7 @@ function handle(msg: ToWebview): void {
       flushText();
       textEl = null;
       if (msg.name === "update_plan") break; // shown as the plan card instead
-      tools.set(msg.id, add(toolCard(msg.title, msg.name), currentTurn()));
+      tools.set(msg.id, add(toolCard(msg.title, msg.name, msg.detail), currentTurn()));
       break;
     case "tool_note": {
       const card = tools.get(msg.id);

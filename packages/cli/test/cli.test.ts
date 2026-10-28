@@ -118,8 +118,10 @@ describe("CLI, end to end", () => {
     const args = (task: string) => ["--provider", "custom", "--base-url", server!.url, "--model", "fake-model", "--no-sandbox", task];
     const command = (c: string) => [{ toolCalls: [{ name: "run_command", args: { command: c } }] }, { text: "Готово." }];
 
-    server = await startFakeServer(command("echo hello one"));
+    server = await startFakeServer([{ toolCalls: [{ name: "run_command", args: { command: "echo hello one", description: "Здороваюсь" } }] }, { text: "Готово." }]);
     const first = await runCli(args("скажи привет"), root, home, "a\n");
+    // The model's explanation is the title, the command stays visible under it.
+    expect(first.out).toMatch(/Команда: Здороваюсь\n.*\$ echo hello one/);
     expect(first.out).toContain("больше не спрашивать в этом проекте про команды «echo hello …»");
     const file = path.join(home, "allowed-commands.json");
     expect(await fs.readFile(file, "utf8")).toContain("echo hello");
