@@ -106,6 +106,9 @@ const EXECUTE_NOTE = "[dimosi: plan mode is off now. Unless the user asks for so
 const RETRY_DELAYS_MS = [2000, 5000];
 const MAX_STOPPED_CHARS = 8000;
 const TRIMMED_RESULT = "[Output removed to free context space. Run the tool again if you still need it.]";
+/** The same tool call with the same input this many times in a row: the model is going round in circles. */
+const MAX_SAME_CALLS = 3;
+const REPEATED_RESULT = "Not run: the same call was repeated three times in a row, so the task was stopped and the user was asked to check.";
 
 export class Agent {
   provider: Provider;
@@ -254,6 +257,10 @@ export class Agent {
       // Taken once per chat, like the date: the list is in the prompt and a changing prompt is never served from the cache.
       const helpers = (this.chatHelpers ??= this.tools.some((t) => t.name === "run_subagent") ? [...this.subagents] : []);
       const system = buildSystemPrompt({ root: this.root, layout: this.layout, rules, folders: access.folders, date: this.date, helpers, role: this.role });
+      // The last call of this turn and how many times in a row it came.
+      let lastCall = "";
+      let sameCalls = 0;
+      let looped: ToolCallPart | undefined;
 
       for (let step = 0; step < this.maxSteps; step++) {
         // Trim rarely and in one go: every trim invalidates the prompt cache once.
@@ -321,6 +328,17 @@ export class Agent {
         const results: ToolResultPart[] = [];
         for (const call of calls) {
           if (signal?.aborted) break;
+          const key = `${call.name} ${JSON.stringify(call.input)}`;
+          sameCalls = key === lastCall ? sameCalls + 1 : 1;
+          lastCall = key;
+          if (sameCalls >= MAX_SAME_CALLS) {
+            looped = call;
+            this.log?.warn(`tool ${call.name}: the same call ${sameCalls} times in a row, task stopped`);
+            yield { type: "tool_start", call };
+            results.push({ type: "tool_result", toolCallId: call.id, content: REPEATED_RESULT, isError: true });
+            yield { type: "tool_end", call, result: REPEATED_RESULT, isError: true };
+            break;
+          }
           yield { type: "tool_start", call };
           const pending: AgentEvent[] = [];
           const toolStarted = Date.now();
@@ -377,9 +395,16 @@ export class Agent {
         }
         if (chat !== this.chat) return;
         this.messages.push({ role: "user", parts: results });
-        this.closeDanglingToolCalls("Cancelled by the user.");
+        this.closeDanglingToolCalls(looped ? REPEATED_RESULT : "Cancelled by the user.");
         if (signal?.aborted) {
           yield { type: "error", message: "Остановлено." };
+          return;
+        }
+        if (looped) {
+          yield {
+            type: "error",
+            message: `Модель три раза подряд повторила одно и то же действие («${describeToolCall(looped)}»): похоже, она зациклилась. dimosi остановил задачу, чтобы не тратить деньги впустую. Если повтор нужен, напишите «продолжай».`,
+          };
           return;
         }
       }

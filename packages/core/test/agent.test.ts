@@ -516,3 +516,53 @@ describe("a reply cut off because the context was full", () => {
     expect(events.find((e) => e.type === "error")).toMatchObject({ message: expect.stringMatching(/^Ответ упёрся в лимит длины/) });
   });
 });
+
+describe("a model that repeats itself", () => {
+  const call = (id: string, name: string, input: Record<string, unknown>): StreamEvent => ({
+    type: "done",
+    stopReason: "tool_use",
+    message: { role: "assistant", parts: [{ type: "tool_call", id, name, input }] },
+  });
+  const end: StreamEvent = { type: "done", stopReason: "end_turn", message: { role: "assistant", parts: [{ type: "text", text: "Готово." }] } };
+  const setup = async (turns: StreamEvent[]) => {
+    const root = tmp();
+    await fs.writeFile(path.join(root, "a.txt"), "a");
+    const provider = new FakeProvider(turns.map((t) => () => [t]));
+    const agent = new Agent({ provider, model: "m", root, approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL });
+    return { provider, agent };
+  };
+
+  it("is stopped before the third identical call in a row, so the money is not spent on a loop", async () => {
+    const same = { path: "a.txt" };
+    const { provider, agent } = await setup([call("1", "read_file", same), call("2", "read_file", same), call("3", "read_file", same), end]);
+    const events = await collect(agent.run("прочитай"));
+    expect(events.filter((e) => e.type === "tool_end").map((e) => (e as { isError: boolean }).isError)).toEqual([false, false, true]);
+    expect(events.at(-1)).toEqual({ type: "error", message: expect.stringMatching(/^Модель три раза подряд.*Чтение a\.txt.*«продолжай»/s) });
+    expect(provider.requests).toHaveLength(3);
+    // The history stays valid: the refused call has a result that says why.
+    const last = agent.messages.at(-1)!;
+    expect(last.parts).toEqual([expect.objectContaining({ type: "tool_result", toolCallId: "3", isError: true, content: expect.stringMatching(/repeated/) })]);
+  });
+
+  it("other calls in between and changed input are not a loop", async () => {
+    const { agent } = await setup([
+      call("1", "read_file", { path: "a.txt" }),
+      call("2", "read_file", { path: "a.txt" }),
+      call("3", "list_files", {}),
+      call("4", "read_file", { path: "a.txt" }),
+      call("5", "read_file", { path: "a.txt", offset: 1 }),
+      end,
+    ]);
+    const events = await collect(agent.run("прочитай"));
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    expect(events.at(-1)).toEqual({ type: "done", stopReason: "end_turn" });
+  });
+
+  it("the count starts again with every message of the user", async () => {
+    const same = { path: "a.txt" };
+    const { agent } = await setup([call("1", "read_file", same), call("2", "read_file", same), end, call("3", "read_file", same), end]);
+    await collect(agent.run("прочитай"));
+    const events = await collect(agent.run("ещё раз"));
+    expect(events.at(-1)).toEqual({ type: "done", stopReason: "end_turn" });
+  });
+});
