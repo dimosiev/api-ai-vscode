@@ -2,7 +2,7 @@ import { mkdtempSync, promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { Agent, describeError, Log, type AgentEvent, type ChatRequest, type Message, type Provider, type StreamEvent } from "../src";
+import { Agent, createProvider, describeError, Log, type AgentEvent, type ChatRequest, type Message, type Provider, type StreamEvent } from "../src";
 
 /** Replays scripted assistant turns and records what it was sent. */
 class FakeProvider implements Provider {
@@ -29,6 +29,43 @@ async function collect(gen: AsyncIterable<AgentEvent>) {
   for await (const ev of gen) out.push(ev);
   return out;
 }
+
+describe("a connection cut before the answer", () => {
+  it("Claude through the Anthropic format: the request is sent again and the task goes on", async () => {
+    const ev = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+    const start = ev("message_start", {
+      message: { id: "msg_1", type: "message", role: "assistant", model: "m", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } },
+    });
+    const replies = [
+      [start], // cut right after the start: seen live as "stream ended without producing a Message with role=assistant"
+      [
+        start,
+        ev("content_block_start", { index: 0, content_block: { type: "text", text: "" } }),
+        ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: "Готово." } }),
+        ev("content_block_stop", { index: 0 }),
+        ev("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 3 } }),
+        ev("message_stop", {}),
+      ],
+    ];
+    let calls = 0;
+    const fetchMock = (async () => {
+      const chunks = replies[calls++];
+      const body = new ReadableStream({
+        start(c) {
+          for (const x of chunks) c.enqueue(new TextEncoder().encode(x));
+          c.close();
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }) as unknown as typeof fetch;
+    const provider = createProvider({ presetId: "anthropic", apiKey: "sk-ant-test", fetch: fetchMock });
+    const agent = new Agent({ provider, model: "m", root: tmp(), approval: { approve: async () => "allow" }, globalRulesPath: NO_GLOBAL });
+    const events = await collect(agent.run("привет"));
+    expect(calls).toBe(2);
+    expect(events.some((e) => e.type === "error")).toBe(false);
+    expect(events).toContainEqual({ type: "text", text: "Готово." });
+  }, 15_000);
+});
 
 describe("a reply with nothing to show", () => {
   const run = async (done: Partial<Extract<StreamEvent, { type: "done" }>>) => {

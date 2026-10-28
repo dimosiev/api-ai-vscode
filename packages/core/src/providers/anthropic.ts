@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { IncompleteResponseError } from "./openai";
 import { ToolIdMapper } from "./toolIds";
 import type { ChatRequest, Message, Part, Pricing, Provider, StopReason, StreamEvent } from "../types";
 
@@ -75,11 +76,22 @@ export class AnthropicProvider implements Provider {
       { signal: req.signal },
     );
 
-    for await (const event of stream) {
-      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        yield { type: "text_delta", text: event.delta.text };
+    // A connection cut before message_stop: the library's own errors for it ("request ended
+    // without sending any chunks", "stream ended without producing a Message") become the
+    // known one, which the agent retries while no text has come.
+    let stopped = false;
+    try {
+      for await (const event of stream) {
+        if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+          yield { type: "text_delta", text: event.delta.text };
+        } else if (event.type === "message_stop") stopped = true;
       }
+    } catch (e) {
+      // APIError covers the service's refusals, network errors and Stop: those stay as they are.
+      if (!stopped && e instanceof Anthropic.AnthropicError && !(e instanceof Anthropic.APIError)) throw new IncompleteResponseError();
+      throw e;
     }
+    if (!stopped) throw new IncompleteResponseError();
 
     const final = await stream.finalMessage();
     const parts: Part[] = [];

@@ -235,6 +235,24 @@ describe("Anthropic adapter", () => {
     expect(body.cache_control).toEqual({ type: "ephemeral" });
   });
 
+  it("a stream cut before the end is the known «cut off» error, which the agent retries while no text came", async () => {
+    // Seen live: the library's own "stream ended without producing a Message with role=assistant" was not retried.
+    const ev = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+    const start = ev("message_start", {
+      message: { id: "msg_1", type: "message", role: "assistant", model: "claude-opus-5-5", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } },
+    });
+    const cuts = [
+      [],
+      [start],
+      [start, ev("content_block_start", { index: 0, content_block: { type: "tool_use", id: "toolu_1", name: "read_file", input: {} } })],
+    ];
+    for (const chunks of cuts) {
+      const fetchMock = (async () => sseResponse(chunks)) as unknown as typeof fetch;
+      const provider = createProvider({ presetId: "anthropic", apiKey: "sk-ant-test", fetch: fetchMock });
+      await expect(collect(provider.stream({ model: "claude-opus-5-5", system: "sys", messages: history, tools: TOOL_DEFINITIONS }))).rejects.toThrow(/оборвался на середине/);
+    }
+  });
+
   it("replays raw content only for the same provider and model", () => {
     const raw = [{ type: "thinking", thinking: "", signature: "sig" }, { type: "text", text: "Hi" }];
     const msgs: Message[] = [
