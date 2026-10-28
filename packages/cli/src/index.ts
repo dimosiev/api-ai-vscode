@@ -499,8 +499,9 @@ async function chat(flags: Flags, io: Prompter): Promise<void> {
     if (!agent.effort) fail(`Неизвестное усердие «${flags.effort}». Допустимо: ${EFFORTS.join(", ")}.`);
   }
   if (flags.costLimit !== undefined) {
-    agent.costLimit = Number(flags.costLimit);
-    if (!(agent.costLimit >= 0)) fail(`Предел стоимости «${flags.costLimit}» — не число. Пример: --cost-limit 500.`);
+    // Digits only: Number() would take "" for 0 and switch the limit off without a word.
+    if (!/^\d+([.,]\d+)?$/.test(flags.costLimit)) fail(`Предел стоимости «${flags.costLimit}»: нужно число не меньше 0. Пример: --cost-limit 500.`);
+    agent.costLimit = Number(flags.costLimit.replace(",", "."));
   }
   agent.images = await imagesFor(presetId, keys);
   log.info(`chat: provider ${presetId}, model ${agent.model}, approvals ${agent.gate.mode}, sandbox ${agent.sandbox ? "on" : "off"}, extra folders ${extraFolders.length}`);

@@ -660,7 +660,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.post({ type: "error", message: ev.message });
             break;
           case "done":
-            finished = true;
+            // A reply cut off at the length limit waits for «continue»: the task is not done.
+            finished = ev.stopReason !== "max_tokens";
             break;
         }
       }

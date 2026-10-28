@@ -254,6 +254,24 @@ describe("run_subagent", () => {
   });
 });
 
+describe("the cost limit", () => {
+  it("a helper follows the limit of the chat: off there means off for it too", async () => {
+    // $200 a step: the default limit (300) would stop the helper on its second step.
+    const helper = new FakeProvider(
+      "cheap",
+      [toolTurn(call("h1", "list_files", {})), toolTurn(call("h2", "list_files", { path: "x" })), textTurn("Listed.")],
+      { input: 2_000_000, output: 0, currency: "USD" },
+    );
+    const main = new FakeProvider("main", [toolTurn(call("m1", "run_subagent", { name: "scout", task: "t" })), textTurn("ok")]);
+    const { agent } = setup({ main, helper, mode: "auto" });
+    agent.costLimit = 0;
+    const events = await collect(agent.run("go"));
+    const end = events.find((e) => e.type === "tool_end") as { result: string; isError: boolean };
+    expect(end.result).toContain("Listed.");
+    expect(end.result).not.toContain("did not finish");
+  });
+});
+
 describe("stopping", () => {
   it("«Stop» does not wait for a slow price list", async () => {
     const helper = new FakeProvider("cheap", [textTurn("x")]);

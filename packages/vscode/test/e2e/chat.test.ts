@@ -676,6 +676,14 @@ describe("notifications", () => {
     expect(sent).toEqual(["dimosi остановился: посмотрите сообщение в чате"]);
   });
 
+  it("an answer cut off at the length limit is not «done»: it waits for «continue»", async () => {
+    const panel = await setup([{ text: "Длинный ответ", finish: "length" }]);
+    const sent = notified(panel);
+    stub.focused = false;
+    await panel.task("напиши");
+    expect(sent).toEqual(["dimosi остановился: посмотрите сообщение в чате"]);
+  });
+
   it("nothing while the user looks at VS Code, or when the setting is off", async () => {
     const panel = await setup([{ text: "Раз." }, { text: "Два." }]);
     const sent = notified(panel);

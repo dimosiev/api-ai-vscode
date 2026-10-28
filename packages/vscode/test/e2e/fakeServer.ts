@@ -9,6 +9,8 @@ export interface FakeReply {
   error?: string;
   text?: string;
   toolCalls?: Array<{ name: string; args: Record<string, unknown> }>;
+  /** finish_reason to send instead of the usual one, e.g. "length". */
+  finish?: string;
 }
 
 export interface ChatBody {
@@ -53,7 +55,7 @@ export async function startFakeServer(script: Script): Promise<FakeServer> {
     (reply.toolCalls ?? []).forEach((c, i) =>
       chunk({ tool_calls: [{ index: i, id: `call_${requests.length}_${i}`, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args) } }] }),
     );
-    chunk({}, reply.toolCalls?.length ? "tool_calls" : "stop");
+    chunk({}, reply.finish ?? (reply.toolCalls?.length ? "tool_calls" : "stop"));
     res.write("data: [DONE]\n\n");
     res.end();
   });

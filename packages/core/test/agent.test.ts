@@ -2,7 +2,7 @@ import { mkdtempSync, promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { Agent, describeError, type AgentEvent, type ChatRequest, type Message, type Provider, type StreamEvent } from "../src";
+import { Agent, describeError, Log, type AgentEvent, type ChatRequest, type Message, type Provider, type StreamEvent } from "../src";
 
 /** Replays scripted assistant turns and records what it was sent. */
 class FakeProvider implements Provider {
@@ -545,6 +545,25 @@ describe("a model that repeats itself", () => {
     expect(last.parts).toEqual([expect.objectContaining({ type: "tool_result", toolCallId: "3", isError: true, content: expect.stringMatching(/repeated/) })]);
   });
 
+  it("the other calls of the same reply are not run and say why, without claiming a repeat", async () => {
+    const same = { path: "a.txt" };
+    const { agent } = await setup([
+      call("1", "read_file", same),
+      call("2", "read_file", same),
+      {
+        type: "done",
+        stopReason: "tool_use",
+        message: { role: "assistant", parts: [{ type: "tool_call", id: "3", name: "read_file", input: same }, { type: "tool_call", id: "4", name: "list_files", input: {} }] },
+      },
+    ]);
+    await collect(agent.run("прочитай"));
+    const results = agent.messages.at(-1)!.parts as Array<{ toolCallId: string; content: string }>;
+    expect(results.map((r) => [r.toolCallId, r.content])).toEqual([
+      ["3", expect.stringMatching(/repeated three times/)],
+      ["4", expect.stringMatching(/^Not run: the task was stopped/)],
+    ]);
+  });
+
   it("other calls in between and changed input are not a loop", async () => {
     const { agent } = await setup([
       call("1", "read_file", { path: "a.txt" }),
@@ -613,6 +632,24 @@ describe("the cost limit of a task", () => {
       const { agent } = setup([...turns], limit);
       expect((await collect(agent.run("сделай"))).at(-1)).toEqual({ type: "done", stopReason: "end_turn" });
     }
+  });
+
+  it("a price list slower than the wait is asked for again at the next step", async () => {
+    const { provider, agent } = setup([step("a"), step("b"), step("c"), end], 0.001);
+    agent.priceWaitMs = 20;
+    let asked = 0;
+    provider.getPricing = () => (++asked === 1 ? new Promise(() => {}) : Promise.resolve({ input: 1, output: 1, currency: "USD" as const }));
+    const events = await collect(agent.run("сделай"));
+    expect(events.at(-1)).toEqual({ type: "error", message: expect.stringMatching(/^Задача обошлась уже в/) });
+    expect(provider.requests).toHaveLength(2);
+  });
+
+  it("a cost that cannot be known is written to the journal once per task", async () => {
+    const { agent } = setup([step("a"), step("b"), end], 1);
+    const log = new Log();
+    (agent as unknown as { log: Log }).log = log;
+    await collect(agent.run("сделай"));
+    expect(log.recent().filter((l) => l.includes("cost limit not checked"))).toHaveLength(1);
   });
 
   it("estimates the cost from the price list when the service does not report it", async () => {

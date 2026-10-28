@@ -114,6 +114,9 @@ const TRIMMED_RESULT = "[Output removed to free context space. Run the tool agai
 /** The same tool call with the same input this many times in a row: the model is going round in circles. */
 const MAX_SAME_CALLS = 3;
 const REPEATED_RESULT = "Not run: the same call was repeated three times in a row, so the task was stopped and the user was asked to check.";
+const NOT_RUN_RESULT = "Not run: the task was stopped before this call.";
+/** No answer from the price list by then: this step goes without it, the next one asks again. */
+const TIMED_OUT = Symbol("timed out");
 
 export class Agent {
   provider: Provider;
@@ -130,6 +133,8 @@ export class Agent {
   effort?: Effort;
   /** A task that has cost this much (in the service's currency) stops before the next request; 0: no limit. */
   costLimit = DEFAULT_COST_LIMIT;
+  /** How long a step waits for the price list (changed in tests). */
+  priceWaitMs = 2000;
   /** The service and model the user was already told about: the effort is not applied there. */
   private effortNotice?: string;
   /** The previous turn was a planning one. */
@@ -270,7 +275,9 @@ export class Agent {
       let looped: ToolCallPart | undefined;
       // What this turn has cost so far, the helpers included; checked against costLimit.
       const spent = new UsageTotals();
+      // null: not known yet (asked again at the next step); undefined: the service has no price.
       let price: Pricing | undefined | null = null;
+      let unknownCostLogged = false;
 
       for (let step = 0; step < this.maxSteps; step++) {
         // Trim rarely and in one go: every trim invalidates the prompt cache once.
@@ -412,7 +419,7 @@ export class Agent {
         }
         if (chat !== this.chat) return;
         this.messages.push({ role: "user", parts: results });
-        this.closeDanglingToolCalls(looped ? REPEATED_RESULT : "Cancelled by the user.");
+        this.closeDanglingToolCalls(looped ? NOT_RUN_RESULT : "Cancelled by the user.");
         if (signal?.aborted) {
           yield { type: "error", message: "Остановлено." };
           return;
@@ -425,9 +432,19 @@ export class Agent {
           return;
         }
         if (this.costLimit > 0) {
-          // Once per turn and never waited for long: without a price only a cost the service reports counts.
-          if (price === null) price = await Promise.race([this.provider.getPricing?.(this.model).catch(() => undefined), sleepQuiet(2000)]);
-          const cost = spent.cost(price);
+          // Never waited for long: without a price only a cost the service reports counts.
+          if (price === null) {
+            const got = await Promise.race([
+              Promise.resolve(this.provider.getPricing?.(this.model)).catch(() => undefined),
+              sleepQuiet(this.priceWaitMs).then((): typeof TIMED_OUT => TIMED_OUT),
+            ]);
+            price = got === TIMED_OUT ? null : got;
+          }
+          const cost = spent.cost(price ?? undefined);
+          if (!cost && price !== null && !unknownCostLogged) {
+            unknownCostLogged = true;
+            this.log?.info(`cost limit not checked: ${this.provider.id}/${this.model} reports no cost and has no price list`);
+          }
           if (cost && cost.amount >= this.costLimit) {
             this.log?.warn(`stopped at the cost limit: ${formatCost(cost)} of ${this.costLimit}`);
             yield {
@@ -506,6 +523,8 @@ export class Agent {
     });
     child.layout = this.layout;
     child.date = this.date;
+    // The user's limit holds for the helper too: off is off, a low one stops it in time.
+    child.costLimit = this.costLimit;
 
     const label = `${def.name} (${target.provider.id}/${target.model})`;
     this.log?.info(`helper ${label}: started`);

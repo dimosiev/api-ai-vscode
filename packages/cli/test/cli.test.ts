@@ -224,9 +224,12 @@ describe("CLI, end to end", () => {
   it("--cost-limit takes a number and nothing else", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-root-"));
     const home = mkdtempSync(path.join(os.tmpdir(), "dimosi-cli-home-"));
-    const { code, out } = await runCli(["--provider", "custom", "--model", "m", "--base-url", "https://example.com/v1", "--cost-limit", "много", "привет"], root, home, "");
-    expect(code).not.toBe(0);
-    expect(out).toContain("Предел стоимости «много» — не число");
+    // An address where nothing listens: a value let through by mistake must not reach any server.
+    for (const bad of ["много", "", " ", "-5", "1e3"]) {
+      const { code, out } = await runCli(["--provider", "custom", "--model", "m", "--base-url", "https://127.0.0.1:9/v1", "--cost-limit", bad, "привет"], root, home, "");
+      expect(code, bad).not.toBe(0);
+      expect(out, bad).toContain(`Предел стоимости «${bad}»: нужно число не меньше 0`);
+    }
     expect((await runCli(["--help"], home, home, "")).out).toContain("--cost-limit");
   }, 30_000);
 
