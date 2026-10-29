@@ -25,6 +25,8 @@ export class Composer {
   constructor(
     private post: Post,
     private hint: (message: string) => void,
+    /** Quick settings shown under the input: model, effort, approvals. */
+    controls: HTMLElement[] = [],
   ) {
     this.input = h("textarea", {
       rows: "3",
@@ -47,6 +49,7 @@ export class Composer {
       { class: "composer" },
       this.chipsRow,
       h("div", { class: "input-wrap" }, this.popup, this.input),
+      h("div", { class: "quick" }, ...controls),
       h("div", { class: "composer-row" }, attachBtn, this.planBtn, h("span", { class: "spacer" }), this.stopBtn, this.sendBtn),
     );
 

@@ -98,37 +98,6 @@ button {
   color: var(--brand);
 }
 
-.model-btn {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  padding: 2px 6px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: none;
-  text-align: left;
-}
-
-.model-btn:hover {
-  border-color: var(--brand-border);
-  background: var(--brand-soft);
-}
-
-.model-provider {
-  font-size: 0.85em;
-  color: var(--vscode-descriptionForeground);
-}
-
-.model-name {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-}
-
 .pill {
   flex-shrink: 0;
   padding: 2px 9px;
@@ -137,6 +106,13 @@ button {
   font-size: 0.85em;
   color: var(--brand);
   background: var(--brand-soft);
+}
+
+/* Set by the owner (effort chosen): filled, so it is seen that something is sent. */
+.pill.on {
+  color: var(--brand-on);
+  border-color: var(--brand);
+  background: var(--brand);
 }
 
 .pill.danger {
@@ -184,11 +160,11 @@ button {
 }
 
 .access {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 10px;
-  border-bottom: 1px solid var(--vscode-panel-border);
   font-size: 0.85em;
   color: var(--vscode-descriptionForeground);
 }
@@ -1119,6 +1095,28 @@ textarea:focus {
   outline: none;
   border-color: var(--brand);
   box-shadow: 0 0 0 2px var(--brand-soft);
+}
+
+/* Quick settings under the input. They wrap in a narrow panel; a long model name is cut. */
+.quick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.pill.model-pill {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+}
+
+.model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer-row {

@@ -26,7 +26,9 @@ describe("chat webview", () => {
   it("says it is ready and shows the setup screen when no key is configured", () => {
     expect(posted[0]).toEqual({ type: "ready" });
     send({ type: "status", provider: "Polza AI", model: "anthropic/claude-opus-5.5", approval: "ask", needsSetup: true, hasFolder: true });
-    expect($(".model-name")?.textContent).toBe("anthropic/claude-opus-5.5");
+    // The row under the input shows the model without the maker's prefix; the full name is in the tooltip.
+    expect($(".quick .model-name")?.textContent).toBe("claude-opus-5.5");
+    expect($(".quick .model-pill")?.title).toContain("Polza AI · anthropic/claude-opus-5.5");
     expect($(".welcome")?.textContent).toContain("Выбрать сервис и ввести ключ");
     ($$(".welcome .btn.primary")[0]).click();
     expect(posted.at(-1)).toEqual({ type: "command", command: "dimosi.selectModel" });
@@ -253,18 +255,34 @@ describe("chat webview", () => {
     send({ type: "busy", busy: false });
   });
 
-  it("the effort is shown in the header only when it is set, and a click opens the choice", () => {
+  it("model, effort and approvals are quick buttons under the input; effort is always seen", () => {
     const status = { type: "status", provider: "Polza AI", model: "m", approval: "ask", needsSetup: false, hasFolder: true, planFirst: false, access: "проект", accessDetail: "" } as const;
     send({ ...status, effort: "" });
-    const pill = $$("header .pill").find((b) => b.title.startsWith("Усердие"))!;
-    expect(pill.hidden).toBe(true);
-    send({ ...status, effort: "high" });
-    expect(pill.hidden).toBe(false);
-    expect(pill.textContent).toBe("Усердие: высокое");
-    pill.click();
+    const buttons = $$(".composer .quick button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["m", "Усердие: авто", "С подтверждением"]);
+    expect($$("header .pill")).toEqual([]);
+    // Not set: still there, so it can be chosen without the command palette.
+    const effort = buttons[1];
+    expect(effort.hidden).toBe(false);
+    expect(effort.textContent).toBe("Усердие: авто");
+    effort.click();
     expect(posted.at(-1)).toEqual({ type: "command", command: "dimosi.selectEffort" });
+    send({ ...status, effort: "high" });
+    expect(effort.textContent).toBe("Усердие: высокое");
+    expect(effort.classList.contains("on")).toBe(true);
     send({ ...status, effort: "" });
-    expect(pill.hidden).toBe(true);
+    expect(effort.classList.contains("on")).toBe(false);
+
+    const approval = buttons[2];
+    expect(approval.textContent).toBe("С подтверждением");
+    approval.click();
+    expect(posted.at(-1)).toEqual({ type: "command", command: "dimosi.toggleApproval" });
+    send({ ...status, approval: "auto", effort: "" });
+    expect(approval.textContent).toBe("Без подтверждений");
+    expect(approval.classList.contains("danger")).toBe(true);
+
+    buttons[0].click();
+    expect(posted.at(-1)).toEqual({ type: "command", command: "dimosi.selectModel" });
   });
 
   it("the access line shows what the agent can reach, and Change opens the list", () => {

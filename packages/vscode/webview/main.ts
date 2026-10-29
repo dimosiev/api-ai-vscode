@@ -29,10 +29,9 @@ const post = (msg: FromWebview) => vscode.postMessage(msg);
 
 // ---------- layout ----------
 
-const modelBtn = h("button", { class: "model-btn", title: "Выбрать сервис и модель", onclick: () => post({ type: "command", command: "dimosi.selectModel" }) });
+const modelBtn = h("button", { class: "pill model-pill", onclick: () => post({ type: "command", command: "dimosi.selectModel" }) });
+const effortBtn = h("button", { class: "pill", onclick: () => post({ type: "command", command: "dimosi.selectEffort" }) });
 const approvalBtn = h("button", { class: "pill", title: "Подтверждения действий агента", onclick: () => post({ type: "command", command: "dimosi.toggleApproval" }) });
-const effortBtn = h("button", { class: "pill", title: "Усердие модели: насколько старательно она работает над ответом", onclick: () => post({ type: "command", command: "dimosi.selectEffort" }) });
-const header = h("header", { class: "top" }, svg(LOGO, "brand-logo"), modelBtn, effortBtn, approvalBtn);
 const accessText = h("span", { class: "access-text" });
 const accessRow = h(
   "div",
@@ -40,6 +39,7 @@ const accessRow = h(
   accessText,
   h("button", { class: "link", title: "Открыть агенту папки вне проекта или закрыть их", onclick: () => post({ type: "command", command: "dimosi.editAccess" }) }, "Изменить"),
 );
+const header = h("header", { class: "top" }, svg(LOGO, "brand-logo"), accessRow);
 
 const log = h("main", { class: "log" });
 
@@ -48,10 +48,10 @@ const timer = h("span", { class: "activity-timer" });
 const usageText = h("span", { class: "usage-text" });
 const statusBar = h("div", { class: "status" }, h("span", { class: "activity" }, svg(PULSE, "pulse-icon"), activityText, timer), usageText);
 
-const composer = new Composer(post, (message) => showError(message));
+const composer = new Composer(post, (message) => showError(message), [modelBtn, effortBtn, approvalBtn]);
 const footer = h("footer", {}, statusBar, composer.el);
 
-document.getElementById("app")!.append(header, accessRow, log, footer);
+document.getElementById("app")!.append(header, log, footer);
 
 // ---------- state ----------
 
@@ -156,12 +156,15 @@ function handle(msg: ToWebview): void {
   switch (msg.type) {
     case "status": {
       status = msg;
-      modelBtn.replaceChildren(h("span", { class: "model-provider" }, msg.provider), h("span", { class: "model-name" }, msg.model));
+      // "anthropic/claude-opus-5.5" → "claude-opus-5.5": the row is narrow; the full name is in the tooltip.
+      modelBtn.replaceChildren(h("span", { class: "model-name" }, msg.model.split("/").pop() || msg.model));
+      modelBtn.title = `${msg.provider} · ${msg.model}\nНажмите, чтобы сменить сервис или модель`;
       approvalBtn.textContent = msg.approval === "auto" ? "Без подтверждений" : "С подтверждением";
       approvalBtn.classList.toggle("danger", msg.approval === "auto");
-      // Shown only when set: by default nothing is sent and the header stays as it was.
-      effortBtn.hidden = !msg.effort;
-      effortBtn.textContent = `Усердие: ${EFFORT_LABELS[msg.effort] ?? msg.effort}`;
+      // Always seen, so it is chosen here and not through the command palette. "авто": nothing is sent, the model decides.
+      effortBtn.textContent = `Усердие: ${msg.effort ? (EFFORT_LABELS[msg.effort] ?? msg.effort) : "авто"}`;
+      effortBtn.classList.toggle("on", Boolean(msg.effort));
+      effortBtn.title = `Усердие модели: насколько старательно она работает над ответом. Сейчас: ${EFFORT_LABELS[msg.effort] ?? msg.effort}`;
       composer.setPlanFirst(msg.planFirst);
       accessText.textContent = `Доступ: ${msg.access}`;
       accessText.title = msg.accessDetail;
